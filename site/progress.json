@@ -4,5 +4,79 @@
   "total": 0,
   "done": 0,
   "percent": 0,
-  "updated_at": "2026-02-17T02:48:48Z"
+  "milestones": [
+    {
+      "title": "v1 - TheDiscDB Integration",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - TheDiscDB Contribution",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Rip Pipeline",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Preview & Quality Detection",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Workflow & Labeling",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Post-Processing",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Transfer",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Notifications & PWA",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Setup & Configuration",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Documentation",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Release & Distribution",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    },
+    {
+      "title": "v1 - Testing & UI Polishing",
+      "total": 0,
+      "done": 0,
+      "percent": 0
+    }
+  ],
+  "updated_at": "2026-02-17T02:55:52Z"
 }
