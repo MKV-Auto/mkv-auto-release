@@ -1,9 +1,9 @@
 {
   "project": "MKV Auto",
   "milestone": "v1",
-  "total": 146,
+  "total": 150,
   "done": 78,
-  "percent": 53.4,
+  "percent": 52.0,
   "milestones": [
     {
       "title": "v1 - TheDiscDB Integration",
@@ -61,15 +61,15 @@
     },
     {
       "title": "v1 - Documentation",
-      "total": 12,
+      "total": 13,
       "done": 8,
-      "percent": 66.7
+      "percent": 61.5
     },
     {
       "title": "v1 - Release & Distribution",
-      "total": 10,
+      "total": 13,
       "done": 7,
-      "percent": 70.0
+      "percent": 53.8
     },
     {
       "title": "v1 - Testing & UI Polishing",
@@ -78,5 +78,5 @@
       "percent": 35.0
     }
   ],
-  "updated_at": "2026-03-01T18:07:10Z"
+  "updated_at": "2026-03-01T18:07:14Z"
 }
