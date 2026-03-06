@@ -6,73 +6,73 @@
   "percent": 50.5,
   "milestones": [
     {
-      "title": "v1 - TheDiscDB Integration",
+      "title": "v1.0.0 - TheDiscDB Integration",
       "total": 11,
       "done": 9,
       "percent": 81.8
     },
     {
-      "title": "v1 - TheDiscDB Contribution",
+      "title": "v1.0.0 - TheDiscDB Contribution",
       "total": 3,
       "done": 0,
       "percent": 0.0
     },
     {
-      "title": "v1 - Rip Pipeline",
+      "title": "v1.0.0 - Rip Pipeline",
       "total": 21,
       "done": 9,
       "percent": 42.9
     },
     {
-      "title": "v1 - Preview & Quality Detection",
+      "title": "v1.0.0 - Preview & Quality Detection",
       "total": 8,
       "done": 7,
       "percent": 87.5
     },
     {
-      "title": "v1 - Workflow & Labeling",
+      "title": "v1.0.0 - Workflow & Labeling",
       "total": 24,
       "done": 19,
       "percent": 79.2
     },
     {
-      "title": "v1 - Post-Processing",
+      "title": "v1.0.0 - Post-Processing",
       "total": 16,
       "done": 1,
       "percent": 6.2
     },
     {
-      "title": "v1 - Transfer",
+      "title": "v1.0.0 - Transfer",
       "total": 12,
       "done": 0,
       "percent": 0.0
     },
     {
-      "title": "v1 - Notifications",
+      "title": "v1.0.0 - Notifications",
       "total": 10,
       "done": 6,
       "percent": 60.0
     },
     {
-      "title": "v1 - Setup & Configuration",
+      "title": "v1.0.0 - Setup & Configuration",
       "total": 15,
       "done": 9,
       "percent": 60.0
     },
     {
-      "title": "v1 - Documentation",
+      "title": "v1.0.0 - Documentation",
       "total": 14,
       "done": 8,
       "percent": 57.1
     },
     {
-      "title": "v1 - Release & Distribution",
+      "title": "v1.0.0 - Release & Distribution",
       "total": 27,
       "done": 19,
       "percent": 70.4
     },
     {
-      "title": "v1.0.0 - Testing & UI Polishing",
+      "title": "v1.0.0 Testing & UI Polishing",
       "total": 25,
       "done": 8,
       "percent": 32.0
@@ -90,5 +90,5 @@
       "percent": 0
     }
   ],
-  "updated_at": "2026-03-06T21:47:16Z"
+  "updated_at": "2026-03-06T22:20:29Z"
 }
