@@ -19,9 +19,9 @@
     },
     {
       "title": "v1 - Rip Pipeline",
-      "total": 22,
+      "total": 21,
       "done": 9,
-      "percent": 40.9
+      "percent": 42.9
     },
     {
       "title": "v1 - Preview & Quality Detection",
@@ -61,9 +61,9 @@
     },
     {
       "title": "v1 - Documentation",
-      "total": 15,
+      "total": 16,
       "done": 8,
-      "percent": 53.3
+      "percent": 50.0
     },
     {
       "title": "v1 - Release & Distribution",
@@ -78,5 +78,5 @@
       "percent": 32.0
     }
   ],
-  "updated_at": "2026-03-06T00:04:46Z"
+  "updated_at": "2026-03-06T00:05:48Z"
 }
