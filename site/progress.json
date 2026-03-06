@@ -72,17 +72,23 @@
       "percent": 63.0
     },
     {
-      "title": "v1 - Testing & UI Polishing",
+      "title": "v1.0.0 - Testing & UI Polishing",
       "total": 25,
       "done": 8,
       "percent": 32.0
     },
     {
-      "title": "v1.1 Polishing",
+      "title": "v1.0.1 Polishing",
       "total": 1,
       "done": 0,
       "percent": 0.0
+    },
+    {
+      "title": "v1.1.0 UI Improvements",
+      "total": 0,
+      "done": 0,
+      "percent": 0
     }
   ],
-  "updated_at": "2026-03-06T21:26:52Z"
+  "updated_at": "2026-03-06T21:42:32Z"
 }
