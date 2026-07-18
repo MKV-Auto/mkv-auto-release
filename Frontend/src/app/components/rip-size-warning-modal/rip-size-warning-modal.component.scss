@@ -1,0 +1,155 @@
+// Threshold modal — re-skinned against the design system primitives. The
+// outer ui-card now supplies the dialog's glass surface; this file only
+// carries the modal positioning and the action-tile styling that's
+// domain-specific (composite buttons with title + body + foot).
+
+.rsw-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(5, 8, 18, 0.65);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: rsw-fade-in 0.2s ease-out;
+}
+
+.rsw-dialog {
+  width: min(560px, 100%);
+  animation: rsw-fade-in 0.2s ease-out;
+
+  // Tighten the ui-card's content area for the dialog body.
+  ::ng-deep .ui-card { border-radius: 18px; }
+}
+
+.rsw-header {
+  padding: 20px 24px 4px;
+
+  h2 {
+    margin: 6px 0 4px;
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+  }
+}
+
+.rsw-summary {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.6);
+
+  strong {
+    color: #fff;
+  }
+
+  .rsw-disk-bad {
+    color: #f87171;
+  }
+}
+
+.rsw-actions {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rsw-action {
+  all: unset;
+  cursor: pointer;
+  display: block;
+  text-align: left;
+  padding: 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-sizing: border-box;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  &.rsw-action-primary {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.14), rgba(34, 211, 238, 0.06));
+    border-color: rgba(99, 102, 241, 0.45);
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.15);
+  }
+
+  &.rsw-action-secondary {
+    background: rgba(255, 255, 255, 0.03);
+  }
+}
+
+.rsw-action-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+
+  .rsw-action-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+  }
+}
+
+.rsw-action-spin {
+  margin-left: auto;
+  display: inline-flex;
+  color: rgba(255, 255, 255, 0.85);
+  animation: rsw-action-spin 1s linear infinite;
+}
+
+@keyframes rsw-action-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rsw-action-spin {
+    animation: none;
+  }
+}
+
+.rsw-action-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.rsw-action-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.rsw-footer {
+  padding: 4px 24px 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+@keyframes rsw-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rsw-backdrop,
+  .rsw-dialog {
+    animation-duration: 0.001ms;
+  }
+}

@@ -1,0 +1,287 @@
+.platform-guide-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.platform-guide-wrapper {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  pointer-events: none;
+}
+
+.platform-guide-modal {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 48rem;
+  max-height: 85vh;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: rgba(25, 32, 46, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.platform-guide-header {
+  padding: 1.5rem 2rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.platform-guide-header-content {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.platform-guide-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+}
+
+.platform-guide-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+}
+
+.platform-guide-subtitle {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0;
+}
+
+.platform-guide-close-btn {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.platform-guide-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* Progress Dots */
+.platform-guide-progress {
+  padding: 1.5rem 2rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.platform-guide-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 0.25rem;
+  border: none;
+  cursor: pointer;
+  transition: width 0.2s;
+}
+
+.platform-guide-dot.active {
+  width: 2rem;
+}
+
+/* Content */
+.platform-guide-content {
+  padding: 0 2rem 1.5rem;
+  overflow-y: auto;
+  max-height: calc(85vh - 240px);
+  flex: 1;
+  min-height: 0;
+}
+
+.guide-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.guide-text {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.8);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.guide-text strong {
+  color: #fff;
+}
+
+.guide-tip {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+}
+
+.guide-tip strong {
+  color: #fff;
+}
+
+/* Info Boxes */
+.guide-info-box {
+  padding: 1rem;
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.guide-info-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin: 0;
+}
+
+.guide-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.guide-info-subtitle {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin: 0;
+}
+
+.guide-info-detail {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.guide-list {
+  margin: 0;
+  padding-left: 1rem;
+  list-style-type: disc;
+  font-size: 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* Cards */
+.guide-cards {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.guide-card {
+  padding: 1rem;
+  border-radius: 0.5rem;
+}
+
+.guide-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.guide-card-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin: 0 0 0.5rem 0;
+}
+
+.guide-card-title-bold {
+  font-size: 0.875rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.guide-card-text {
+  font-size: 0.875rem;
+  margin: 0 0 0.5rem 0;
+}
+
+.guide-card-example {
+  font-size: 0.75rem;
+  margin: 0;
+}
+
+.guide-example-box {
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.guide-example-box p {
+  margin: 0;
+}
+
+/* Footer */
+.platform-guide-footer {
+  padding: 1.25rem 2rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.platform-guide-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  transition: all 0.2s;
+}
+
+.platform-guide-btn-back {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.platform-guide-btn-back:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.platform-guide-btn-back:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.platform-guide-btn-next:hover {
+  transform: scale(1.05);
+}

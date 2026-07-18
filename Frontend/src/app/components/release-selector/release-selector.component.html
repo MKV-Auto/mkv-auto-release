@@ -1,0 +1,240 @@
+<div class="release-selector">
+  <div class="film-control-group film-release-group">
+    <!-- Selected release card (template: cyan-tinted card, cover, name, Change button) -->
+    <div
+      *ngIf="selectedRelease as release"
+      class="selector-selected-card selector-selected-card-release"
+    >
+      <div class="selector-selected-card-inner">
+        <div class="selector-selected-cover" *ngIf="release.cover_front_url" [style.backgroundImage]="'url(' + release.cover_front_url + ')'"></div>
+        <div class="selector-selected-cover placeholder" *ngIf="!release.cover_front_url">
+          <svg class="selector-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        </div>
+        <div class="selector-selected-body">
+          <div class="selector-selected-title-row">
+            <svg class="selector-icon text-cyan-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+            <h4 class="selector-selected-title">{{ release.name }}</h4>
+            <svg class="selector-icon text-cyan-400 ml-auto" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <p class="selector-selected-meta text-sm text-white/60" *ngIf="release.production_year || release.resolution">{{ release.production_year }}{{ (release.production_year && release.resolution) ? ' • ' : '' }}{{ release.resolution }}</p>
+          <div class="selector-selected-meta text-xs text-white/40 mt-1" *ngIf="release.slug">{{ release.slug }}</div>
+        </div>
+        <button type="button" class="selector-change-btn" (click)="onReleaseCleared()">Change</button>
+      </div>
+    </div>
+
+    <!-- Trigger + panel/drawer when nothing selected (template: single "Select a release..." button, then list or create form inside same panel/drawer) -->
+    <div class="release-trigger-wrapper" *ngIf="!selectedRelease">
+      <button
+        type="button"
+        class="release-trigger-btn"
+        [disabled]="loading"
+        (click)="openPanel()">
+        <span class="release-trigger-placeholder">Select a release...</span>
+        <svg class="release-trigger-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+
+      <!-- Desktop: overlay + single panel (list or create form) -->
+      <ng-container *ngIf="isOpen && !isMobile">
+        <div class="release-overlay" (click)="closePanel()" aria-hidden="true"></div>
+        <div class="release-panel" [class.release-panel--create]="showCreateForm || showPendingEdit" (click)="$event.stopPropagation()">
+          <ng-container *ngIf="showPendingEdit; else desktopListOrCreate">
+            <app-edition-metadata-form
+              theme="release"
+              [heading]="pendingEditPurpose === 'metadata-only' ? 'Edit release' : 'Complete release metadata'"
+              [missingHints]="pendingEditRelease?.release_missing_required_fields ?? null"
+              [externalErrors]="pendingEditErrors"
+              [loading]="loading || pendingEditSaving"
+              nameLabel="Release Name *"
+              namePlaceholder="Edition name"
+              yearLabel="Release Year *"
+              cancelLabel="Back"
+              [submitLabel]="pendingEditPurpose === 'metadata-only' ? 'Save' : 'Save &amp; link'"
+              [prefill]="pendingReleaseEditionPrefill"
+              [resetVersion]="editionFormResetVersion"
+              (cancelled)="cancelPendingEdit()"
+              (submitted)="onReleaseEditionPending($event)">
+            </app-edition-metadata-form>
+          </ng-container>
+          <ng-template #desktopListOrCreate>
+          <ng-container *ngIf="!showCreateForm; else createFormDesktop">
+            <button type="button" class="release-create-new-btn" (click)="openCreateForm()">
+              <svg class="release-create-new-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Create New Release</span>
+            </button>
+            <div class="release-panel-divider"></div>
+            <!-- Search input for backend search-as-you-type -->
+            <div style="padding: 0.5rem;">
+              <input
+                type="text"
+                class="release-panel-input w-full text-sm"
+                [ngModel]="localSearchTerm"
+                (ngModelChange)="onSearchInput($event)"
+                placeholder="Search releases..."
+                autocomplete="off" />
+            </div>
+            <div class="release-list" *ngIf="displayReleases.length > 0; else noReleases">
+              <div
+                *ngFor="let release of displayReleases; trackBy: trackByReleaseId"
+                class="release-list-item">
+                <button type="button" class="release-list-item-main" (click)="selectRelease(release)">
+                  <div class="release-list-cover" *ngIf="release.cover_front_url" [style.backgroundImage]="'url(' + release.cover_front_url + ')'"></div>
+                  <div class="release-list-cover placeholder" *ngIf="!release.cover_front_url">
+                    <svg class="release-list-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+                  </div>
+                  <div class="release-list-body">
+                    <div class="release-list-name-row">
+                      <span class="release-list-name">{{ release.name }}</span>
+                      <span class="release-needs-info-chip" *ngIf="isNeedsInfo(release)">Needs info</span>
+                    </div>
+                    <div class="release-list-meta">{{ releaseMetaLine(release) }}</div>
+                  </div>
+                </button>
+                <div class="release-list-item-actions">
+                  <button
+                    type="button"
+                    class="release-list-action-btn"
+                    (click)="openReleaseRowEdit(release, $event)"
+                    [attr.aria-label]="'Edit release ' + (release.name || release.slug)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="release-list-action-btn release-list-action-btn--danger"
+                    (click)="confirmDeleteRelease(release, $event)"
+                    [attr.aria-label]="'Delete release ' + (release.name || release.slug)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <ng-template #noReleases>
+              <div class="release-list-empty">No releases found for this movie</div>
+            </ng-template>
+          </ng-container>
+          </ng-template>
+          <ng-template #createFormDesktop>
+            <app-edition-metadata-form
+              theme="release"
+              heading="Create New Release"
+              [showHeaderIcon]="true"
+              [loading]="loading"
+              nameLabel="Release Name *"
+              namePlaceholder="e.g., The Matrix 4K UHD 2021"
+              yearPlaceholder="2021"
+              cancelLabel="Cancel"
+              [submitLabel]="loading ? 'Creating…' : 'Create Release'"
+              [prefill]="emptyEditionPrefill"
+              [resetVersion]="editionFormResetVersion"
+              (cancelled)="cancelCreateForm()"
+              (submitted)="onReleaseEditionCreate($event)">
+            </app-edition-metadata-form>
+          </ng-template>
+        </div>
+      </ng-container>
+
+      <!-- Mobile: single drawer (list or create form, title switches) -->
+      <app-mobile-drawer
+        *ngIf="isOpen && isMobile"
+        [isOpen]="isOpen"
+        [title]="showPendingEdit ? (pendingEditPurpose === 'metadata-only' ? 'Edit release' : 'Complete release') : (showCreateForm ? 'Create New Release' : 'Select Release')"
+        (close)="closePanel()">
+        <div class="release-drawer-content">
+          <ng-container *ngIf="showPendingEdit; else mobileListOrCreate">
+            <app-edition-metadata-form
+              theme="release"
+              [heading]="pendingEditPurpose === 'metadata-only' ? 'Edit release' : 'Complete release metadata'"
+              [missingHints]="pendingEditRelease?.release_missing_required_fields ?? null"
+              [externalErrors]="pendingEditErrors"
+              [loading]="loading || pendingEditSaving"
+              [padded]="true"
+              nameLabel="Release Name *"
+              namePlaceholder="Edition name"
+              yearLabel="Release Year *"
+              cancelLabel="Back"
+              [submitLabel]="pendingEditPurpose === 'metadata-only' ? 'Save' : 'Save &amp; link'"
+              [prefill]="pendingReleaseEditionPrefill"
+              [resetVersion]="editionFormResetVersion"
+              (cancelled)="cancelPendingEdit()"
+              (submitted)="onReleaseEditionPending($event)">
+            </app-edition-metadata-form>
+          </ng-container>
+          <ng-template #mobileListOrCreate>
+          <ng-container *ngIf="!showCreateForm; else createFormMobile">
+            <button type="button" class="release-create-new-btn drawer-create-new" (click)="openCreateForm(); $event.stopPropagation()">
+              <svg class="release-create-new-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Create New Release</span>
+            </button>
+            <div class="release-panel-divider"></div>
+            <!-- Search input (mobile) -->
+            <div style="padding: 0.5rem 1rem;">
+              <input
+                type="text"
+                class="release-panel-input w-full text-sm"
+                [ngModel]="localSearchTerm"
+                (ngModelChange)="onSearchInput($event)"
+                placeholder="Search releases..."
+                autocomplete="off" />
+            </div>
+            <div class="release-list release-list-drawer" *ngIf="displayReleases.length > 0; else noReleasesMobile">
+              <div
+                *ngFor="let release of displayReleases; trackBy: trackByReleaseId"
+                class="release-list-item release-list-item-drawer">
+                <button type="button" class="release-list-item-main" (click)="selectRelease(release)">
+                  <div class="release-list-cover drawer-cover" *ngIf="release.cover_front_url" [style.backgroundImage]="'url(' + release.cover_front_url + ')'"></div>
+                  <div class="release-list-cover placeholder drawer-cover" *ngIf="!release.cover_front_url">
+                    <svg class="release-list-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+                  </div>
+                  <div class="release-list-body">
+                    <div class="release-list-name-row">
+                      <span class="release-list-name">{{ release.name }}</span>
+                      <span class="release-needs-info-chip" *ngIf="isNeedsInfo(release)">Needs info</span>
+                    </div>
+                    <div class="release-list-meta">{{ releaseMetaLine(release) }}</div>
+                  </div>
+                </button>
+                <div class="release-list-item-actions">
+                  <button
+                    type="button"
+                    class="release-list-action-btn"
+                    (click)="openReleaseRowEdit(release, $event)"
+                    [attr.aria-label]="'Edit release ' + (release.name || release.slug)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="release-list-action-btn release-list-action-btn--danger"
+                    (click)="confirmDeleteRelease(release, $event)"
+                    [attr.aria-label]="'Delete release ' + (release.name || release.slug)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <ng-template #noReleasesMobile>
+              <div class="release-list-empty">No releases found for this movie</div>
+            </ng-template>
+          </ng-container>
+          </ng-template>
+          <ng-template #createFormMobile>
+            <app-edition-metadata-form
+              theme="release"
+              heading="Create New Release"
+              [showHeaderIcon]="true"
+              [loading]="loading"
+              nameLabel="Release Name *"
+              namePlaceholder="e.g., The Matrix 4K UHD 2021"
+              yearPlaceholder="2021"
+              cancelLabel="Cancel"
+              [submitLabel]="loading ? 'Creating…' : 'Create Release'"
+              [prefill]="emptyEditionPrefill"
+              [resetVersion]="editionFormResetVersion"
+              (cancelled)="cancelCreateForm()"
+              (submitted)="onReleaseEditionCreate($event)">
+            </app-edition-metadata-form>
+          </ng-template>
+        </div>
+      </app-mobile-drawer>
+    </div>
+  </div>
+</div>

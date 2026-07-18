@@ -1,0 +1,92 @@
+<!-- Template DiscLabelComponent: header (icon, title, subtitle, save status) + form; or compact (status only) when showHeading is false -->
+<div class="disc-step-root" *ngIf="labelForm">
+  <div class="disc-step-header" *ngIf="showHeading">
+    <div class="disc-step-header-left">
+      <div class="disc-step-icon" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>
+        </svg>
+      </div>
+      <div>
+        <h2 class="disc-step-title">{{ (headingDiscNumber !== null && headingDiscNumber !== undefined) ? 'Disc ' + headingDiscNumber : 'Disc ##' }}</h2>
+        <p class="disc-step-subtitle">Configure disc metadata</p>
+      </div>
+    </div>
+    <div class="disc-step-status text-xs">
+      <span *ngIf="labelSaving" class="disc-step-status-saving">
+        <span class="disc-step-spinner" aria-hidden="true"></span>
+        Saving...
+      </span>
+      <span *ngIf="!labelSaving && lastAutosaveOk" class="disc-step-status-saved">Saved</span>
+      <span *ngIf="!labelSaving && !lastAutosaveOk" class="disc-step-status-error">Unsaved changes</span>
+    </div>
+  </div>
+  <!-- Compact status line when parent provides the step header (workflow disc step) -->
+  <div class="disc-step-status-inline" *ngIf="!showHeading">
+    <span *ngIf="labelSaving" class="disc-step-status-saving">
+      <span class="disc-step-spinner" aria-hidden="true"></span>
+      Saving...
+    </span>
+    <span *ngIf="!labelSaving && lastAutosaveOk" class="disc-step-status-saved">Saved</span>
+    <span *ngIf="!labelSaving && !lastAutosaveOk" class="disc-step-status-error">Unsaved changes</span>
+  </div>
+
+  <div class="disc-step-fields">
+    <!-- Disc Format: button group (ui-lab style) -->
+    <div class="disc-step-field">
+      <label class="disc-step-label">Disc Format *</label>
+      <div class="disc-format-options">
+        <button
+          *ngFor="let opt of discFormats"
+          type="button"
+          class="disc-format-btn"
+          [class.disc-format-btn-selected]="labelForm.disc_format === opt.value"
+          [class.disc-format-btn-unselected]="labelForm.disc_format !== opt.value"
+          [class.disc-format-btn-error]="missingDiscFormat && labelForm.disc_format !== opt.value"
+          (click)="setDiscFormat(opt.value)">
+          {{ opt.label }}
+        </button>
+      </div>
+      <p class="disc-step-field-error" *ngIf="missingDiscFormat">
+        <span class="disc-step-field-error-icon" aria-hidden="true"></span>
+        Disc format is required
+      </p>
+    </div>
+
+    <!-- Disc Name -->
+    <div class="disc-step-field">
+      <label class="disc-step-label">Disc Name *</label>
+      <input
+        type="text"
+        class="disc-step-input"
+        [class.disc-step-input-error]="missingDiscName"
+        [(ngModel)]="labelForm.disc_name"
+        [placeholder]="'e.g., Feature Disc, Bonus Features, Disc 1'"
+        (ngModelChange)="nameChanged.emit()"
+        (blur)="fieldBlur.emit()">
+      <p class="disc-step-field-error" *ngIf="missingDiscName">
+        <span class="disc-step-field-error-icon" aria-hidden="true"></span>
+        Disc name is required
+      </p>
+      <p class="disc-step-field-help">A descriptive name for this disc</p>
+    </div>
+
+    <!-- Disc Slug -->
+    <div class="disc-step-field">
+      <label class="disc-step-label">Disc Slug <span class="disc-step-label-optional">(optional)</span></label>
+      <input
+        type="text"
+        class="disc-step-input"
+        [(ngModel)]="labelForm.disc_slug"
+        [placeholder]="(labelForm.disc_name ? autoSlug : '') || 'Auto-generated from name'"
+        (ngModelChange)="labelChanged.emit()"
+        (blur)="fieldBlur.emit()">
+      <p class="disc-step-field-help">URL-friendly identifier (auto-generated if empty)</p>
+    </div>
+  </div>
+
+  <!-- Tip box (ui-lab) -->
+  <div class="disc-step-tip">
+    <p><strong class="disc-step-tip-strong">Tip:</strong> The disc number is automatically assigned when linked to a release. The disc format and name help identify this disc in your collection.</p>
+  </div>
+</div>

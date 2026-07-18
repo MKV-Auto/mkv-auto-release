@@ -1,0 +1,174 @@
+<div class="reattach-modal-backdrop" (click)="onBackdropClick($event)">
+  <div class="reattach-modal">
+    <ui-card>
+      <header class="reattach-modal-head">
+        <h2 class="reattach-modal-title">
+          <span class="reattach-modal-title-icon" aria-hidden="true">
+            <ui-icon name="link" [size]="16"></ui-icon>
+          </span>
+          Verify Library Links
+        </h2>
+        <button
+          type="button"
+          class="reattach-modal-close"
+          (click)="onCancel()"
+          aria-label="Close">
+          <ui-icon name="close" [size]="16"></ui-icon>
+        </button>
+      </header>
+
+      <div class="reattach-modal-body">
+        <!-- Loading the dry-run preview. -->
+        <div *ngIf="loading" class="reattach-modal-loading">
+          <ui-icon name="spinner" [size]="24"></ui-icon>
+          <span>Scanning library…</span>
+        </div>
+
+        <!-- Endpoint rejected (400 no active config, remote-mode, etc.). -->
+        <div *ngIf="!loading && loadError" class="reattach-error">
+          <ui-icon name="alert" [size]="20"></ui-icon>
+          <div>
+            <p class="reattach-error-title">Couldn't scan the library</p>
+            <p class="reattach-error-body">{{ loadError }}</p>
+          </div>
+        </div>
+
+        <!-- Dry-run report. -->
+        <ng-container *ngIf="!loading && !loadError && report as r">
+          <!-- Summary line + walked path. -->
+          <div class="reattach-summary">
+            <p class="reattach-summary-line">
+              Found
+              <strong>{{ applyCount }}</strong>
+              match{{ applyCount === 1 ? '' : 'es' }}
+              <span *ngIf="r.conflicts.length > 0">,
+                <strong>{{ r.conflicts.length }}</strong>
+                conflict{{ r.conflicts.length === 1 ? '' : 's' }}
+              </span>
+              <span *ngIf="r.orphan_files.length > 0">,
+                <strong>{{ r.orphan_files.length }}</strong>
+                orphan file{{ r.orphan_files.length === 1 ? '' : 's' }}
+              </span>
+              <span *ngIf="r.orphan_titles.length > 0">,
+                <strong>{{ r.orphan_titles.length }}</strong>
+                orphan title{{ r.orphan_titles.length === 1 ? '' : 's' }}
+              </span>.
+            </p>
+            <p class="reattach-summary-path">
+              Walked: <code>{{ r.transfer_dir }}</code>
+            </p>
+          </div>
+
+          <!-- Deterministic matches — green, expanded by default. -->
+          <section class="reattach-section reattach-section--good">
+            <button type="button" class="reattach-section-head" (click)="toggleSection('deterministic')">
+              <ui-icon name="check" [size]="14"></ui-icon>
+              <span class="reattach-section-title">Deterministic matches</span>
+              <span class="reattach-section-count">{{ r.deterministic_matches.length }}</span>
+              <ui-icon [name]="expanded.deterministic ? 'up' : 'down'" [size]="14"></ui-icon>
+            </button>
+            <div *ngIf="expanded.deterministic && r.deterministic_matches.length > 0" class="reattach-list">
+              <div *ngFor="let m of r.deterministic_matches" class="reattach-row">
+                <div class="reattach-row-tier">via Segment UID</div>
+                <div class="reattach-row-old" *ngIf="m.old_path">
+                  <span class="reattach-row-label">was:</span> <code>{{ m.old_path }}</code>
+                </div>
+                <div class="reattach-row-new">
+                  <span class="reattach-row-label">now:</span> <code>{{ m.new_path }}</code>
+                </div>
+              </div>
+            </div>
+            <p *ngIf="expanded.deterministic && r.deterministic_matches.length === 0" class="reattach-empty">
+              No segment-UID matches.
+            </p>
+          </section>
+
+          <!-- Heuristic matches — yellow, collapsed by default. -->
+          <section class="reattach-section reattach-section--warn">
+            <button type="button" class="reattach-section-head" (click)="toggleSection('heuristic')">
+              <ui-icon name="alert" [size]="14"></ui-icon>
+              <span class="reattach-section-title">Heuristic matches</span>
+              <span class="reattach-section-count">{{ r.heuristic_matches.length }}</span>
+              <ui-icon [name]="expanded.heuristic ? 'up' : 'down'" [size]="14"></ui-icon>
+            </button>
+            <div *ngIf="expanded.heuristic && r.heuristic_matches.length > 0" class="reattach-list">
+              <div *ngFor="let m of r.heuristic_matches" class="reattach-row">
+                <div class="reattach-row-tier">via filename</div>
+                <div class="reattach-row-old" *ngIf="m.old_path">
+                  <span class="reattach-row-label">was:</span> <code>{{ m.old_path }}</code>
+                </div>
+                <div class="reattach-row-new">
+                  <span class="reattach-row-label">now:</span> <code>{{ m.new_path }}</code>
+                </div>
+              </div>
+            </div>
+            <p *ngIf="expanded.heuristic && r.heuristic_matches.length === 0" class="reattach-empty">
+              No heuristic matches.
+            </p>
+          </section>
+
+          <!-- Conflicts — red, expanded by default if non-zero. -->
+          <section class="reattach-section reattach-section--bad" *ngIf="r.conflicts.length > 0">
+            <button type="button" class="reattach-section-head" (click)="toggleSection('conflicts')">
+              <ui-icon name="alert" [size]="14"></ui-icon>
+              <span class="reattach-section-title">Conflicts (skipped)</span>
+              <span class="reattach-section-count">{{ r.conflicts.length }}</span>
+              <ui-icon [name]="expanded.conflicts ? 'up' : 'down'" [size]="14"></ui-icon>
+            </button>
+            <div *ngIf="expanded.conflicts" class="reattach-list">
+              <div *ngFor="let c of r.conflicts" class="reattach-row">
+                <div class="reattach-row-new"><code>{{ c.file_path }}</code></div>
+                <div class="reattach-row-tier">
+                  candidates: {{ c.candidate_title_ids.join(', ') || '(already-matched titles)' }}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Orphan files — info, collapsed. -->
+          <section class="reattach-section reattach-section--muted" *ngIf="r.orphan_files.length > 0">
+            <button type="button" class="reattach-section-head" (click)="toggleSection('orphan_files')">
+              <ui-icon name="info" [size]="14"></ui-icon>
+              <span class="reattach-section-title">Orphan files</span>
+              <span class="reattach-section-count">{{ r.orphan_files.length }}</span>
+              <ui-icon [name]="expanded.orphan_files ? 'up' : 'down'" [size]="14"></ui-icon>
+            </button>
+            <div *ngIf="expanded.orphan_files" class="reattach-list">
+              <div *ngFor="let f of r.orphan_files" class="reattach-row reattach-row--single">
+                <code>{{ f }}</code>
+              </div>
+            </div>
+          </section>
+
+          <!-- Orphan titles — info, collapsed. -->
+          <section class="reattach-section reattach-section--muted" *ngIf="r.orphan_titles.length > 0">
+            <button type="button" class="reattach-section-head" (click)="toggleSection('orphan_titles')">
+              <ui-icon name="info" [size]="14"></ui-icon>
+              <span class="reattach-section-title">Orphan titles</span>
+              <span class="reattach-section-count">{{ r.orphan_titles.length }}</span>
+              <ui-icon [name]="expanded.orphan_titles ? 'up' : 'down'" [size]="14"></ui-icon>
+            </button>
+            <div *ngIf="expanded.orphan_titles" class="reattach-list">
+              <div *ngFor="let t of r.orphan_titles" class="reattach-row reattach-row--single">
+                <code>{{ t }}</code>
+              </div>
+            </div>
+          </section>
+        </ng-container>
+      </div>
+
+      <footer class="reattach-modal-footer">
+        <ui-btn variant="ghost" (click)="onCancel()">
+          Cancel
+        </ui-btn>
+        <ui-btn
+          variant="primary"
+          [disabled]="!canApply"
+          [loading]="applying"
+          (click)="onApply()">
+          Apply {{ applyCount > 0 ? '(' + applyCount + ')' : '' }}
+        </ui-btn>
+      </footer>
+    </ui-card>
+  </div>
+</div>

@@ -1,0 +1,1046 @@
+.workflow-labeling-container {
+  width: 100%;
+  position: relative;
+  z-index: 0; // Ensure it doesn't create a stacking context that isolates children
+  // margin-left: 1rem; // Match disc-card margin for horizontal alignment
+  // padding-right: 2rem; // Add right padding to balance left margin and center content
+  padding-bottom: 6rem; // Space above workflow action bar so content isn't cut off (TODO: Title step padding)
+
+  // Step container with animation
+  .step-container {
+    position: relative;
+    min-height: 400px;
+    overflow: visible; // Allow dropdowns to escape
+  }
+
+  // Workflow step wrapper (template: p-6 = 1.5rem)
+  .workflow-step {
+    animation: fadeIn 0.3s ease-in;
+    width: 100%;
+    padding: 1.5rem;
+
+    // Override .glass border-radius to only have bottom corners rounded
+    &.glass {
+      border-radius: 0 0 12px 12px; // Rounded bottom corners only
+    }
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  // Panel eyebrow styles
+  .panel-eyebrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+
+    .eyebrow {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em; // template tracking-wider
+      color: rgba(255, 255, 255, 0.5); // template text-white/50
+      font-weight: 600;
+      margin: 0;
+    }
+
+    .regenerate-previews-btn,
+    .rescan-titles-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      font-size: 0.7rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+
+      &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      svg {
+        flex-shrink: 0;
+      }
+    }
+
+    .regenerate-previews-btn {
+      border-color: rgba(99, 102, 241, 0.3);
+      background: rgba(99, 102, 241, 0.1);
+      color: rgba(165, 180, 252, 0.9);
+
+      &:hover:not(:disabled) {
+        background: rgba(99, 102, 241, 0.2);
+        color: #a5b4fc;
+        border-color: rgba(99, 102, 241, 0.5);
+      }
+    }
+
+    .rescan-titles-btn {
+      border-color: rgba(20, 184, 166, 0.35);
+      background: rgba(20, 184, 166, 0.1);
+      color: rgba(153, 246, 228, 0.95);
+
+      &:hover:not(:disabled) {
+        background: rgba(20, 184, 166, 0.2);
+        color: #99f6e4;
+        border-color: rgba(20, 184, 166, 0.55);
+      }
+    }
+
+    .eyebrow-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    &.panel-eyebrow--titles {
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+
+      @media (min-width: 768px) {
+        flex-wrap: nowrap;
+      }
+
+      .panel-eyebrow-titles-left {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+
+      .eyebrow-tracks {
+        text-transform: none;
+        letter-spacing: normal;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.45);
+      }
+
+      .titles-label-stats-line {
+        font-size: 0.8rem;
+        color: rgba(255, 255, 255, 0.55);
+        margin: 0;
+      }
+
+      .titles-label-stats-sep {
+        margin: 0 0.35rem;
+        color: rgba(255, 255, 255, 0.35);
+      }
+
+      .titles-label-stats-by-type {
+        font-size: 0.72rem;
+        color: rgba(255, 255, 255, 0.5);
+
+        summary {
+          cursor: pointer;
+          user-select: none;
+          color: rgba(165, 180, 252, 0.85);
+          font-weight: 500;
+        }
+
+        .titles-label-stats-by-type-list {
+          list-style: none;
+          margin: 0.35rem 0 0;
+          padding: 0;
+          max-width: 20rem;
+
+          li {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.15rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          }
+        }
+
+        .titles-label-stats-type-count {
+          font-variant-numeric: tabular-nums;
+        }
+      }
+    }
+  }
+
+  // Step header styles
+  .step-header {
+    margin-bottom: 1.5rem;
+
+    h4 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.125rem;
+      font-weight: 600;
+    }
+
+    .step-description {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 0.875rem;
+    }
+  }
+
+  // Step content wrapper
+  .step-content {
+    overflow: visible; // Allow dropdowns to escape
+    position: relative;
+  }
+
+  // Summary step (DiscDB hit): single card + green banner (template: SummaryStep.tsx)
+  .summary-step-card {
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 1.5rem;
+  }
+
+  .summary-step-inner {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.5rem;
+  }
+
+  .summary-cover-wrap {
+    width: 8rem;
+    min-width: 8rem;
+    height: 12rem;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+
+    .summary-cover-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .summary-cover-placeholder {
+      width: 100%;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.05);
+    }
+  }
+
+  .summary-metadata-col {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .summary-metadata-row {
+    flex: 1 1 8rem;
+    min-width: 8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+
+    .summary-metadata-label {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    .summary-metadata-value {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: #fff;
+      text-transform: capitalize;
+    }
+  }
+
+  .discdb-match-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    background: rgba(34, 197, 94, 0.08);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+
+    .discdb-match-icon {
+      flex-shrink: 0;
+      width: 1.25rem;
+      height: 1.25rem;
+      margin-top: 0.125rem;
+      color: rgb(74, 222, 128);
+      font-size: 1rem;
+      font-weight: bold;
+      line-height: 1.25;
+    }
+
+    .discdb-match-text {
+      flex: 1;
+    }
+
+    .discdb-match-heading {
+      margin: 0 0 0.25rem 0;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: rgb(74, 222, 128);
+    }
+
+    .discdb-match-body {
+      margin: 0;
+      font-size: 0.875rem;
+      color: rgba(255, 255, 255, 0.7);
+    }
+  }
+
+  // Form group styles
+  .form-group {
+    margin-bottom: 1.5rem;
+    overflow: visible; // Allow dropdowns to escape
+    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
+
+    &.form-group-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .form-group-row-toggle {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-end;
+    }
+
+    .form-group-item {
+      display: flex;
+      flex-direction: column;
+      overflow: visible;
+      max-width: 100%;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .form-group-item-toggle {
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      min-width: 150px;
+    }
+
+    .form-group-item-combobox {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0; // Allow flex item to shrink below content size
+      overflow: visible; // Ensure combobox panel is not clipped
+    }
+
+    .control-label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+      font-size: 0.875rem;
+      color: rgba(255, 255, 255, 0.9);
+    }
+  }
+
+  // Toggle row styles
+  .toggle-row {
+    display: flex;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 4px;
+
+    button {
+      flex: 1;
+      padding: 6px 12px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: rgba(255, 255, 255, 0.9);
+      }
+
+      &.active {
+        background: rgba(255, 255, 255, 0.2);
+        color: #fff;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      }
+    }
+  }
+
+  // Film step layout: Type and Movie side-by-side on desktop, stacked on mobile
+  .film-card {
+    .film-card-content {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      align-items: start;
+
+      // Desktop (above 1024px): two columns for Type and Movie
+      @media (min-width: 1025px) {
+        grid-template-columns: auto 1fr !important;
+        align-items: start;
+
+        // Type selector should take only as much space as needed
+        .film-control-group:first-child {
+          min-width: 120px;
+        }
+
+        // Movie dropdown should take remaining space (override base styles)
+        .film-dropdown-group {
+          grid-column: 2 !important;
+          min-width: 0; // Allow it to shrink
+        }
+      }
+    }
+  }
+
+  // Film control group
+  .film-control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .film-dropdown-group {
+    grid-column: 1 / -1;
+  }
+
+  .film-boxset-group {
+    grid-column: 1 / -1;
+  }
+
+  .film-release-group {
+    grid-column: 1 / -1;
+  }
+
+  // Mobile responsive
+  @media (max-width: 1024px) {
+    .film-card-content {
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+
+    .film-dropdown-group,
+    .film-boxset-group,
+    .film-release-group {
+      grid-column: 1;
+    }
+
+    .form-group.form-group-row {
+      grid-template-columns: 1fr;
+    }
+
+    .form-group-row-toggle {
+      flex-direction: column; // Stack Type and Boxset/Release on separate rows
+      gap: 1rem;
+      align-items: stretch; // Stretch items to full width
+      
+      .form-group-item-toggle {
+        min-width: auto; // Remove min-width constraint on mobile
+        width: 100%;
+      }
+      
+      .form-group-item-combobox {
+        width: 100%;
+      }
+    }
+  }
+}
+
+// Post-process & transfer template styling (Phase 1)
+.step-card-wt {
+  .postprocess-release-summary {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+
+    @media (max-width: 768px) {
+      gap: 0.75rem;
+    }
+  }
+
+  .postprocess-release-cover {
+    width: 64px;
+    height: 96px;
+    object-fit: cover;
+    border-radius: 8px;
+    flex-shrink: 0;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+
+    @media (max-width: 768px) {
+      width: 56px;
+      height: 84px;
+    }
+  }
+
+  .postprocess-summary-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .postprocess-summary-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+
+  .postprocess-summary-label {
+    flex-shrink: 0;
+    font-size: 0.8125rem;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  .postprocess-summary-value {
+    font-size: 0.9375rem;
+    color: rgba(255, 255, 255, 0.95);
+    min-width: 0;
+    word-break: break-word;
+
+    &.postprocess-structure-template {
+      font-family: ui-monospace, monospace;
+      font-size: 0.8125rem;
+      color: rgba(255, 255, 255, 0.75);
+    }
+  }
+
+  .postprocess-disc-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .postprocess-disc-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border: none;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.2s ease;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    @media (max-width: 768px) {
+      padding: 0.65rem 0.75rem;
+    }
+  }
+
+  .postprocess-disc-current {
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.15), rgba(168, 85, 247, 0.12));
+    border-left: 4px solid rgba(59, 130, 246, 0.7);
+    padding-left: 0.75rem;
+
+    @media (max-width: 768px) {
+      padding-left: 0.55rem;
+    }
+  }
+
+  .postprocess-disc-status {
+    width: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .postprocess-disc-main {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: baseline;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .postprocess-disc-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.95);
+  }
+
+  .postprocess-disc-meta {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .postprocess-disc-processing {
+    font-size: 0.7rem;
+    color: #60a5fa;
+    font-weight: 600;
+  }
+
+  .postprocess-disc-chevron {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 1rem;
+    margin-left: auto;
+
+    &.postprocess-disc-chevron-disabled {
+      opacity: 0.35;
+      color: rgba(255, 255, 255, 0.25);
+    }
+  }
+
+  .postprocess-disc-details {
+    padding: 0.75rem 1rem 1rem;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .postprocess-current-label {
+    padding-top: 0;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .postprocess-loading {
+    padding: 1.5rem;
+    text-align: center;
+
+    @media (max-width: 768px) {
+      padding: 1rem;
+      font-size: 0.8125rem;
+    }
+  }
+
+  .postprocess-progress-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+
+    @media (max-width: 768px) {
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+  }
+
+  .postprocess-progress-count {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #fff;
+    margin: 0.25rem 0 0 0;
+
+    @media (max-width: 768px) {
+      font-size: 1.125rem;
+    }
+  }
+
+  .postprocess-pct-wrap {
+    text-align: right;
+
+    @media (max-width: 768px) {
+      text-align: left;
+    }
+  }
+
+  .folder-tree-item-wt {
+    &.folder-row {
+      padding-top: 0.35rem;
+    }
+  }
+
+  .file-transformation-wt {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    @media (max-width: 768px) {
+      white-space: normal;
+      word-break: break-all;
+    }
+  }
+
+  .file-source-wt {
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .file-arrow-wt {
+    color: rgba(255, 255, 255, 0.4);
+    margin: 0 0.25rem;
+  }
+
+  .file-dest-wt {
+    color: #60a5fa;
+  }
+
+  .file-progress-wt {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  .spinner.mini {
+    width: 14px;
+    height: 14px;
+    border-width: 2px;
+    flex-shrink: 0;
+  }
+}
+
+// Transfer step template styling
+.step-card-wt {
+  .transfer-loading {
+    padding: 1.5rem;
+    text-align: center;
+
+    @media (max-width: 768px) {
+      padding: 1rem;
+      font-size: 0.8125rem;
+    }
+  }
+
+  .transfer-progress-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+
+    @media (max-width: 768px) {
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+  }
+
+  .transfer-progress-count {
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    margin: 0.25rem 0 0 0;
+
+    @media (max-width: 768px) {
+      font-size: 0.9rem;
+    }
+  }
+
+  .transfer-details-wt {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .transfer-dest-wt {
+    font-size: 0.8125rem;
+    color: rgba(255, 255, 255, 0.6);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+
+    span:last-child {
+      word-break: break-all;
+      min-width: 0;
+    }
+
+    @media (max-width: 768px) {
+      font-size: 0.75rem;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+  }
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  gap: 1rem;
+}
+
+.loading-container .spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+// Modal styles (matching ripper-page.component.scss)
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: grid;
+  place-items: center;
+  z-index: 2000;
+}
+
+.modal {
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 18px;
+  min-width: 280px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.modal-fullscreen-backdrop {
+  place-items: stretch;
+  padding: 0;
+}
+
+.modal-fullscreen-backdrop .modal {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+// Boxset create modal - compact and centered on mobile
+.boxset-create-modal {
+  max-width: 90vw;
+  width: 100%;
+  max-height: 85vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+// Release create modal - compact and centered on mobile
+.release-create-modal {
+  max-width: 90vw;
+  width: 100%;
+  max-height: 85vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal h3 {
+  margin: 0 0 8px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.modal-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+// Modal field styles
+.field {
+  margin-bottom: 1rem;
+
+  label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.9);
+
+    .required {
+      color: #ef4444;
+    }
+  }
+
+  input[type="text"],
+  input[type="number"] {
+    width: 100%;
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 0.875rem;
+    transition: all 0.2s;
+
+    &:focus {
+      outline: none;
+      border-color: rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    &::placeholder {
+      color: rgba(255, 255, 255, 0.4);
+    }
+  }
+  
+  &.invalid input[type="text"],
+  &.invalid input[type="number"] {
+    border: 2px solid rgba(255, 0, 0, 0.5);
+    box-shadow: 0 0 10px rgba(255, 0, 0, 0.3);
+  }
+}
+
+// Modal button styles
+.icon-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  font-size: 1.25rem;
+  line-height: 1;
+  transition: all 0.2s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+}
+
+.secondary,
+.primary {
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.secondary {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.8);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
+  }
+}
+
+.primary {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.3);
+
+  &:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.3);
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #93c5fd;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+// TMDB suggestion + search-result styling (#389). Slots into the film step,
+// above the existing app-movie-selector. Keeps the existing .glass / .card
+// shell so the visual rhythm matches the rest of the workflow steps.
+.tmdb-suggestion-card {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tmdb-suggestion-cover {
+  width: 80px;
+  height: 120px;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.tmdb-override-controls {
+  margin-bottom: 0.75rem;
+}
+
+.tmdb-search-block {
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 0.5rem;
+}
+
+.tmdb-search-results {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.tmdb-search-result {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background 0.15s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  img {
+    width: 40px;
+    height: 60px;
+    border-radius: 0.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+}

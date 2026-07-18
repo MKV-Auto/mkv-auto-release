@@ -1,0 +1,265 @@
+<div class="boxset-selector">
+  <div class="film-control-group film-boxset-group">
+
+    <!-- Selected boxset card (template: purple-tinted card, cover, name, release_count/disc_count, Change button) -->
+    <div
+      *ngIf="selectedBoxset as boxset"
+      class="selector-selected-card selector-selected-card-boxset"
+    >
+      <div class="selector-selected-card-inner">
+        <div class="selector-selected-cover" *ngIf="boxset.cover_front_url" [style.backgroundImage]="'url(' + boxset.cover_front_url + ')'"></div>
+        <div class="selector-selected-cover placeholder" *ngIf="!boxset.cover_front_url">
+          <svg class="selector-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        </div>
+        <div class="selector-selected-body">
+          <div class="selector-selected-title-row">
+            <svg class="selector-icon text-purple-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+            <h4 class="selector-selected-title">{{ boxset.name }}</h4>
+            <svg class="selector-icon text-purple-400 ml-auto" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div class="selector-selected-meta text-xs text-white/40 mt-1" *ngIf="boxset.release_count != null || boxset.disc_count != null">
+            <span *ngIf="boxset.release_count != null">{{ boxset.release_count }} releases</span>
+            <span *ngIf="boxset.release_count != null && boxset.disc_count != null"> • </span>
+            <span *ngIf="boxset.disc_count != null">{{ boxset.disc_count }} discs</span>
+          </div>
+        </div>
+        <button type="button" class="selector-change-btn" (click)="onBoxsetCleared()">Change</button>
+      </div>
+    </div>
+
+    <!-- Trigger + panel/drawer when nothing selected (same pattern as release selector) -->
+    <div class="boxset-trigger-wrapper" *ngIf="!selectedBoxset">
+      <button
+        type="button"
+        class="boxset-trigger-btn"
+        [disabled]="loading"
+        (click)="openPanel()">
+        <span class="boxset-trigger-placeholder">Select a boxset...</span>
+        <svg class="boxset-trigger-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+
+      <!-- Desktop: overlay + single panel (list or create form) -->
+      <ng-container *ngIf="isOpen && !isMobile">
+        <div class="boxset-overlay" (click)="closePanel()" aria-hidden="true"></div>
+        <div class="boxset-panel" [class.boxset-panel--create]="showCreateForm || showPendingEdit" (click)="$event.stopPropagation()">
+          <ng-container *ngIf="showPendingEdit; else desktopListOrCreate">
+            <app-edition-metadata-form
+              theme="boxset"
+              [heading]="pendingEditPurpose === 'metadata-only' ? 'Edit boxset' : 'Complete boxset metadata'"
+              [missingHints]="pendingEditBoxset?.boxset_missing_required_fields ?? null"
+              [externalErrors]="pendingEditErrors"
+              [loading]="loading || pendingEditSaving"
+              nameLabel="Name *"
+              namePlaceholder="Boxset name"
+              yearLabel="Release Year *"
+              yearPlaceholder="2020"
+              upcLabel="UPC / GTIN *"
+              frontCoverLabel="Front Cover URL *"
+              backCoverLabel="Back Cover URL"
+              cancelLabel="Back"
+              [submitLabel]="pendingEditPurpose === 'metadata-only' ? 'Save' : 'Save &amp; link'"
+              [prefill]="pendingBoxsetEditionPrefill"
+              [resetVersion]="editionFormResetVersion"
+              (cancelled)="cancelPendingEdit()"
+              (submitted)="onBoxsetEditionPending($event)">
+            </app-edition-metadata-form>
+          </ng-container>
+          <ng-template #desktopListOrCreate>
+          <ng-container *ngIf="!showCreateForm; else createFormDesktop">
+            <button type="button" class="boxset-create-new-btn" (click)="openCreateForm()">
+              <svg class="boxset-create-new-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Create New Boxset</span>
+            </button>
+            <div class="boxset-panel-divider"></div>
+            <div style="padding: 0.5rem;">
+              <input
+                type="text"
+                class="boxset-panel-input w-full text-sm"
+                [ngModel]="searchTerm"
+                (ngModelChange)="onSearchInput($event)"
+                placeholder="Search boxsets..."
+                autocomplete="off" />
+            </div>
+            <div class="boxset-list" *ngIf="displayBoxsets.length > 0; else noBoxsets">
+              <div
+                *ngFor="let boxset of displayBoxsets; trackBy: trackByBoxsetId"
+                class="boxset-list-item">
+                <button type="button" class="boxset-list-item-main" (click)="selectBoxset(boxset)">
+                  <div class="boxset-list-cover" *ngIf="boxset.cover_front_url" [style.backgroundImage]="'url(' + boxset.cover_front_url + ')'"></div>
+                  <div class="boxset-list-cover placeholder" *ngIf="!boxset.cover_front_url">
+                    <svg class="boxset-list-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                  </div>
+                  <div class="boxset-list-body">
+                    <div class="boxset-list-name-row">
+                      <span class="boxset-list-name">{{ boxset.name }}</span>
+                      <span class="boxset-needs-info-chip" *ngIf="isNeedsInfo(boxset)">Needs info</span>
+                    </div>
+                    <div class="boxset-list-meta" *ngIf="boxset.release_count != null || boxset.disc_count != null">
+                      <span *ngIf="boxset.release_count != null">{{ boxset.release_count }} releases</span>
+                      <span *ngIf="boxset.release_count != null && boxset.disc_count != null"> • </span>
+                      <span *ngIf="boxset.disc_count != null">{{ boxset.disc_count }} discs</span>
+                    </div>
+                  </div>
+                </button>
+                <div class="boxset-list-item-actions">
+                  <button
+                    type="button"
+                    class="boxset-list-action-btn"
+                    (click)="openBoxsetRowEdit(boxset, $event)"
+                    [attr.aria-label]="'Edit boxset ' + (boxset.name || boxset.slug)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="boxset-list-action-btn boxset-list-action-btn--danger"
+                    (click)="confirmDeleteBoxset(boxset, $event)"
+                    [attr.aria-label]="'Delete boxset ' + (boxset.name || boxset.slug)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <ng-template #noBoxsets>
+              <div class="boxset-list-empty">No boxsets found</div>
+            </ng-template>
+          </ng-container>
+          </ng-template>
+          <ng-template #createFormDesktop>
+            <app-edition-metadata-form
+              theme="boxset"
+              heading="Create New Boxset"
+              [showHeaderIcon]="true"
+              [loading]="loading"
+              nameLabel="Name *"
+              namePlaceholder="Boxset name"
+              yearLabel="Release Year *"
+              yearPlaceholder="2020"
+              upcLabel="UPC / GTIN *"
+              frontCoverLabel="Front Cover URL *"
+              backCoverLabel="Back Cover URL"
+              cancelLabel="Cancel"
+              [submitLabel]="loading ? 'Creating…' : 'Create'"
+              [prefill]="emptyEditionPrefill"
+              [resetVersion]="editionFormResetVersion"
+              (cancelled)="cancelCreateForm()"
+              (submitted)="onBoxsetEditionCreate($event)">
+            </app-edition-metadata-form>
+          </ng-template>
+        </div>
+      </ng-container>
+
+      <app-mobile-drawer
+        *ngIf="isOpen && isMobile"
+        [isOpen]="isOpen"
+        [title]="showPendingEdit ? (pendingEditPurpose === 'metadata-only' ? 'Edit boxset' : 'Complete boxset') : (showCreateForm ? 'Create New Boxset' : 'Select Boxset')"
+        (close)="closePanel()">
+        <div class="boxset-drawer-content">
+          <ng-container *ngIf="showPendingEdit; else mobileListOrCreate">
+            <app-edition-metadata-form
+              theme="boxset"
+              [heading]="pendingEditPurpose === 'metadata-only' ? 'Edit boxset' : 'Complete boxset metadata'"
+              [missingHints]="pendingEditBoxset?.boxset_missing_required_fields ?? null"
+              [externalErrors]="pendingEditErrors"
+              [loading]="loading || pendingEditSaving"
+              [padded]="true"
+              nameLabel="Name *"
+              namePlaceholder="Boxset name"
+              yearLabel="Release Year *"
+              yearPlaceholder="2020"
+              upcLabel="UPC / GTIN *"
+              frontCoverLabel="Front Cover URL *"
+              backCoverLabel="Back Cover URL"
+              cancelLabel="Back"
+              [submitLabel]="pendingEditPurpose === 'metadata-only' ? 'Save' : 'Save &amp; link'"
+              [prefill]="pendingBoxsetEditionPrefill"
+              [resetVersion]="editionFormResetVersion"
+              (cancelled)="cancelPendingEdit()"
+              (submitted)="onBoxsetEditionPending($event)">
+            </app-edition-metadata-form>
+          </ng-container>
+          <ng-template #mobileListOrCreate>
+          <ng-container *ngIf="!showCreateForm; else createFormMobile">
+            <button type="button" class="boxset-create-new-btn drawer-create-new" (click)="openCreateForm(); $event.stopPropagation()">
+              <svg class="boxset-create-new-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Create New Boxset</span>
+            </button>
+            <div class="boxset-panel-divider"></div>
+            <div style="padding: 0.5rem 1rem;">
+              <input
+                type="text"
+                class="boxset-panel-input w-full text-sm"
+                [ngModel]="searchTerm"
+                (ngModelChange)="onSearchInput($event)"
+                placeholder="Search boxsets..."
+                autocomplete="off" />
+            </div>
+            <div class="boxset-list boxset-list-drawer" *ngIf="displayBoxsets.length > 0; else noBoxsetsMobile">
+              <div
+                *ngFor="let boxset of displayBoxsets; trackBy: trackByBoxsetId"
+                class="boxset-list-item boxset-list-item-drawer">
+                <button type="button" class="boxset-list-item-main" (click)="selectBoxset(boxset)">
+                  <div class="boxset-list-cover drawer-cover" *ngIf="boxset.cover_front_url" [style.backgroundImage]="'url(' + boxset.cover_front_url + ')'"></div>
+                  <div class="boxset-list-cover placeholder drawer-cover" *ngIf="!boxset.cover_front_url">
+                    <svg class="boxset-list-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                  </div>
+                  <div class="boxset-list-body">
+                    <div class="boxset-list-name-row">
+                      <span class="boxset-list-name">{{ boxset.name }}</span>
+                      <span class="boxset-needs-info-chip" *ngIf="isNeedsInfo(boxset)">Needs info</span>
+                    </div>
+                    <div class="boxset-list-meta" *ngIf="boxset.release_count != null || boxset.disc_count != null">
+                      <span *ngIf="boxset.release_count != null">{{ boxset.release_count }} releases</span>
+                      <span *ngIf="boxset.release_count != null && boxset.disc_count != null"> • </span>
+                      <span *ngIf="boxset.disc_count != null">{{ boxset.disc_count }} discs</span>
+                    </div>
+                  </div>
+                </button>
+                <div class="boxset-list-item-actions">
+                  <button
+                    type="button"
+                    class="boxset-list-action-btn"
+                    (click)="openBoxsetRowEdit(boxset, $event)"
+                    [attr.aria-label]="'Edit boxset ' + (boxset.name || boxset.slug)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="boxset-list-action-btn boxset-list-action-btn--danger"
+                    (click)="confirmDeleteBoxset(boxset, $event)"
+                    [attr.aria-label]="'Delete boxset ' + (boxset.name || boxset.slug)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <ng-template #noBoxsetsMobile>
+              <div class="boxset-list-empty">No boxsets found</div>
+            </ng-template>
+          </ng-container>
+          </ng-template>
+          <ng-template #createFormMobile>
+            <app-edition-metadata-form
+              theme="boxset"
+              heading="Create New Boxset"
+              [showHeaderIcon]="true"
+              [loading]="loading"
+              nameLabel="Name *"
+              namePlaceholder="Boxset name"
+              yearLabel="Release Year *"
+              yearPlaceholder="2020"
+              upcLabel="UPC / GTIN *"
+              frontCoverLabel="Front Cover URL *"
+              backCoverLabel="Back Cover URL"
+              cancelLabel="Cancel"
+              [submitLabel]="loading ? 'Creating…' : 'Create'"
+              [prefill]="emptyEditionPrefill"
+              [resetVersion]="editionFormResetVersion"
+              (cancelled)="cancelCreateForm()"
+              (submitted)="onBoxsetEditionCreate($event)">
+            </app-edition-metadata-form>
+          </ng-template>
+        </div>
+      </app-mobile-drawer>
+    </div>
+  </div>
+</div>

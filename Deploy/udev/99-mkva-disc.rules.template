@@ -1,0 +1,18 @@
+# Trigger MakeMKV-Auto drive rescan on media insert/eject.
+#
+# NOTE: Optical drives send DISK_MEDIA_CHANGE=1 for BOTH insert and eject.
+# The script queries actual media state (ID_CDROM_MEDIA) to determine insert vs eject.
+#
+# Environment passed to script:
+#   DEVNAME           (e.g., /dev/sr0)
+#   DISK_MEDIA_CHANGE (always 1 for optical drives)
+#
+# Uses udev_notify.py to send events via Unix Domain Socket (UDS) for faster, more reliable IPC.
+# Extract disc_num from device path (sr0 -> 0, sr1 -> 1, etc.)
+#
+# Template variables (replace with sed):
+#   __MKVAUTO_ROOT__        - Path to MKV-Auto installation
+#   __MKVAUTO_TMP_DIR__     - Path to temp directory
+#   __PYTHON_BIN__          - Path to Python binary
+#   __UDEV_NOTIFY_SCRIPT__  - Path to udev_notify.py script
+ACTION=="change", SUBSYSTEM=="block", KERNEL=="sr[0-9]*", ENV{DISK_MEDIA_CHANGE}=="1", ENV{MKVAUTO_ROOT}="__MKVAUTO_ROOT__", ENV{MKVAUTO_TMP_DIR}="__MKVAUTO_TMP_DIR__", RUN+="__PYTHON_BIN__ __UDEV_NOTIFY_SCRIPT__ %E{DEVNAME} %k"

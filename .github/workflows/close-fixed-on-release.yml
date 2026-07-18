@@ -1,0 +1,20 @@
+# When a release is published in mkv-auto-release, close all issues with label
+# "fixed-pending-release" and post a comment pointing to the release.
+# Works with the private-repo workflow that labels issues when a fixing PR is merged.
+name: Close fixed issues on release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: gcampbell/fixed-pending-release@v0.0.9
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          label: fixed-pending-release
+          message: ":tada: Fixed in release [${releaseTag}](${releaseUrl}). :tada:"

@@ -1,0 +1,94 @@
+# Dockerfile only COPYs: Backend/, Frontend/, Docker/*.conf|*.sh, Deploy/udev/*.template
+# Exclude everything not needed so build context stays small (no scripts/, docs/, tests/, docker-data/, etc.)
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Repo top-level (not used in image)
+.cursor
+.cursorrules
+.vscode
+.idea
+*.swp
+*.swo
+*~
+scripts/
+.github/
+.circleci/
+docs/
+research/
+*.md
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache
+.coverage
+htmlcov/
+Backend/tests/
+Backend/scripts/
+
+# Virtual environments
+.venv
+venv/
+Backend/.venv
+ENV/
+env/
+
+# Node (Frontend/dist/ is NOT excluded so docker build includes built frontend after npm run build)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+Frontend/node_modules/
+Frontend/.angular/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Data and logs
+data/
+docker-data/
+test-data/
+devseed/
+logs/
+*.log
+*.sql
+*.db
+*.sqlite
+
+# Configuration (use env vars instead)
+.env
+.env.local
+.env.*.local
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Testing
+.pytest_cache/
+.tox/
+coverage/
+test-results/
+
+# Alembic (alembic.ini is needed for migrations in Docker)
+# Backend/alembic.ini
+
+# PID files
+*.pid
+
+# Backups
+*.backup
+*.bak

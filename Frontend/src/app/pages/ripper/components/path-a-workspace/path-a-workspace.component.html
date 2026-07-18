@@ -1,0 +1,167 @@
+<section class="paw-shell" *ngIf="isActive">
+  <!-- Stage: exploratory_ripping ───────────────────────────────────────── -->
+  <ui-card *ngIf="stage === 'exploratory_ripping'">
+    <div class="paw-body">
+      <div class="paw-pills">
+        <ui-pill tone="blue">Path A · Selective rip</ui-pill>
+        <ui-pill tone="blue">
+          <span uiPillIcon class="paw-pill-spin"><ui-icon name="spinner" [size]="11"></ui-icon></span>
+          Exploratory rip in progress
+        </ui-pill>
+      </div>
+      <h2>Finding the main movie</h2>
+      <p>
+        We're ripping one playlist from the duplicate-segment-map group
+        <span *ngIf="groupSize">({{ groupSize }} candidates collapse into this one)</span>
+        and chopping it into short previews you can put in story order.
+        This typically takes <strong>~30 minutes</strong>.
+      </p>
+      <div class="paw-progress">
+        <div class="paw-progress-bar"
+             [style.width.%]="ripProgress"
+             [attr.aria-valuenow]="ripProgress"
+             role="progressbar"
+             aria-valuemin="0"
+             aria-valuemax="100"></div>
+      </div>
+      <div class="paw-progress-meta">
+        <span>{{ ripProgress }}%</span>
+      </div>
+      <div class="paw-actions">
+        <ui-btn variant="ghost" (click)="cancelSegmentReorder()">
+          Cancel and pick manually
+        </ui-btn>
+      </div>
+    </div>
+  </ui-card>
+
+  <!-- Stage: awaiting_segment_order ────────────────────────────────────── -->
+  <!-- The segment-reorder UI renders INLINE here (rather than on a
+       separate /segment-reorder/:jobId route) so the user stays inside
+       the workflow shell and the workflow breadcrumb / actions remain
+       visible above it. The component reads its own workflow-context and
+       drives the disc-presence guard internally. -->
+  <ng-container *ngIf="stage === 'awaiting_segment_order' && jobId">
+    <app-segment-reorder-page [jobIdInput]="jobId"></app-segment-reorder-page>
+  </ng-container>
+
+  <!-- Stage: matching_playlists ───────────────────────────────────────── -->
+  <ui-card *ngIf="stage === 'matching_playlists'">
+    <div class="paw-body">
+      <div class="paw-pills">
+        <ui-pill tone="blue">
+          <span uiPillIcon class="paw-pill-spin"><ui-icon name="spinner" [size]="11"></ui-icon></span>
+          Matching playlists
+        </ui-pill>
+      </div>
+      <h2>Finding the playlist that matches your order</h2>
+      <p>
+        Comparing your story order to the disc's playlists. This usually
+        finishes in seconds.
+      </p>
+      <div class="paw-actions">
+        <ui-btn variant="ghost" (click)="cancelSegmentReorder()">
+          Cancel and pick manually
+        </ui-btn>
+      </div>
+    </div>
+  </ui-card>
+
+  <!-- Stage: canonical_ripping_pending ────────────────────────────────── -->
+  <ui-card *ngIf="stage === 'canonical_ripping_pending'">
+    <div class="paw-body">
+      <div class="paw-pills">
+        <ui-pill tone="emerald">Match found · playlist {{ segmentReorderState?.matched_playlist_index }}</ui-pill>
+        <ui-pill tone="blue" *ngIf="totalRipTitles > 0">
+          <span uiPillIcon class="paw-pill-spin"><ui-icon name="spinner" [size]="11"></ui-icon></span>
+          Title {{ titlesCompleted + 1 }} of {{ totalRipTitles }}
+        </ui-pill>
+        <ui-pill tone="blue" *ngIf="totalRipTitles === 0">
+          <span uiPillIcon class="paw-pill-spin"><ui-icon name="spinner" [size]="11"></ui-icon></span>
+          Ripping
+        </ui-pill>
+      </div>
+      <h2>Ripping the canonical playlist</h2>
+      <p>
+        Your ordering matched the canonical main feature. Selective rip is
+        copying <strong>{{ totalRipTitles || '—' }} titles</strong>
+        ({{ totalRipTitles ? (totalRipTitles - 1) : 'N' }} extras + the matched
+        main feature) while skipping the duplicate playlists.
+        Roughly <strong>~{{ totalRipTitles ? (totalRipTitles * 4) : 90 }} min</strong>
+        end to end.
+      </p>
+
+      <!-- Overall: titles_done / total. Steady forward motion. -->
+      <div class="paw-progress-label">Overall</div>
+      <div class="paw-progress">
+        <div class="paw-progress-bar"
+             [style.width.%]="overallRipPercent"
+             [attr.aria-valuenow]="overallRipPercent"
+             role="progressbar"
+             aria-valuemin="0"
+             aria-valuemax="100"></div>
+      </div>
+      <div class="paw-progress-meta">
+        <span>{{ titlesCompleted }} / {{ totalRipTitles || '—' }} titles</span>
+        <span>{{ overallRipPercent }}%</span>
+      </div>
+
+      <!-- Current title: 0..100% per title (resets between titles). -->
+      <div class="paw-progress-label">Current title</div>
+      <div class="paw-progress">
+        <div class="paw-progress-bar paw-progress-bar-secondary"
+             [style.width.%]="ripProgress"
+             [attr.aria-valuenow]="ripProgress"
+             role="progressbar"
+             aria-valuemin="0"
+             aria-valuemax="100"></div>
+      </div>
+      <div class="paw-progress-meta">
+        <span>{{ ripProgress }}%</span>
+      </div>
+      <div class="paw-actions">
+        <ui-btn variant="ghost" (click)="cancelSegmentReorder()">
+          Cancel and pick manually
+        </ui-btn>
+      </div>
+    </div>
+  </ui-card>
+
+  <!-- Stage: previews_failed ──────────────────────────────────────────── -->
+  <ui-card *ngIf="stage === 'previews_failed'">
+    <div class="paw-body paw-body-error">
+      <div class="paw-pills">
+        <ui-pill tone="red">Couldn't generate previews</ui-pill>
+      </div>
+      <h2>Preview generation failed</h2>
+      <p *ngIf="segmentReorderState?.error">
+        <strong>Error:</strong> {{ segmentReorderState.error }}
+      </p>
+      <p>
+        We couldn't extract previews from the exploratory rip. You can
+        cancel this workflow and rip the whole disc manually instead.
+      </p>
+      <div class="paw-actions">
+        <ui-btn variant="primary" (click)="cancelSegmentReorder()">
+          Cancel and pick manually
+        </ui-btn>
+      </div>
+    </div>
+  </ui-card>
+
+  <!-- Fallback for unknown stages ─────────────────────────────────────── -->
+  <ui-card *ngIf="stage && !['exploratory_ripping', 'awaiting_segment_order', 'matching_playlists', 'canonical_ripping_pending', 'previews_failed'].includes(stage)">
+    <div class="paw-body">
+      <div class="paw-pills">
+        <ui-pill tone="slate">Stage: {{ stage }}</ui-pill>
+      </div>
+      <h2>Path A — selective rip in progress</h2>
+      <p>This workflow is still running. Hang tight or cancel below.</p>
+      <div class="paw-actions">
+        <ui-btn variant="ghost" (click)="cancelSegmentReorder()">
+          Cancel
+        </ui-btn>
+      </div>
+    </div>
+  </ui-card>
+</section>

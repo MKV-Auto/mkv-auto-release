@@ -1,0 +1,484 @@
+// src/app/components/combobox/combobox.component.scss
+.combobox {
+  position: relative;
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  align-items: stretch;
+  overflow: visible;
+  box-sizing: border-box;
+  z-index: 0;
+
+  .combobox-trigger {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(12px);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    color: #fff;
+    position: relative;
+    z-index: 1;
+    height: 100%;
+    min-height: 44px;
+    box-sizing: border-box;
+
+    &:hover {
+      border-color: rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    /* Template-style trigger when empty (release/boxset: "Select a release..." / "Select a boxset...") */
+    &.combobox-trigger-empty {
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.04);
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .combo-thumb {
+        display: none;
+      }
+
+      .combo-trigger-text {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .combo-title {
+        color: rgba(255, 255, 255, 0.6);
+        font-weight: 400;
+        font-size: 0.875rem;
+      }
+
+      .combobox-trigger-chevron {
+        flex-shrink: 0;
+        color: rgba(255, 255, 255, 0.4);
+      }
+    }
+
+    .combo-thumb {
+      width: 40px;
+      height: 40px;
+      min-width: 40px;
+      max-width: 40px;
+      flex-shrink: 0;
+      object-fit: cover;
+      border-radius: 4px; // Always rectangular, never circular
+    }
+
+    .combo-trigger-text {
+      flex: 1;
+      text-align: left;
+      min-width: 0;
+
+      .combo-title {
+        font-weight: 500;
+        color: #fff;
+      }
+    }
+
+    .combobox-trigger-chevron {
+      flex-shrink: 0;
+    }
+  }
+
+  .combobox-trigger-wrapper {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: stretch;
+  }
+
+  .combo-add-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    z-index: 2;
+    margin-left: 8px;
+  }
+
+  .combo-add {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 100%;
+    min-height: 44px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(12px);
+    color: #fff;
+    transition: border-color 0.15s ease, background 0.15s ease;
+    padding: 0;
+    cursor: pointer;
+    position: relative;
+    box-sizing: border-box;
+    flex-shrink: 0;
+
+    &:hover {
+      border-color: rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+
+  .tmdb-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: 500px; // Match combobox-panel max-width
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    z-index: 151;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    .tmdb-input-group {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+
+      .tmdb-input {
+        flex: 1;
+        padding: 10px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.04);
+        backdrop-filter: blur(12px);
+        color: #fff;
+        font-size: 0.875rem;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+        &::placeholder {
+          color: rgba(255, 255, 255, 0.4);
+        }
+
+        &:focus {
+          outline: none;
+          border-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        &.invalid {
+          border: 2px solid rgba(255, 0, 0, 0.5);
+          box-shadow: 0 0 10px rgba(255, 0, 0, 0.3);
+        }
+      }
+
+      .lookup-button {
+        padding: 10px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.04);
+        backdrop-filter: blur(12px);
+        color: #fff;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: border-color 0.15s ease, background 0.15s ease;
+        white-space: nowrap;
+
+        &:hover:not(:disabled) {
+          border-color: rgba(255, 255, 255, 0.2);
+          background: rgba(255, 255, 255, 0.08);
+        }
+
+        &:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+      }
+    }
+  }
+
+  .combobox-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: 500px;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    z-index: 150;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+
+    .combobox-create-new-top {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 0.5rem;
+      font-size: 0.875rem;
+      color: rgba(6, 182, 212, 1);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.15s;
+      border-radius: 8px;
+      margin: -4px 0 0;
+      &:hover {
+        background: rgba(255, 255, 255, 0.05);
+      }
+    }
+    .combobox-create-new-divider {
+      margin: 0.25rem 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    > input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(12px);
+      color: #fff;
+      font-size: 0.875rem;
+      transition: border-color 0.15s ease;
+
+      &::placeholder {
+        color: rgba(255, 255, 255, 0.4);
+      }
+
+      &:focus {
+        outline: none;
+        border-color: rgba(255, 255, 255, 0.2);
+      }
+    }
+
+    .combobox-options {
+      max-height: 300px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px; // Increased from 4px for better spacing between items
+
+      .combo-option-wrapper {
+        width: 100%;
+        margin-bottom: 0; // Reset any default margin
+        
+        .combo-option {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.75rem 1rem; // Standardized padding with horizontal padding
+          border: none;
+          background: transparent;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: background 0.15s ease;
+          color: #fff;
+          text-align: left; // Ensure left alignment
+          box-sizing: border-box;
+
+          &:hover {
+            background: rgba(255, 255, 255, 0.08);
+          }
+
+          .combo-thumb {
+            width: 40px;
+            height: 40px;
+            min-width: 40px;
+            max-width: 40px;
+            flex-shrink: 0;
+            object-fit: cover;
+            border-radius: 4px; // Always rectangular, never circular
+          }
+
+          .combo-option-text {
+            flex: 1;
+            min-width: 0; // Allow text to shrink
+            overflow: hidden; // Prevent text overflow
+
+            .combo-title {
+              font-weight: 500;
+              color: #fff;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+          }
+        }
+      }
+
+      .empty {
+        padding: 1rem;
+        text-align: center;
+        color: rgba(255, 255, 255, 0.5);
+      }
+    }
+
+  }
+}
+
+.muted {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.text-xs {
+  font-size: 0.75rem;
+}
+
+.text-danger-200 {
+  color: rgba(239, 68, 68, 0.8);
+}
+
+.mt-1 {
+  margin-top: 0.25rem;
+}
+
+// Mobile drawer styles
+.drawer-search-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+  color: #fff;
+  font-size: 1rem;
+  transition: border-color 0.15s ease;
+  margin-bottom: 12px;
+
+  &::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  &:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+}
+
+// Ensure combobox options work in drawer
+:host ::ng-deep .drawer-content {
+  .combobox-options {
+    height: calc(75vh - 220px); // Fixed height: 75vh minus header, search, and padding
+    max-height: calc(75vh - 220px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 8px; // Match desktop gap for consistency
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0; // Reset any default padding
+    
+    .combo-option-wrapper {
+      width: 100%;
+      box-sizing: border-box;
+      min-width: 0; // Allow shrinking
+      margin: 0; // Reset any default margin
+      padding: 0; // Reset any default padding
+      
+      .combo-option {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        min-width: 0; // Allow shrinking
+        padding: 0.75rem 1rem; // Standardized padding with horizontal padding
+        text-align: left; // Ensure left alignment
+        display: flex;
+        align-items: center;
+        gap: 0.75rem; // Consistent gap between image and text
+        border: none;
+        background: transparent;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s ease;
+        color: #fff;
+        margin: 0; // Reset any default margin
+        
+        &:hover {
+          background: rgba(255, 255, 255, 0.08);
+        }
+        
+        .combo-thumb {
+          width: 40px !important;
+          height: 40px !important;
+          min-width: 40px !important;
+          max-width: 40px !important;
+          max-height: 40px !important;
+          object-fit: cover;
+          border-radius: 4px;
+          flex-shrink: 0; // Prevent image from shrinking
+        }
+        
+        .combo-option-text {
+          flex: 1;
+          min-width: 0; // Allow text to shrink
+          overflow: hidden; // Prevent text overflow
+          text-align: left; // Ensure left alignment
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start; // Left align content
+          justify-content: center;
+          
+          .combo-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-align: left; // Ensure left alignment
+            width: 100%; // Full width for proper alignment
+            font-weight: 500;
+            color: #fff;
+          }
+          
+          .muted.text-xs {
+            text-align: left; // Ensure metadata is left-aligned
+            width: 100%; // Full width for proper alignment
+            margin-top: 0.25rem; // Small spacing between title and metadata
+          }
+        }
+      }
+    }
+    
+    .empty {
+      padding: 1rem;
+      text-align: center;
+      color: rgba(255, 255, 255, 0.5);
+      margin: 0;
+    }
+  }
+}
+
+// Also ensure images in drawer are scaled (global fallback)
+::ng-deep .drawer-content img.combo-thumb {
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  max-width: 40px !important;
+  max-height: 40px !important;
+  object-fit: cover;
+  flex-shrink: 0;
+}

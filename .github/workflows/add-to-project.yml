@@ -1,0 +1,21 @@
+# Auto-add new (and reopened) issues to the org Project so they appear on the board.
+# Requires in this repo (mkv-auto-release) secrets:
+#   PROJECT_URL - Full URL of the Projects v2 board (e.g. https://github.com/orgs/MKV-Auto/projects/1)
+#   PIPELINE_TOKEN - shared pipeline PAT (uses its org Projects write; spec in docs/RELEASE_PIPELINE_SETUP.md)
+name: Add issues to project
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  add_to_project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/add-to-project@v1.0.2
+        with:
+          project-url: ${{ secrets.PROJECT_URL }}
+          github-token: ${{ secrets.PIPELINE_TOKEN }}

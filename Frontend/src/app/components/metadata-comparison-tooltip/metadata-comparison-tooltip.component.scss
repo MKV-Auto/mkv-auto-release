@@ -1,0 +1,108 @@
+.metadata-comparison-tooltip-host {
+  position: relative;
+  display: inline-block;
+  isolation: isolate;
+}
+
+.metadata-comparison-tooltip-panel {
+  position: absolute;
+  z-index: 10000 !important;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: rgba(15, 23, 42, 0.98);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.metadata-comparison-tooltip-panel.show {
+  opacity: 1;
+  visibility: visible;
+}
+
+.metadata-comparison-tooltip-arrow {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-1px);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid rgba(255, 255, 255, 0.15);
+}
+
+.metadata-comparison-tooltip-label {
+  font-weight: 600;
+  color: #fff;
+  font-size: 0.75rem;
+}
+
+.metadata-comparison-tooltip-values {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
+
+.metadata-comparison-tooltip-current.is-better {
+  color: #4ade80;
+}
+
+.metadata-comparison-tooltip-current.is-worse {
+  color: #fb923c;
+}
+
+.metadata-comparison-tooltip-current.is-equivalent {
+  color: #e2e8f0;
+}
+
+.metadata-comparison-tooltip-vs {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.metadata-comparison-tooltip-compared {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.metadata-comparison-tooltip-panel-wide {
+  min-width: 14rem;
+}
+
+.metadata-comparison-tooltip-matrix {
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.metadata-comparison-tooltip-matrix-scroll {
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.metadata-comparison-matrix-section {
+  margin-top: 0.5rem;
+}
+
+.metadata-comparison-matrix-heading {
+  font-weight: 600;
+  color: #cbd5e1;
+  margin-bottom: 0.2rem;
+  font-size: 0.7rem;
+}
+
+.metadata-comparison-matrix-line {
+  padding: 0.1rem 0;
+  color: rgba(255, 255, 255, 0.82);
+}

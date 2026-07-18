@@ -1,0 +1,169 @@
+<div class="combobox">
+  <div class="combobox-trigger-wrapper">
+    <button type="button" class="combobox-trigger" [class.combobox-trigger-empty]="!selectedItem" (click)="onToggle()">
+      <ng-container *ngIf="selectedItem && getCover(selectedItem) as img">
+        <img class="combo-thumb" [src]="img" alt="cover">
+      </ng-container>
+      <div class="combo-trigger-text">
+        <div class="combo-title">
+          {{ getDisplayName(selectedItem) }}
+        </div>
+        <div class="muted text-xs" *ngIf="selectedItem && (getMetadata(selectedItem) || addMode === 'tmdb-url')">
+          {{ getMetadata(selectedItem) || (addMode === 'tmdb-url' ? 'Or enter TMDB URL' : '') }}
+        </div>
+      </div>
+      <svg class="combobox-trigger-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </svg>
+    </button>
+    <!-- Desktop: Selection dropdown -->
+    <div class="combobox-panel" *ngIf="!isMobile && isOpen" (click)="$event.stopPropagation()">
+      <!-- Create New at top (template: release/boxset) -->
+      <button
+        *ngIf="showCreateNewAtTop"
+        type="button"
+        class="combobox-create-new-top"
+        (click)="onAddClick(); $event.stopPropagation()">
+        <svg class="combobox-create-new-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>{{ createNewLabel }}</span>
+      </button>
+      <div class="combobox-create-new-divider" *ngIf="showCreateNewAtTop"></div>
+      <!-- Search and Options -->
+      <input
+        type="text"
+        [(ngModel)]="searchTerm"
+        [placeholder]="searchPlaceholder"
+        (ngModelChange)="onSearchChange($event)">
+      <div class="combobox-options">
+        <ng-container *ngFor="let item of filteredItems">
+          <div class="combo-option-wrapper">
+            <button
+              class="combo-option"
+              (click)="onSelectItem(item); $event.stopPropagation(); $event.stopImmediatePropagation()"
+              type="button">
+              <ng-container *ngIf="getCover(item) as img">
+                <img class="combo-thumb" [src]="img" alt="cover">
+              </ng-container>
+              <div class="combo-option-text">
+                <div class="combo-title">{{ getDisplayName(item) }}</div>
+                <div class="muted text-xs" *ngIf="getMetadata(item)">
+                  {{ getMetadata(item) }}
+                </div>
+              </div>
+            </button>
+          </div>
+        </ng-container>
+        <div class="muted text-xs empty" *ngIf="filteredItems.length === 0">
+          No matches
+        </div>
+      </div>
+    </div>
+    
+    <!-- Mobile: Selection drawer -->
+    <app-mobile-drawer 
+      *ngIf="isMobile && isOpen"
+      [isOpen]="isOpen"
+      [title]="label || 'Select'"
+      (close)="onClose()">
+      <!-- Create New at top (template: release/boxset) -->
+      <button
+        *ngIf="showCreateNewAtTop"
+        type="button"
+        class="combobox-create-new-top drawer-create-new-top"
+        (click)="onAddClick(); $event.stopPropagation()">
+        <svg class="combobox-create-new-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>{{ createNewLabel }}</span>
+      </button>
+      <div class="combobox-create-new-divider" *ngIf="showCreateNewAtTop"></div>
+      <input
+        type="text"
+        [(ngModel)]="searchTerm"
+        [placeholder]="searchPlaceholder"
+        (ngModelChange)="onSearchChange($event)"
+        class="drawer-search-input">
+      <div class="combobox-options">
+        <ng-container *ngFor="let item of filteredItems">
+          <div class="combo-option-wrapper">
+            <button
+              class="combo-option"
+              (click)="onSelectItem(item); $event.stopPropagation(); $event.stopImmediatePropagation()"
+              type="button">
+              <ng-container *ngIf="getCover(item) as img">
+                <img class="combo-thumb" [src]="img" alt="cover">
+              </ng-container>
+              <div class="combo-option-text">
+                <div class="combo-title">{{ getDisplayName(item) }}</div>
+                <div class="muted text-xs" *ngIf="getMetadata(item)">
+                  {{ getMetadata(item) }}
+                </div>
+              </div>
+            </button>
+          </div>
+        </ng-container>
+        <div class="muted text-xs empty" *ngIf="filteredItems.length === 0">
+          No matches
+        </div>
+      </div>
+    </app-mobile-drawer>
+  <div class="combo-add-wrapper">
+    <button type="button" class="combo-add" (click)="onAddClick()" [title]="addMode === 'tmdb-url' ? 'Add movie via TMDB URL' : 'Add new item'">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+    </button>
+  </div>
+  <!-- Desktop: TMDB URL Input Dropdown -->
+  <div class="tmdb-dropdown" *ngIf="!isMobile && addMode === 'tmdb-url' && showTmdbInput" (click)="$event.stopPropagation()">
+    <div class="tmdb-input-group">
+      <input 
+        type="text" 
+        class="tmdb-input"
+        [class.invalid]="tmdbUrlInvalid"
+        [(ngModel)]="internalTmdbUrl" 
+        [placeholder]="tmdbUrlPlaceholder"
+        (keyup)="onTmdbUrlKeyup($event)"
+        (blur)="onTmdbUrlBlur()"
+        [disabled]="loading">
+      <button
+        type="button" 
+        class="lookup-button" 
+        (click)="onTmdbLookup()"
+        [disabled]="loading || !internalTmdbUrl.trim() || tmdbUrlInvalid">
+        <span *ngIf="loading">Loading...</span>
+        <span *ngIf="!loading">Lookup</span>
+      </button>
+    </div>
+    <div class="text-danger-200 text-xs mt-1" *ngIf="error">{{ error }}</div>
+    <div class="text-danger-200 text-xs mt-1" *ngIf="tmdbUrlInvalid && !error">TMDB URL must be HTTPS from themoviedb.org</div>
+  </div>
+  
+  <!-- Mobile: TMDB URL Input Drawer -->
+  <app-mobile-drawer 
+    *ngIf="isMobile && addMode === 'tmdb-url' && showTmdbInput"
+    [isOpen]="showTmdbInput"
+    title="Add Movie via TMDB URL"
+    (close)="showTmdbInput = false">
+    <div class="tmdb-input-group">
+      <input 
+        type="text" 
+        class="tmdb-input"
+        [class.invalid]="tmdbUrlInvalid"
+        [(ngModel)]="internalTmdbUrl" 
+        [placeholder]="tmdbUrlPlaceholder"
+        (keyup)="onTmdbUrlKeyup($event)"
+        (blur)="onTmdbUrlBlur()"
+        [disabled]="loading">
+      <button
+        type="button" 
+        class="lookup-button" 
+        (click)="onTmdbLookup()"
+        [disabled]="loading || !internalTmdbUrl.trim() || tmdbUrlInvalid">
+        <span *ngIf="loading">Loading...</span>
+        <span *ngIf="!loading">Lookup</span>
+      </button>
+    </div>
+    <div class="text-danger-200 text-xs mt-1" *ngIf="tmdbUrlInvalid">TMDB URL must be HTTPS from themoviedb.org</div>
+    <div class="text-danger-200 text-xs mt-1" *ngIf="error">{{ error }}</div>
+  </app-mobile-drawer>
+</div>

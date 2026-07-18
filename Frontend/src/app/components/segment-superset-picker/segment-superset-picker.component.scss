@@ -1,0 +1,193 @@
+// Segment-superset picker modal. Borrows the dialog shell from
+// RipSizeWarningModal — outer ui-card supplies the surface; this file
+// only carries positioning + the cluster/candidate row styling.
+
+.ssp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(5, 8, 18, 0.65);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: ssp-fade-in 0.18s ease-out;
+}
+
+.ssp-dialog {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: ssp-fade-in 0.18s ease-out;
+
+  ::ng-deep .ui-card {
+    border-radius: 18px;
+    display: flex;
+    flex-direction: column;
+    max-height: 100%;
+  }
+}
+
+.ssp-header {
+  padding: 20px 24px 4px;
+  flex-shrink: 0;
+
+  h2 {
+    margin: 6px 0 4px;
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+  }
+}
+
+.ssp-summary {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.62);
+
+  strong { color: #fff; }
+}
+
+.ssp-clusters {
+  padding: 16px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.ssp-cluster {
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.025);
+
+  &.ssp-cluster-expanded {
+    border-color: rgba(99, 102, 241, 0.45);
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.12);
+  }
+}
+
+.ssp-cluster-head {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  width: 100%;
+  box-sizing: border-box;
+  color: rgba(255, 255, 255, 0.92);
+
+  &:hover { background: rgba(255, 255, 255, 0.04); }
+}
+
+.ssp-cluster-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ssp-cluster-count {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.ssp-cluster-extras {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.ssp-candidates {
+  list-style: none;
+  padding: 0 0 6px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ssp-candidate {
+  padding: 10px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+
+  &.ssp-candidate-pending {
+    background: rgba(99, 102, 241, 0.05);
+  }
+}
+
+.ssp-candidate-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.ssp-candidate-file {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  color: #fff;
+}
+
+.ssp-candidate-size {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.ssp-candidate-body {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.62);
+  line-height: 1.45;
+}
+
+.ssp-extras {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.ssp-pick {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(99, 102, 241, 0.22);
+  border: 1px solid rgba(99, 102, 241, 0.5);
+
+  &:hover:not([disabled]) {
+    background: rgba(99, 102, 241, 0.32);
+  }
+
+  &[disabled] {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+}
+
+.ssp-footer {
+  padding: 16px 24px;
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+@keyframes ssp-fade-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}

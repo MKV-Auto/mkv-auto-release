@@ -1,0 +1,64 @@
+<div class="block w-full">
+  <div
+    class="w-full relative bg-black rounded-xl overflow-hidden"
+    [class.h-full]="fill"
+    [class.inline]="inline"
+    [class.hide-fullscreen-mobile]="hideFullscreenOnMobile">
+    <button
+      *ngIf="showFullscreen && playbackStarted"
+      type="button"
+      class="absolute bottom-2 right-2 z-[2] border-0 bg-slate-900/70 text-white w-7 h-7 p-0 rounded-lg cursor-pointer items-center justify-center leading-none transition-colors hover:bg-slate-900/90"
+      [ngClass]="hideFullscreenOnMobile ? 'hidden md:inline-flex' : 'inline-flex'"
+      title="Expand preview"
+      (click)="openOverlay()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+           class="w-full h-full block flex-none">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
+        <path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+        <path d="M3 16v3a2 2 0 0 0 2 2h3"/>
+        <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+      </svg>
+    </button>
+    <video
+      #video
+      class="w-full rounded-xl bg-slate-900"
+      [class.h-18]="inline"
+      [class.object-cover]="inline"
+      [class.h-full]="fill"
+      [class.object-contain]="fill"
+      [class.rounded-none]="fill"
+      controls
+      playsinline
+      [muted]="muted"
+      [attr.poster]="poster || null"
+      [attr.preload]="preload"
+      [attr.disablePictureInPicture]="disablePictureInPicture ? '' : null"
+      (loadeddata)="onLoaded()"
+      (loadedmetadata)="onVideoMetadata($event)"
+      (play)="onInlinePlay()"
+      (pause)="onInlinePause()"
+      (error)="onVideoError($event)"
+      (waiting)="onWaiting()"
+      (playing)="onPlaying()">
+      Your browser does not support HTML5 video.
+    </video>
+  </div>
+  <ng-template #overlayTemplate>
+    <div class="preview-overlay relative w-full h-full flex items-center justify-center bg-black rounded-xl overflow-hidden" (click)="$event.stopPropagation()">
+      <button type="button" class="overlay-close absolute top-2 right-2 border-0 bg-slate-900/70 text-white py-1.5 px-2.5 rounded-lg cursor-pointer z-[2] hover:bg-slate-900/90" (click)="closeOverlay()">✕</button>
+      <video
+        #overlayVideo
+        class="w-full h-auto max-h-full bg-black object-contain"
+        controls
+        playsinline
+        [muted]="muted"
+        [attr.poster]="poster || null"
+        [attr.preload]="preload"
+        [attr.disablePictureInPicture]="disablePictureInPicture ? '' : null"
+        (loadedmetadata)="onOverlayLoaded()">
+        Your browser does not support HTML5 video.
+      </video>
+    </div>
+  </ng-template>
+</div>

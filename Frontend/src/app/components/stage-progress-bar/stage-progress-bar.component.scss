@@ -1,0 +1,309 @@
+// ---- Desktop: template-style flowing bar (flex, large dots, icons, labels below, connectors) ----
+// Hidden below md; visible from 768px up (so only one of desktop/mobile shows at a time)
+.stage-progress-desktop {
+  display: none;
+  align-items: center;
+  padding: 0 1rem;
+  min-width: 0;
+  width: 100%;
+
+  @media (min-width: 768px) {
+    display: flex;
+  }
+}
+
+.stage-progress-flex {
+  display: flex;
+  align-items: flex-start; // Top-align cells so dot+bar rows line up across stages
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.stage-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+// Row containing dot + connector; fixed height so active (enlarged) dot doesn't shift others (2/3 scale)
+.stage-dot-connector-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+}
+
+// Dot container: fixed 32px slot so every dot and bar stay aligned (2/3 of 48px)
+.stage-dot-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+}
+
+// Dot: 2/3 of template sizes — pending 24px, completed 27px, active 32px
+.stage-dot {
+  position: relative;
+  z-index: 10;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.5s ease;
+  flex-shrink: 0;
+
+  &.pending {
+    width: 24px;
+    height: 24px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(4px);
+  }
+
+  &.completed {
+    width: 27px;
+    height: 27px;
+    background: linear-gradient(to bottom right, #22c55e, #16a34a);
+    border: 2px solid #4ade80;
+    box-shadow: 0 0 14px rgba(34, 197, 94, 0.5);
+  }
+
+  &.active {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(to bottom right, #3b82f6, #9333ea);
+    border: 2px solid #60a5fa;
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.6);
+  }
+
+  /* Template: failed state (red gradient, X icon) */
+  &.failed {
+    width: 27px;
+    height: 27px;
+    background: linear-gradient(to bottom right, #ef4444, #dc2626);
+    border: 2px solid #f87171;
+    box-shadow: 0 0 14px rgba(239, 68, 68, 0.5);
+  }
+}
+
+.stage-dot-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+
+  svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+  }
+}
+
+.stage-dot-spinner svg {
+  animation: stage-spin 1s linear infinite;
+}
+
+@keyframes stage-spin {
+  to { transform: rotate(360deg); }
+}
+
+// Label below dot+bar row (template: text-[10px] font-semibold)
+.stage-label-wrap {
+  margin-top: 0.375rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.125rem;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.stage-label-text {
+  font-size: 10px;
+  font-weight: 600;
+  transition: color 0.3s ease;
+
+  &.pending {
+    color: rgba(255, 255, 255, 0.5);
+  }
+  &.active {
+    color: #fff;
+  }
+  &.completed {
+    color: #4ade80;
+  }
+  &.failed {
+    color: #f87171;
+  }
+}
+
+.stage-label-pct {
+  font-size: 10px;
+  font-weight: 700;
+  color: #60a5fa;
+}
+
+.stage-label-phase {
+  font-size: 9px;
+  font-weight: 600;
+  color: #fbbf24; /* amber-400 — distinct from blue progress % */
+  white-space: nowrap;
+  animation: phase-pulse 2s ease-in-out infinite;
+}
+
+@keyframes phase-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.stage-mobile-phase {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #fbbf24;
+  animation: phase-pulse 2s ease-in-out infinite;
+}
+
+.stage-mobile-elapsed {
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.stage-label-elapsed {
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.35);
+  white-space: nowrap;
+}
+
+// Connecting line (2/3 scale: 3px height)
+.stage-connector {
+  flex: 1;
+  height: 3px;
+  margin: 0 3px;
+  position: relative;
+  min-width: 6px;
+}
+
+.stage-connector-track {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+}
+
+.stage-connector-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  overflow: visible;
+  transition: width 0.7s ease-out;
+}
+
+.stage-connector-fill-completed {
+  background: linear-gradient(to right, #22c55e, #4ade80);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.4);
+  width: 100%;
+}
+
+.stage-connector-fill-active {
+  background: linear-gradient(to right, #3b82f6, #a855f7);
+  width: 0;
+
+  .stage-connector-glow {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    background: #60a5fa;
+    border-radius: 9999px;
+    box-shadow: 0 0 10px rgba(96, 165, 250, 0.8);
+    animation: stage-pulse 1.5s ease-in-out infinite;
+  }
+}
+
+@keyframes stage-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+// ---- Mobile: circle left, stage name + count right; scaled to fit action bar ----
+// Visible below md; hidden from 768px up (so only one of desktop/mobile shows at a time)
+.stage-progress-mobile {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  width: 100%;
+
+  @media (min-width: 768px) {
+    display: none;
+  }
+}
+
+.stage-progress-mobile-inner {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+// Scaled down so circle + label + buttons fit comfortably in action bar
+.stage-progress-circle {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  transform: rotate(-90deg);
+}
+
+.stage-circle-bg {
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.stage-segment-active {
+  filter: drop-shadow(0 0 6px rgba(96, 165, 250, 0.8));
+}
+
+.stage-circle-pct {
+  font-size: 1.25rem;
+  font-weight: 700;
+  fill: #60a5fa;
+}
+
+.stage-mobile-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+
+.stage-mobile-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &.complete {
+    color: #4ade80;
+  }
+}
+
+.stage-mobile-summary {
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+}

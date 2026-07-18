@@ -1,0 +1,77 @@
+# Docker Compose for Development
+# Mounts source code as volumes for live editing. Uses external Postgres/Redis.
+# Build the image first: ./scripts/build-docker or (from repo root) build frontend then:
+#   docker compose -f Docker/docker-compose.dev.yml build
+
+version: '3.8'
+
+services:
+  mkv-auto:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile
+    container_name: mkv-auto-dev
+    ports:
+      - "8080:80"
+      - "4200:4200"  # Angular dev server (if running separately)
+      - "8000:8000"  # Direct backend access for debugging
+    volumes:
+      # Mount source code for live editing
+      - ../Backend:/app/backend
+      - ../Frontend:/app/frontend
+      # Persistent data
+      - mkv-data:/data
+      # Optical drive access
+      - /dev/sr0:/dev/sr0
+    devices:
+      - /dev/sr0
+    privileged: true
+    environment:
+      - DATABASE_URL=postgresql://postgres:changeme@postgres:5432/discs
+      - REDIS_URL=redis://redis:6379/0
+      - MKVAUTO_DEBUG_LEVEL=DEBUG
+      - ENABLE_DEVMODE=1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: "no"  # Don't auto-restart in dev mode
+
+  postgres:
+    image: postgres:17
+    container_name: mkv-auto-postgres-dev
+    environment:
+      POSTGRES_DB: discs
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - postgres-data-dev:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"  # Expose for direct access
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8
+    container_name: mkv-auto-redis-dev
+    volumes:
+      - redis-data-dev:/data
+    ports:
+      - "6379:6379"  # Expose for direct access
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mkv-data:
+    driver: local
+  postgres-data-dev:
+    driver: local
+  redis-data-dev:
+    driver: local

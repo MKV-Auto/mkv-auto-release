@@ -1,0 +1,104 @@
+<div class="workflow-header workflow-breadcrumb-wrapper" [class.mobile]="isMobile">
+  <!-- Row 1: Image + Movie Name (Year) -->
+  <div class="breadcrumb-row breadcrumb-row-1">
+    <div class="breadcrumb-image-wrapper">
+      <img *ngIf="movieCover; else discIconFallback"
+           [src]="movieCover"
+           [alt]="movieName || 'Movie cover'"
+           class="breadcrumb-image" />
+      <ng-template #discIconFallback>
+        <div class="breadcrumb-image brand-logo-fallback">
+          <ui-icon name="disc" [size]="26"></ui-icon>
+        </div>
+      </ng-template>
+    </div>
+    <div class="breadcrumb-title-group">
+      <div class="breadcrumb-title-row">
+        <div class="breadcrumb-title" [title]="getDisplayName()">
+          {{ getDisplayName() }}
+        </div>
+        <ui-pill
+          *ngIf="showDiscdbSuggestedBadge"
+          tone="cyan"
+          class="breadcrumb-discdb-badge"
+          title="TheDiscDB Suggested Metadata for this disc">
+          <ui-icon uiPillIcon name="info" [size]="11"></ui-icon>
+          <span class="breadcrumb-discdb-label-desktop">TheDiscDB Suggested Metadata</span>
+          <span class="breadcrumb-discdb-label-mobile">DiscDB</span>
+        </ui-pill>
+        <!-- #371: disc-level primary-season selector. Only renders when a TV
+             catalog has been hydrated (i.e. linked movie is a TV series). -->
+        <label *ngIf="tvSeasonCount && tvSeasonCount > 0"
+               class="breadcrumb-primary-season"
+               title="Season this disc represents — used as the default for new tracks">
+          <span class="breadcrumb-primary-season-label">Season for this disc</span>
+          <!-- #536: per-option [selected] instead of `<select [value]>` — the
+               select element is created BEFORE its ngFor children exist, and
+               the [value] binding can race with the late-arriving options
+               (the select element coerces value→string and silently reverts
+               to the first option when value is set before that option is
+               in the DOM). [selected] on each option survives the race. -->
+          <select (change)="onPrimarySeasonChange(($any($event.target)).value)"
+                  class="breadcrumb-primary-season-select"
+                  aria-label="Disc primary season">
+            <option *ngFor="let s of seasonsRange(tvSeasonCount)"
+                    [value]="s"
+                    [selected]="s === (primarySeason ?? 1)">Season {{ s }}</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <!-- Mobile: Dropdown in header row -->
+    <div class="breadcrumb-dropdown breadcrumb-dropdown-mobile-header" *ngIf="isMobile" (click)="toggleDropdown($event)">
+      <span class="breadcrumb-current">{{ getStepLabel(currentStep) }}</span>
+      <ui-icon class="dropdown-arrow" [class.open]="dropdownOpen" name="expand" [size]="12"></ui-icon>
+      <div class="breadcrumb-dropdown-menu" *ngIf="dropdownOpen" (click)="$event.stopPropagation()">
+        <div class="breadcrumb-dropdown-item"
+             *ngFor="let step of steps"
+             [class.active]="currentStep === step"
+             [class.completed]="getStepIndex(step) < getStepIndex(currentStep)"
+             [class.clickable]="canNavigateToStep(step)"
+             [class.muted]="isMuted(step)"
+             (click)="onStepClick(step, $event)"
+             (touchend)="onStepClick(step, $event)">
+          {{ getStepLabel(step) }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2: Pill-style breadcrumb (Desktop only) — prototype pattern: glass container with
+       icon-avatar + label buttons separated by chevrons. Past steps get an emerald check;
+       current step has indigo accent; future steps stay muted with their own glyph. -->
+  <div class="breadcrumb-row breadcrumb-row-2" *ngIf="!isMobile">
+    <div class="breadcrumb-pill-rail">
+      <ng-container *ngFor="let step of steps; let i = index; let last = last">
+        <button
+          type="button"
+          class="breadcrumb-step-btn"
+          [class.is-current]="currentStep === step"
+          [class.is-past]="getStepIndex(step) < getStepIndex(currentStep)"
+          [class.is-clickable]="canNavigateToStep(step)"
+          [class.is-muted]="isMuted(step)"
+          [disabled]="!canNavigateToStep(step)"
+          (click)="onStepClick(step, $event)">
+          <span class="breadcrumb-step-avatar" aria-hidden="true">
+            <ui-icon
+              [name]="getStepIndex(step) < getStepIndex(currentStep) ? 'check' : stepIcon(step)"
+              [size]="11"></ui-icon>
+          </span>
+          <span class="breadcrumb-step-label">{{ getStepLabel(step) }}</span>
+        </button>
+        <ui-icon
+          *ngIf="!last"
+          class="breadcrumb-chevron"
+          name="chevron-right"
+          [size]="11"
+          aria-hidden="true"></ui-icon>
+      </ng-container>
+    </div>
+  </div>
+</div>
+
+<!-- Click outside to close dropdown - handled by document click listener -->
+<div class="dropdown-backdrop" *ngIf="isMobile && dropdownOpen"></div>

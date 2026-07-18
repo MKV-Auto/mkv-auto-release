@@ -1,0 +1,508 @@
+<div *ngIf="titles?.length" (focusin)="onFocusIn()" (focusout)="onFocusOut()">
+  <!-- Desktop: Card-Based Layout — interleaved duplicate groups and singles -->
+  <!-- Desktop: list + side-panel editor (Phase 3 of labeling restructure).
+       Renders one TitleRow per title in display order on the left, with
+       TitleEditor docked on the right showing the selectedTitleId. Mobile
+       branch below keeps the legacy card layout + drawer; only desktop is
+       restructured here. -->
+  <ng-container *ngIf="!isMobile">
+    <div class="title-label-split">
+      <div class="title-label-list" role="listbox" aria-label="Disc titles">
+        <!-- Show-ignored toggle (prototype pattern). Hidden when the disc has
+             no ignored content rows. On Midway-class Path A discs this lifts
+             ~200 auto-marked-ignore decoys out of the default view. -->
+        <div class="title-label-list-actions" *ngIf="ignoredCount > 0">
+          <ui-btn variant="ghost" (click)="toggleShowIgnored()">
+            {{ showIgnored ? 'Hide ignored' : 'Show ignored (' + ignoredCount + ')' }}
+          </ui-btn>
+        </div>
+        <ng-container *ngFor="let t of getDisplayOrderedTitles(); trackBy: trackByTitleId">
+          <!-- Dedupe siblings stay hidden from the rail entirely. They surface
+               inside TitleEditor's DuplicateGroupPanel when the representative
+               is selected, and inside the Compare modal opened from there.
+               Ignored rows hide by default; toggle Show ignored to surface
+               them with a muted style. -->
+          <!-- Visibility gate: user-ignored rows hide by default behind
+               Show ignored. Auto-ignored rows (auto_type='ignore' AND
+               user_type IS NULL) stay visible chip-less so the user
+               can confirm/override via the right-editor's Confirm-
+               ignore button instead of having decoy candidates
+               silently disappear. -->
+          <ng-container *ngIf="!isDedupeSibling(getTitleId(t)) && (showIgnored || !isUserIgnored(t))">
+            <app-title-row
+              [attr.data-title-id]="getTitleId(t)"
+              [attr.id]="'title-row-' + (getTitleId(t) || '')"
+              [class.is-emphasized]="emphasizedTitleId === (getTitleId(t) || '')"
+              [class.title-label-row-muted]="isIgnored(t)"
+              [title]="t.title"
+              [sourceFile]="t.source_file"
+              [duration]="getTitleDurationLabel(t)"
+              [previewUrl]="null"
+              [status]="getTitleRowStatus(t)"
+              [progress]="getTitleProgressValue(t) || null"
+              [selected]="selectedTitleId === getTitleId(t)"
+              [userType]="t.user_type"
+              [autoType]="t.auto_type"
+              [discdbHit]="discdbHit"
+              (selected$)="selectTitle(t)">
+              <span uiRowSuffix class="title-label-row-suffix">
+                <app-detection-badge
+                  *ngIf="t.detection_warning"
+                  [title]="t"
+                  class="title-label-row-detection">
+                </app-detection-badge>
+                <app-obfuscation-badge
+                  *ngIf="t.obfuscation_flag && !isMatchedCanonical(t)"
+                  [flagged]="true"
+                  [reason]="t.obfuscation_reason">
+                </app-obfuscation-badge>
+                <!-- Canonical chip: high-confidence "this is the
+                     canonical of a duplicate group" — fires for Path
+                     A's exploratory-rip-confirmed canonical. The
+                     `Group of N` count goes in the tooltip so the row
+                     stays uncluttered. -->
+                <ui-pill
+                  *ngIf="isMatchedCanonical(t)"
+                  tone="emerald"
+                  [attr.title]="canonicalChipTooltip(t)">
+                  Canonical
+                </ui-pill>
+                <!-- Tiny labeling-complete check icon — silent
+                     attention signal. Rows without the check still
+                     need user input on type or title text. -->
+                <span
+                  class="title-label-row-complete-check"
+                  *ngIf="isLabelingComplete(t)"
+                  title="Labeling complete — type is set to a non-ignore value and the title has a name. Rows without this check still need your input."
+                  aria-label="Labeling complete">
+                  <ui-icon name="check-circle" [size]="14"></ui-icon>
+                </span>
+              </span>
+            </app-title-row>
+          </ng-container>
+        </ng-container>
+      </div>
+      <div class="title-label-editor">
+        <app-title-editor
+          *ngIf="selectedTitle; else noSelection"
+          [title]="selectedTitle"
+          [isSeries]="isSeries"
+          [titleProgress]="titleProgress"
+          [titleStatusFn]="titleStatusFn"
+          [titleProgressValueFn]="titleProgressValueFn"
+          [titleActiveFn]="titleActiveFn"
+          [previewUrlFn]="previewUrlFn"
+          [titlePathFn]="titlePathFn"
+          [previewStateFn]="previewStateFn"
+          [labelSaving]="labelSaving"
+          [lastAutosaveOk]="lastAutosaveOk"
+          [devMode]="devMode"
+          [showCloseButton]="true"
+          [siblings]="getEditorSiblings()"
+          [isGroupRepresentative]="isEditorTitleGroupRepresentative()"
+          [componentClips]="getComponentClips()"
+          (close)="selectedTitleId = null"
+          (titleChanged)="onEditorChanged()"
+          (titleBlur)="onBlur()"
+          (titlePatched)="titlePatched.emit($event)"
+          (switchToSibling)="selectTitle($event)"
+          (makeSiblingPrimary)="onMakeSiblingPrimary($event)"
+          (ungroupDuplicate)="onUngroupDuplicate()">
+        </app-title-editor>
+        <ng-template #noSelection>
+          <ui-empty-state title="Select a title" body="Pick a row on the left to edit its metadata.">
+            <ui-icon uiEmptyIcon name="edit" [size]="20"></ui-icon>
+          </ui-empty-state>
+        </ng-template>
+      </div>
+    </div>
+  </ng-container>
+
+  
+  <!-- Mobile: Card Layout — interleaved duplicate groups and singles -->
+  <ng-container *ngIf="isMobile">
+    <ng-container *ngFor="let row of titleListRows; let mi = index; trackBy: trackByTitleListRow">
+    <!-- Ignored duplicate group on mobile: mirror single ignored card -->
+    <div class="title-card"
+         *ngIf="row.kind === 'group' && isDuplicateGroupIgnored(row.group)"
+         [id]="'title-card-mobile-dup-' + mi"
+         [attr.data-title-id]="getTitleId(getPrimaryTitle(row.group.titles))"
+         [class.active]="isTitleActive(getPrimaryTitle(row.group.titles))"
+         [class.emphasized]="emphasizedTitleId === (getTitleId(getPrimaryTitle(row.group.titles)) || '')"
+         [class.ignored]="true">
+      <ng-container *ngIf="getPrimaryTitle(row.group.titles) as dupPrimary">
+        <div class="title-card-actions-row">
+          <div class="title-card-status-group">
+            <div class="title-card-progress">
+              <ng-container *ngIf="showTitleStatus">
+                <ng-container [ngSwitch]="titleStatusFn(getTitleId(dupPrimary))">
+                  <div class="status-cell" *ngSwitchCase="'completed'">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success"><path d="M3 9l3 3 7-7"></path></svg>
+                  </div>
+                  <div class="status-cell" *ngSwitchCase="'running'">
+                    <div class="circular-progress" [attr.data-progress]="getTitleProgressValue(dupPrimary) || 0">
+                      <svg class="progress-ring" width="16" height="16" viewBox="0 0 16 16">
+                        <circle class="progress-ring-background" cx="8" cy="8" r="6" fill="none" stroke="rgba(255, 255, 255, 0.15)" stroke-width="2"></circle>
+                        <circle class="progress-ring-fill" cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="37.7" [attr.stroke-dashoffset]="getProgressOffset(dupPrimary)" stroke-linecap="round"></circle>
+                      </svg>
+                    </div>
+                  </div>
+                  <div class="status-cell muted" *ngSwitchDefault>
+                    <div class="circular-progress" data-progress="0">
+                      <svg class="progress-ring" width="16" height="16" viewBox="0 0 16 16">
+                        <circle class="progress-ring-background" cx="8" cy="8" r="6" fill="none" stroke="rgba(255, 255, 255, 0.15)" stroke-width="2"></circle>
+                        <circle class="progress-ring-fill muted" cx="8" cy="8" r="6" fill="none" stroke="rgba(255, 255, 255, 0.35)" stroke-width="2" stroke-dasharray="37.7" stroke-dashoffset="37.7" stroke-linecap="round"></circle>
+                      </svg>
+                    </div>
+                  </div>
+                </ng-container>
+              </ng-container>
+            </div>
+          </div>
+          <div class="title-card-title-stack">
+            <div class="title-card-title-text" [title]="dupPrimary.title || 'Untitled'">{{ dupPrimary.title || 'Untitled' }}</div>
+            <div class="title-card-edition-type-row">
+              <span class="title-card-edition-text" *ngIf="showEdition(dupPrimary) && dupPrimary.edition">{{ dupPrimary.edition }}</span>
+              <span class="title-card-type-pill">{{ dupPrimary.type || 'Type' }}</span>
+              <span class="text-xs text-white-50"> · {{ getDuplicateSiblingCount(dupPrimary) + 1 }} duplicates<ng-container *ngIf="getComponentClipCount(dupPrimary) as cc"><ng-container *ngIf="cc > 0"> · {{ cc }} component clip{{ cc === 1 ? '' : 's' }}</ng-container></ng-container></span>
+            </div>
+          </div>
+          <button type="button" class="title-card-ignore-btn" (click)="markAsIgnore(dupPrimary); $event.stopPropagation()" title="Un-ignore title">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 22 20-20"/></svg>
+          </button>
+        </div>
+        <div class="title-card-meta">
+          <span class="muted text-xs">
+            {{ dupPrimary.duration ? (dupPrimary.duration/60 | number:'1.0-1') + ' min' : '' }}
+            <ng-container *ngIf="dupPrimary.size"> · {{ (dupPrimary.size/1024/1024 | number:'1.0-0') }} MB</ng-container>
+            <ng-container *ngIf="getChapterCount(dupPrimary) as chapterCount"> · {{ chapterCount }} chapters</ng-container>
+            <ng-container *ngIf="dupPrimary.source_file"> · {{ dupPrimary.source_file }}</ng-container>
+          </span>
+        </div>
+      </ng-container>
+    </div>
+
+    <div class="duplicate-group-mobile-card"
+         *ngIf="row.kind === 'group' && !isDuplicateGroupIgnored(row.group)"
+         (click)="openDuplicateDrawer(row.group)">
+      <!-- Accent bar -->
+      <div class="duplicate-accent-bar"
+           [style.background]="'linear-gradient(180deg, ' + getGroupColor(row.group.groupId).color + ' 0%, ' + getGroupColor(row.group.groupId).glow + ' 100%)'"
+           [style.boxShadow]="'0 0 12px ' + getGroupColor(row.group.groupId).glow"></div>
+
+      <div class="duplicate-group-mobile-card-header">
+        <app-duplicate-group-badge
+            [duplicateInfo]="getDuplicateInfo(getPrimaryTitle(row.group.titles))"
+            [duplicateSiblingCount]="getDuplicateSiblingCount(getPrimaryTitle(row.group.titles))"
+            [componentClipCount]="getComponentClipCount(getPrimaryTitle(row.group.titles))"
+            [showLabel]="false"
+            size="sm">
+        </app-duplicate-group-badge>
+        <div class="duplicate-group-mobile-card-header-text">
+          <div class="duplicate-group-mobile-card-title">
+            {{ getPrimaryTitle(row.group.titles)?.title || 'Untitled' }}
+          </div>
+          <div class="duplicate-group-mobile-card-subtitle">
+            <span class="duplicate-group-mobile-card-group-pill"
+                  [style.background]="getGroupColor(row.group.groupId).glow + '15'"
+                  [style.color]="getGroupColor(row.group.groupId).color">
+              Group {{ getGroupIdentifier(row.group.groupId) }}
+            </span>
+            <span class="text-white-50 text-xs">
+              {{ getDuplicateSiblingCount(getPrimaryTitle(row.group.titles)) + 1 }} duplicates<ng-container *ngIf="getComponentClipCount(getPrimaryTitle(row.group.titles)) as cc"><ng-container *ngIf="cc > 0"> · {{ cc }} component clip{{ cc === 1 ? '' : 's' }}</ng-container></ng-container>
+            </span>
+          </div>
+        </div>
+        <!-- Chevron -->
+        <div class="duplicate-group-mobile-card-chevron">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </div>
+      </div>
+
+      <!-- Type badge + edition -->
+      <div class="duplicate-group-mobile-card-type" *ngIf="getPrimaryTitle(row.group.titles)?.type">
+        <span class="title-card-type-pill">{{ getPrimaryTitle(row.group.titles).type }}</span>
+        <span *ngIf="getPrimaryTitle(row.group.titles).edition" class="text-xs text-white-60" style="margin-left: 8px;">
+          {{ getPrimaryTitle(row.group.titles).edition }}
+        </span>
+      </div>
+
+      <!-- Metadata row -->
+      <div class="title-card-meta">
+        <span class="muted text-xs">
+          <ng-container *ngIf="getPrimaryTitle(row.group.titles) as p">
+            {{ p.duration ? (p.duration/60 | number:'1.0-1') + ' min' : '' }}
+            <ng-container *ngIf="p.size"> · {{ formatSize(p.size) }}</ng-container>
+            <ng-container *ngIf="getChapterCount(p) as cc"> · {{ cc }} chapters</ng-container>
+          </ng-container>
+        </span>
+      </div>
+
+      <!-- Low confidence warning -->
+      <div *ngIf="getDuplicateInfo(getPrimaryTitle(row.group.titles))?.confidence === 'low'" class="duplicate-group-mobile-card-warning">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span>Low confidence match</span>
+      </div>
+
+      <!-- Edit button -->
+      <button class="title-card-edit-btn title-step-edit-btn" type="button"
+              [style]="{'background': 'rgba(99, 102, 241, 0.1)', 'border': '1px solid rgba(99, 102, 241, 0.2)'}"
+              (click)="openDuplicateDrawer(row.group); $event.stopPropagation()">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>
+        <span>Edit</span>
+      </button>
+    </div>
+
+    <div class="title-card"
+         *ngIf="row.kind === 'single'"
+         [id]="'title-card-mobile-' + mi"
+         [attr.data-title-id]="getTitleId(row.title)"
+         [class.active]="isTitleActive(row.title)"
+         [class.emphasized]="emphasizedTitleId === (getTitleId(row.title) || '')"
+         [class.ignored]="(row.title.type || '').toLowerCase() === 'ignore'">
+      <div class="title-card-actions-row">
+        <div class="title-card-status-group">
+          <div class="title-card-progress">
+            <ng-container *ngIf="showTitleStatus">
+              <ng-container [ngSwitch]="titleStatusFn(getTitleId(row.title))">
+                <div class="status-cell" *ngSwitchCase="'completed'">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success"><path d="M3 9l3 3 7-7"></path></svg>
+                </div>
+                <div class="status-cell" *ngSwitchCase="'running'">
+                  <div class="circular-progress" [attr.data-progress]="getTitleProgressValue(row.title) || 0">
+                    <svg class="progress-ring" width="16" height="16" viewBox="0 0 16 16">
+                      <circle class="progress-ring-background" cx="8" cy="8" r="6" fill="none" stroke="rgba(255, 255, 255, 0.15)" stroke-width="2"></circle>
+                      <circle class="progress-ring-fill" cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="37.7" [attr.stroke-dashoffset]="getProgressOffset(row.title)" stroke-linecap="round"></circle>
+                    </svg>
+                  </div>
+                </div>
+                <div class="status-cell muted" *ngSwitchDefault>
+                  <div class="circular-progress" data-progress="0">
+                    <svg class="progress-ring" width="16" height="16" viewBox="0 0 16 16">
+                      <circle class="progress-ring-background" cx="8" cy="8" r="6" fill="none" stroke="rgba(255, 255, 255, 0.15)" stroke-width="2"></circle>
+                      <circle class="progress-ring-fill muted" cx="8" cy="8" r="6" fill="none" stroke="rgba(255, 255, 255, 0.35)" stroke-width="2" stroke-dasharray="37.7" stroke-dashoffset="37.7" stroke-linecap="round"></circle>
+                    </svg>
+                  </div>
+                </div>
+              </ng-container>
+            </ng-container>
+          </div>
+        </div>
+
+        <div class="title-card-title-stack">
+          <div class="title-card-title-text" [title]="row.title.title || 'Untitled'">{{ row.title.title || 'Untitled' }}</div>
+          <div class="title-card-edition-type-row">
+            <span class="title-card-edition-text" *ngIf="showEdition(row.title) && row.title.edition">{{ row.title.edition }}</span>
+            <span class="title-card-type-pill">{{ row.title.type || 'Type' }}</span>
+            <app-detection-badge *ngIf="row.title.detection_warning" [title]="row.title" class="title-card-detection-badge"></app-detection-badge>
+          </div>
+        </div>
+
+        <button class="title-card-ignore-btn" (click)="markAsIgnore(row.title); $event.stopPropagation()" [title]="(row.title.type || '').toLowerCase() === 'ignore' ? 'Un-ignore title' : 'Ignore title'">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 22 20-20"/></svg>
+        </button>
+      </div>
+
+      <div class="title-card-meta">
+        <span class="muted text-xs">
+          {{ row.title.duration ? (row.title.duration/60 | number:'1.0-1') + ' min' : '' }}
+          <ng-container *ngIf="row.title.size"> · {{ (row.title.size/1024/1024 | number:'1.0-0') }} MB</ng-container>
+          <ng-container *ngIf="getChapterCount(row.title) as chapterCount"> · {{ chapterCount }} chapters</ng-container>
+        </span>
+      </div>
+      <app-metadata-tag-list
+        *ngIf="getDuplicateInfo(row.title)?.tags?.length"
+        [tags]="getDuplicateInfo(row.title)?.tags || []"
+        [diffTags]="[]"
+        [maxVisible]="8"
+        [size]="'sm'"
+        [currentTitle]="row.title"
+        [comparedTitles]="[]"
+        class="title-card-mobile-metadata-tags">
+      </app-metadata-tag-list>
+
+      <button *ngIf="!isIgnored(row.title)" class="title-card-edit-btn title-step-edit-btn" type="button"
+              [style]="{'background': 'rgba(99, 102, 241, 0.1)', 'border': '1px solid rgba(99, 102, 241, 0.2)'}"
+              (click)="openDrawer(row.title)">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>
+        <span>Edit</span>
+      </button>
+
+      <!-- Single title mobile drawer — wraps the same TitleEditor used by the
+           desktop split layout so the form chrome stays in one place. -->
+      <app-mobile-drawer *ngIf="isDrawerOpen(row.title)" [isOpen]="true" [title]="getDrawerTitle(row.title)" (close)="closeDrawer()">
+        <app-title-editor
+          [title]="row.title"
+          [isSeries]="isSeries"
+          [titleProgress]="titleProgress"
+          [titleStatusFn]="titleStatusFn"
+          [titleProgressValueFn]="titleProgressValueFn"
+          [titleActiveFn]="titleActiveFn"
+          [previewUrlFn]="previewUrlFn"
+          [titlePathFn]="titlePathFn"
+          [previewStateFn]="previewStateFn"
+          [labelSaving]="labelSaving"
+          [lastAutosaveOk]="lastAutosaveOk"
+          [devMode]="devMode"
+          [showCloseButton]="false"
+          (titleChanged)="onEditorChanged()"
+          (titleBlur)="onBlur()"
+          (titlePatched)="titlePatched.emit($event)">
+        </app-title-editor>
+        <div class="title-drawer-footer title-drawer-footer-mobile">
+          <button type="button" class="title-drawer-btn title-drawer-btn-close" (click)="closeDrawerWithoutSave()">Close</button>
+          <button type="button" class="title-drawer-btn title-drawer-btn-save" (click)="saveDrawerAndClose()" [disabled]="labelSaving">Save</button>
+        </div>
+      </app-mobile-drawer>
+    </div>
+    </ng-container>
+
+    <app-mobile-drawer
+      *ngIf="duplicateDrawerGroup"
+      [isOpen]="true"
+      [title]="'Duplicate Group ' + getGroupIdentifier(duplicateDrawerGroup.groupId)"
+      (close)="closeDuplicateDrawer()">
+      <div class="duplicate-drawer-content">
+        <div class="duplicate-drawer-header">
+          <app-duplicate-group-badge
+            [duplicateInfo]="getDuplicateInfo(getPrimaryTitle(duplicateDrawerGroup.titles))"
+            [duplicateSiblingCount]="getDuplicateSiblingCount(getPrimaryTitle(duplicateDrawerGroup.titles))"
+            [componentClipCount]="getComponentClipCount(getPrimaryTitle(duplicateDrawerGroup.titles))"
+            [showLabel]="false"
+            size="md">
+          </app-duplicate-group-badge>
+          <div>
+            <div class="duplicate-drawer-header-title" [style.color]="getGroupColor(duplicateDrawerGroup.groupId).color">
+              Duplicate Group {{ getGroupIdentifier(duplicateDrawerGroup.groupId) }}
+            </div>
+            <div class="text-xs text-white-50">
+              {{ getDuplicateSiblingCount(getPrimaryTitle(duplicateDrawerGroup.titles)) + 1 }} duplicates<ng-container *ngIf="getComponentClipCount(getPrimaryTitle(duplicateDrawerGroup.titles)) as cc"><ng-container *ngIf="cc > 0"> · {{ cc }} component clip{{ cc === 1 ? '' : 's' }}</ng-container></ng-container>
+            </div>
+            <div *ngIf="getDuplicateInfo(getPrimaryTitle(duplicateDrawerGroup.titles))?.confidence === 'low'" class="duplicate-group-mobile-card-warning" style="margin-top: 4px;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span>Low confidence</span>
+            </div>
+          </div>
+        </div>
+
+        <ng-container *ngIf="getPrimaryTitle(duplicateDrawerGroup.titles) as primary">
+          <div class="variant-selector-eyebrow">Title Metadata</div>
+
+          <div class="title-drawer-field">
+            <label class="title-drawer-label">Title</label>
+            <input type="text" class="title-drawer-input"
+                   [class.required-field]="shouldShowRequiredOutline(primary, 'title')"
+                   [(ngModel)]="primary.title"
+                   [placeholder]="primary.source_file || 'Enter title name...'"
+                   (ngModelChange)="onTitleChange(primary, $event)" (blur)="onBlur()">
+          </div>
+
+          <div class="title-drawer-field">
+            <label class="title-drawer-label">Type</label>
+            <div class="duplicate-drawer-type-row">
+              <select class="title-drawer-select duplicate-drawer-type-select"
+                      [class.muted-placeholder]="!primary.type"
+                      [class.required-field]="shouldShowRequiredOutline(primary, 'type')"
+                      [(ngModel)]="primary.type"
+                      (ngModelChange)="onTypeChange(primary, $event)" (blur)="onBlur()">
+                <option *ngFor="let opt of titleTypeOptions" [value]="opt.value" [disabled]="opt.value === ''">{{ opt.label }}</option>
+              </select>
+              <button type="button" class="ignore-btn duplicate-drawer-ignore-btn" (click)="markAsIgnore(primary)"
+                      [class.ignored]="(primary.type || '').toLowerCase() === 'ignore'"
+                      [title]="(primary.type || '').toLowerCase() === 'ignore' ? 'Un-ignore title' : 'Ignore title'">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 22 20-20"/></svg>
+                <span>{{ (primary.type || '').toLowerCase() === 'ignore' ? 'Un-ignore' : 'Ignore' }}</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="title-drawer-field" *ngIf="showSeasonEpisode(primary)">
+            <div class="title-drawer-row">
+              <div class="title-drawer-field-half">
+                <label class="title-drawer-label">Season</label>
+                <input type="number" class="title-drawer-input"
+                       [class.required-field]="shouldShowRequiredOutline(primary, 'season')"
+                       [(ngModel)]="primary.season" placeholder="Season" min="1"
+                       (ngModelChange)="onSeasonChange(primary, $event)" (blur)="onBlur()">
+              </div>
+              <div class="title-drawer-field-half">
+                <label class="title-drawer-label">Episode</label>
+                <input type="number" class="title-drawer-input"
+                       [class.required-field]="shouldShowRequiredOutline(primary, 'episode')"
+                       [(ngModel)]="primary.episode" placeholder="Episode" min="1"
+                       (ngModelChange)="onEpisodeChange(primary, $event)" (blur)="onBlur()">
+              </div>
+            </div>
+          </div>
+
+          <div class="title-drawer-field" *ngIf="showEdition(primary)">
+            <label class="title-drawer-label">Edition</label>
+            <input type="text" class="title-drawer-input"
+                   [(ngModel)]="primary.edition"
+                   placeholder="e.g., Director's Cut, Extended"
+                   (ngModelChange)="onEditionChange(primary, $event)" (blur)="onBlur()">
+          </div>
+
+          <div class="title-drawer-field">
+            <label class="title-drawer-label">Description</label>
+            <textarea class="title-drawer-textarea" rows="3"
+                      [ngModel]="primary.description || primary.note"
+                      placeholder="Optional description..."
+                      (ngModelChange)="updateDescription(primary, $event)" (blur)="onBlur()"></textarea>
+          </div>
+        </ng-container>
+
+        <div class="variant-selector">
+          <div class="variant-selector-eyebrow">Select Primary Variant</div>
+          <div *ngIf="duplicateGroupHasNoComparativeDiff(duplicateDrawerGroup.titles)" class="variant-selector-subtitle text-xs text-white-50">
+            No comparative differences from the metadata scan (chapters, subtitle/audio languages, scan resolution or bitrate, audio profile). Variants may still differ by playlist or file; absolute tags reflect MakeMKV streams.
+          </div>
+          <div class="variant-row"
+               *ngFor="let v of duplicateDrawerGroup.titles"
+               [class.primary]="v.active === true"
+               (click)="selectPrimary(v)">
+            <div class="variant-radio" [class.selected]="v.active === true">
+              <svg *ngIf="v.active === true" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="variant-info">
+              <div class="variant-source-file">{{ v.source_file || 'Unknown source' }}</div>
+              <div class="variant-meta">
+                <span *ngIf="v.duration">{{ (v.duration / 60 | number:'1.0-1') }} min</span>
+                <span *ngIf="v.size">{{ formatSize(v.size) }}</span>
+                <span *ngIf="getChapterCount(v) as cc">{{ cc }} ch</span>
+              </div>
+              <div class="variant-metadata-lines" *ngIf="getVariantMetadataLines(v).length">
+                <span *ngFor="let line of getVariantMetadataLines(v)" class="variant-metadata-line">{{ line }}</span>
+              </div>
+              <app-metadata-tag-list
+                *ngIf="getDuplicateInfo(v)?.tags?.length"
+                [tags]="getDuplicateInfo(v)?.tags || []"
+                [diffTags]="[]"
+                [maxVisible]="6"
+                [currentTitle]="v"
+                [comparedTitles]="[]"
+                class="variant-tags variant-tags-absolute">
+              </app-metadata-tag-list>
+              <app-metadata-tag-list
+                *ngIf="getVisibleDuplicateDiffTags(v, duplicateDrawerGroup.titles).length"
+                [tags]="[]"
+                [diffTags]="getVisibleDuplicateDiffTags(v, duplicateDrawerGroup.titles)"
+                [maxVisible]="6"
+                [currentTitle]="v"
+                [comparedTitles]="getComparedTitles(v)"
+                [groupTitles]="getDuplicateGroupMembers(v)"
+                class="variant-tags variant-tags-diff">
+              </app-metadata-tag-list>
+            </div>
+            <span class="variant-primary-badge" *ngIf="v.active === true">Primary</span>
+          </div>
+        </div>
+
+        <div class="title-drawer-footer">
+          <button type="button" class="title-drawer-btn title-drawer-btn-close" (click)="closeDuplicateDrawer()">Cancel</button>
+          <button type="button" class="title-drawer-btn title-drawer-btn-save" (click)="saveDuplicateDrawerAndClose()" [disabled]="labelSaving">Save Changes</button>
+        </div>
+      </div>
+    </app-mobile-drawer>
+  </ng-container>
+</div>

@@ -1,0 +1,118 @@
+<div class="glass card" *ngIf="labelForm" (focusin)="onFocusIn()" (focusout)="onFocusOut()">
+  <div class="panel-eyebrow">
+    <p class="eyebrow">Release Metadata</p>
+    <div class="eyebrow-actions">
+      <ng-container *ngIf="showSpinner; else releaseSaved">
+        <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="8" cy="8" r="6" opacity=".25"></circle>
+          <path d="M14 8a6 6 0 0 1-6 6"></path>
+        </svg>
+      </ng-container>
+      <ng-template #releaseSaved>
+        <svg *ngIf="lastAutosaveOk && hasLabelContent && !showSpinner" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success">
+          <path d="M3 9l3 3 7-7"></path>
+        </svg>
+      </ng-template>
+    </div>
+  </div>
+  <div class="panel-header">
+    <!-- <div>
+      <h3>Type: {{ labelForm.group_type | titlecase }}</h3>
+      <div class="muted text-xs">Select an existing release to auto-fill shared fields.</div>
+    </div> -->
+  </div>
+  <div class="combo-grid" *ngIf="groupOptions?.length">
+    <div class="combobox" (mouseleave)="closeCombobox()">
+      <button type="button" class="combobox-trigger" (click)="toggleCombobox()">
+        <ng-container *ngIf="coverImageForSelection() as img">
+          <img class="combo-thumb" [src]="img" alt="cover">
+        </ng-container>
+        <div class="combo-trigger-text">
+          <div class="combo-title">
+            {{ getSelectedReleaseDisplayName() }}
+          </div>
+          <div class="muted text-xs">
+            {{ getSelectedReleaseMetadata() }}
+          </div>
+        </div>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+      <button type="button" class="combo-add" (click)="clearSelection.emit()" title="New release">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+      <div class="combobox-panel" *ngIf="groupOpen">
+        <input
+          type="text"
+          [(ngModel)]="groupSearch"
+          placeholder="Search"
+          (ngModelChange)="onSearchChange($event)">
+        <div class="combobox-options">
+          <ng-container *ngFor="let group of filteredGroupOptions()">
+            <div class="flex items-center justify-between">
+              <button
+                class="combo-option"
+                (click)="onApplyGroup(group)">
+              <ng-container *ngIf="group.cover_front_url">
+                <img class="combo-thumb" [src]="group.cover_front_url" alt="cover">
+              </ng-container>
+                <div class="combo-option-text">
+                  <div class="combo-title">{{ getReleaseDisplayName(group) }}</div>
+                  <div class="muted text-xs">
+                  {{ getReleaseMetadata(group) }}
+                </div>
+              </div>
+              <button class="bg-transparent border-0 text-inherit p-1 cursor-pointer" type="button" (click)="onDeleteGroup(group, $event)" title="Delete release">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor"></circle>
+                  <line x1="8" y1="8" x2="16" y2="16"></line>
+                  <line x1="16" y1="8" x2="8" y2="16"></line>
+                </svg>
+              </button>
+              </button>
+            </div>
+          </ng-container>
+          <div class="muted text-xs empty" *ngIf="filteredGroupOptions().length === 0">
+            No matches
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="label-meta release-grid">
+    <label class="field span2">
+      <span>Release Name</span>
+      <input type="text" class="input w-full" [(ngModel)]="labelForm.release_name" placeholder="e.g. Collectors Edition" (ngModelChange)="nameChanged.emit()" (blur)="nameBlur.emit(); fieldBlur.emit()">
+    </label>
+    <label class="field span2">
+      <span>Release Year</span>
+      <input type="text" class="input w-full" [ngClass]="{'border-red-500 ring-1 ring-red-500/30': invalidReleaseYearField, 'opacity-70 cursor-not-allowed bg-white/5': isLinkedToBoxset}" [(ngModel)]="labelForm.release_year" placeholder="e.g. 2024" (ngModelChange)="labelChanged.emit()" (blur)="fieldBlur.emit()" [disabled]="isLinkedToBoxset" [readonly]="isLinkedToBoxset">
+    </label>
+    <label class="field span2">
+      <span>Release Slug <span class="muted text-xs">(auto-generated)</span></span>
+      <input type="text" class="input w-full opacity-70 cursor-not-allowed bg-white/5" [(ngModel)]="labelForm.release_slug" [placeholder]="releaseSlugHint || 'e.g. arcane-2021'" [readonly]="true" [disabled]="true">
+    </label>
+    <label class="field span2">
+      <span>Front Cover URL</span>
+      <input type="text" class="input w-full" [ngClass]="{'border-red-500 ring-1 ring-red-500/30': invalidFrontCoverField, 'opacity-70 cursor-not-allowed bg-white/5': isLinkedToBoxset}" [(ngModel)]="labelForm.cover_front_url" placeholder="https://…" (ngModelChange)="coverChange.emit()" (blur)="fieldBlur.emit()" [disabled]="isLinkedToBoxset" [readonly]="isLinkedToBoxset">
+    </label>
+    <label class="field span2">
+      <span>Back Cover URL</span>
+      <input type="text" class="input w-full" [ngClass]="{'opacity-70 cursor-not-allowed bg-white/5': isLinkedToBoxset}" [(ngModel)]="labelForm.cover_back_url" placeholder="https://…" (ngModelChange)="labelChanged.emit()" (blur)="fieldBlur.emit()" [disabled]="isLinkedToBoxset" [readonly]="isLinkedToBoxset">
+    </label>
+    <label class="field">
+      <span>UPC</span>
+      <input type="text" class="input w-full" [ngClass]="{'border-red-500 ring-1 ring-red-500/30': invalidUPCField, 'opacity-70 cursor-not-allowed bg-white/5': isLinkedToBoxset}" [(ngModel)]="labelForm.upc" (ngModelChange)="labelChanged.emit()" (blur)="fieldBlur.emit()" [disabled]="isLinkedToBoxset" [readonly]="isLinkedToBoxset">
+    </label>
+    <label class="field">
+      <span>ASIN</span>
+      <input type="text" class="input w-full" [ngClass]="{'opacity-70 cursor-not-allowed bg-white/5': isLinkedToBoxset}" [(ngModel)]="labelForm.asin" (ngModelChange)="labelChanged.emit()" (blur)="fieldBlur.emit()" [disabled]="isLinkedToBoxset" [readonly]="isLinkedToBoxset">
+    </label>
+  </div>
+</div>

@@ -1,0 +1,73 @@
+<div
+  class="edition-metadata-form"
+  [class.edition-metadata-form--release]="theme === 'release' || theme === 'movie'"
+  [class.edition-metadata-form--boxset]="theme === 'boxset'"
+  [class.edition-metadata-form--movie]="theme === 'movie'"
+  [class.edition-metadata-form--padded]="padded">
+  <div class="epf-header" *ngIf="heading || showHeaderIcon">
+    <svg
+      *ngIf="showHeaderIcon"
+      class="epf-header-icon"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+    <span *ngIf="heading">{{ heading }}</span>
+  </div>
+  <p class="epf-missing" *ngIf="missingHints?.length">
+    Missing: {{ missingHints!.join(', ') }}
+  </p>
+  <div class="epf-fields">
+    <div class="epf-field">
+      <label>{{ nameLabel }}</label>
+      <input type="text" [(ngModel)]="model.name" [placeholder]="namePlaceholder || ''" />
+    </div>
+    <div class="epf-field">
+      <label>{{ yearLabel }}</label>
+      <input
+        type="number"
+        [(ngModel)]="model.year"
+        [placeholder]="yearPlaceholder || ''"
+        min="1000"
+        max="9999" />
+    </div>
+    <div class="epf-field epf-field--grid" *ngIf="theme !== 'movie'">
+      <div class="epf-field">
+        <label>{{ upcLabel }}</label>
+        <input
+          type="text"
+          [(ngModel)]="model.upc"
+          placeholder="8, 12, 13 or 14 digits"
+          title="GTIN-8, GTIN-12 (UPC-A), GTIN-13, GTIN-14" />
+      </div>
+      <div class="epf-field">
+        <label>ASIN</label>
+        <input type="text" [(ngModel)]="model.asin" [placeholder]="asinPlaceholder" />
+      </div>
+    </div>
+    <div class="epf-field">
+      <label>{{ frontCoverLabel }}</label>
+      <input type="text" [(ngModel)]="model.cover_front_url" placeholder="https://..." />
+    </div>
+    <div class="epf-field" *ngIf="theme !== 'movie'">
+      <label>{{ backCoverLabel }}</label>
+      <input type="text" [(ngModel)]="model.cover_back_url" placeholder="https://..." />
+    </div>
+  </div>
+  <div class="epf-errors" *ngIf="allErrors.length > 0">
+    <div class="epf-error-item" *ngFor="let err of allErrors">{{ err }}</div>
+  </div>
+  <div class="epf-actions">
+    <button type="button" class="epf-btn-secondary" (click)="cancel(); $event.stopPropagation()" [disabled]="loading">
+      {{ cancelLabel }}
+    </button>
+    <button type="button" class="epf-btn-primary" (click)="submit(); $event.stopPropagation()" [disabled]="loading">
+      {{ submitLabel }}
+    </button>
+  </div>
+</div>

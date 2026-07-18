@@ -1,0 +1,640 @@
+#!/bin/bash
+# mkv - Unified MKV-Auto management script
+# One command to rule them all
+
+set -euo pipefail
+shopt -s nullglob
+
+#--------------------------
+# Path Resolution
+#--------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+MKV_LIB_DIR="${SCRIPT_DIR}/mkv-lib"
+
+#--------------------------
+# Configuration
+#--------------------------
+MKV_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mkv"
+MKV_CONFIG_FILE="$MKV_CONFIG_DIR/config"
+
+# Load .env if present (in project root)
+if [ -f "$PROJECT_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$PROJECT_ROOT/.env"
+  set +a
+fi
+
+# Logging configuration
+export MKVAUTO_DEBUG_LEVEL="${MKVAUTO_DEBUG_LEVEL:-INFO}"
+
+#--------------------------
+# Source Library Files
+#--------------------------
+source "${MKV_LIB_DIR}/common.sh"
+source "${MKV_LIB_DIR}/dev.sh"
+source "${MKV_LIB_DIR}/docker.sh"
+source "${MKV_LIB_DIR}/build.sh"
+source "${MKV_LIB_DIR}/test.sh"
+
+#--------------------------
+# Completion Management
+#--------------------------
+check_completion_installed() {
+  local completion_type="${1:-}"
+  
+  case "$completion_type" in
+    system)
+      [ -f "/etc/bash_completion.d/mkv" ]
+      ;;
+    user)
+      [ -f "$HOME/.local/share/bash-completion/completions/mkv" ]
+      ;;
+    manual)
+      # Check if completion function is loaded
+      type _mkv_completion >/dev/null 2>&1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+save_completion_config() {
+  local comp_type="$1"
+  local comp_status="$2"
+  
+  mkdir -p "$MKV_CONFIG_DIR"
+  cat > "$MKV_CONFIG_FILE" <<EOF
+# MKV command configuration (auto-generated)
+COMPLETION_TYPE="$comp_type"
+COMPLETION_INSTALLED="$comp_status"
+EOF
+}
+
+install_completion_system() {
+  echo "Installing completion system-wide..."
+  if sudo cp "${SCRIPT_DIR}/mkv-completion.bash" /etc/bash_completion.d/mkv; then
+    save_completion_config "system" "true"
+    echo "✅ System-wide completion installed successfully!"
+    echo ""
+    offer_immediate_load "/etc/bash_completion.d/mkv"
+  else
+    echo "❌ Failed to install system-wide completion."
+    save_completion_config "none" "false"
+  fi
+}
+
+install_completion_user() {
+  local completion_dir="$HOME/.local/share/bash-completion/completions"
+  echo "Installing completion for current user..."
+  
+  mkdir -p "$completion_dir"
+  if cp "${SCRIPT_DIR}/mkv-completion.bash" "$completion_dir/mkv"; then
+    save_completion_config "user" "true"
+    echo "✅ User completion installed successfully!"
+    echo ""
+    offer_immediate_load "$completion_dir/mkv"
+  else
+    echo "❌ Failed to install user completion."
+    save_completion_config "none" "false"
+  fi
+}
+
+offer_immediate_load() {
+  local completion_file="$1"
+  
+  # Only offer if we're in an interactive bash shell
+  if [ -t 0 ] && [ -n "$BASH_VERSION" ]; then
+    read -p "Would you like to enable tab completion for this shell session now? [Y/n]: " load_now
+    if [[ ! "$load_now" =~ ^[Nn] ]]; then
+      echo ""
+      echo "To enable tab completion in this shell, run:"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  source $completion_file"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      echo "Or simply open a new terminal tab/window - it will work automatically!"
+      echo ""
+    else
+      echo "ℹ️  Tab completion will be available after you restart your shell or open a new terminal."
+    fi
+  else
+    echo "ℹ️  Restart your shell or run: source $completion_file"
+  fi
+}
+
+prompt_completion_install() {
+  echo ""
+  echo "🎯 MKV Tab Completion Setup"
+  echo "───────────────────────────────────────────────────────"
+  echo "Tab completion makes it easier to discover and use mkv commands."
+  echo ""
+  echo "Choose installation method:"
+  echo "  [1] System-wide (all users, requires sudo)"
+  echo "      → /etc/bash_completion.d/mkv"
+  echo "  [2] User-only (current user)"
+  echo "      → ~/.local/share/bash-completion/completions/mkv"
+  echo "  [3] Manual (I'll set it up myself)"
+  echo "      → ${SCRIPT_DIR}/mkv-completion.bash"
+  echo "  [4] Skip (don't install, don't ask again)"
+  echo ""
+  read -p "Choice [1-4]: " choice
+  echo ""
+  
+  case "$choice" in
+    1)
+      install_completion_system
+      ;;
+    2)
+      install_completion_user
+      ;;
+    3)
+      save_completion_config "manual" "declined"
+      echo "ℹ️  Manual installation: Add this to your ~/.bashrc:"
+      echo "    source ${SCRIPT_DIR}/mkv-completion.bash"
+      echo ""
+      # Offer to load it for the current session
+      if [ -t 0 ] && [ -n "$BASH_VERSION" ]; then
+        read -p "Would you like to enable tab completion for this shell session now? [Y/n]: " load_now
+        if [[ ! "$load_now" =~ ^[Nn] ]]; then
+          echo ""
+          echo "To enable tab completion in this shell, run:"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  source ${SCRIPT_DIR}/mkv-completion.bash"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+        fi
+      fi
+      ;;
+    4)
+      save_completion_config "none" "declined"
+      echo "✅ Completion installation skipped. You won't be prompted again."
+      ;;
+    *)
+      echo "❌ Invalid choice. Skipping completion installation."
+      save_completion_config "none" "false"
+      ;;
+  esac
+}
+
+check_and_setup_completion() {
+  # Load existing config if present
+  if [ -f "$MKV_CONFIG_FILE" ]; then
+    source "$MKV_CONFIG_FILE"
+    
+    # If user declined, don't prompt
+    if [ "${COMPLETION_INSTALLED:-}" = "declined" ]; then
+      return 0
+    fi
+    
+    # If installed, validate it's still there
+    if [ "${COMPLETION_INSTALLED:-}" = "true" ]; then
+      if ! check_completion_installed "${COMPLETION_TYPE:-}"; then
+        echo "⚠️  Warning: Tab completion was installed but is now missing."
+        read -p "Would you like to reinstall it? [y/N]: " reinstall
+        if [[ "$reinstall" =~ ^[Yy] ]]; then
+          prompt_completion_install
+        fi
+      fi
+      return 0
+    fi
+  fi
+  
+  # First run or failed previous install - prompt
+  prompt_completion_install
+}
+
+#--------------------------
+# Help System
+#--------------------------
+show_help() {
+  cat << 'EOF'
+MKV-Auto Management Script
+
+Usage: mkv <command> [subcommand] [options]
+
+Main Commands:
+  dev        Local development environment (non-Docker)
+  docker     Docker container development
+  build      Build Docker image
+  test       Run test suites (backend, frontend, e2e)
+  disc       Eject or close (inject) optical drive tray
+  help       Show this help message
+
+Examples:
+  mkv dev start              Start local dev services
+  mkv docker logs api -f     Follow API logs in container
+  mkv build v1.0.0           Build Docker image
+  mkv test                   Run all tests (backend, frontend, e2e)
+  mkv test backend           Run only backend tests
+  mkv test frontend          Run only frontend unit tests and build
+  mkv test e2e               Run only E2E tests
+  mkv disc eject             Eject tray on first drive (/dev/sr0)
+  mkv disc inject 1          Close tray on second drive (/dev/sr1)
+
+For detailed help on a specific command:
+  mkv dev help
+  mkv docker help
+  mkv build help
+  mkv test help
+  mkv disc help
+
+EOF
+}
+
+show_dev_help() {
+  cat << 'EOF'
+Local Development Commands (mkv dev)
+
+Manages local development environment with Postgres/Redis containers
+and local Python/Node services.
+
+Usage: mkv dev <subcommand> [options]
+
+Subcommands:
+  start                Start all services (Postgres, Redis, backend, frontend)
+  stop                 Stop all services
+  restart [SERVICE]    Restart services (frontend, backend, or all)
+  status               Show service status
+  reset                Reset database and cache
+  reset-all            Hard reset (delete all data and containers)
+  seed <COMMAND>       Dev seed operations (backup, create, reload)
+  help                 Show this help
+
+Examples:
+  mkv dev start                 # Start everything
+  mkv dev restart backend       # Restart just backend
+  mkv dev seed backup           # Create dev seed backup
+  mkv dev seed reload --full    # Reload from dev seed with full MKVs
+
+Environment Variables:
+  MKVAUTO_ROOT         Base directory for data/logs (default: ~/MakeMKV-Auto)
+  MKVAUTO_DATA         Data directory (default: $MKVAUTO_ROOT/data)
+  MKVAUTO_DEBUG_LEVEL  Log level: ERROR, WARNING, INFO, DEBUG
+  ENABLE_DEVMODE       Enable dev mode features (0 or 1)
+
+EOF
+}
+
+show_docker_help() {
+  cat << 'EOF'
+Docker Container Commands (mkv docker)
+
+Manages the all-in-one Docker container for development.
+
+Usage: mkv docker <subcommand> [options]
+
+Subcommands:
+  start                     Start container (clean state, removes data volume)
+  stop [--force|--no-wait]  Stop and remove container
+  restart [--force|--no-wait]
+                            Restart container (keeps data volume)
+  rebuild [TARGET] [--force|--no-wait]
+                            Rebuild and restart services (keeps container running)
+                            Targets: frontend, backend, or both (default)
+  reset                     Same as start (clean state)
+  status                    Show container and service status
+  logs [NAME] [-f] [--errors]  View or follow logs (list, api, uvicorn, celery, etc.)
+                              celery = all Celery workers merged; celery-rip / celery-postprocess / celery-transfer / celery-preview / celery-extra = single worker.
+                              --errors = show only lines containing ERROR or WARNING.
+  check <TARGET>            Run health checks (mkv = MakeMKV installation)
+  watch [OPTS] CMD          Watch command output in container
+  help                      Show this help
+
+Rip-in-progress guard (#495):
+  stop / restart / rebuild block (and poll every 10s) until any active rip
+  finishes — killing the container mid-rip leaves the disc in a partial
+  state. Override with:
+    --force      Stop the rip and continue (use sparingly).
+    --no-wait    Refuse to continue with a clear error (for CI / scripts).
+
+Examples:
+  mkv docker start                      # Start container (keeps data)
+  mkv docker rebuild                    # Rebuild both frontend and backend
+  mkv docker rebuild frontend           # Rebuild frontend only
+  mkv docker rebuild backend            # Clear Python cache and restart backend
+  mkv docker logs api -f                # Follow API log
+  mkv docker logs list                  # List all available logs
+  mkv docker check mkv                  # Validate MakeMKV installation
+  mkv docker watch 'ps aux'             # Watch processes
+  mkv docker watch -n5 'df -h'          # Watch disk usage every 5s
+
+Exposed Ports (accessible externally on all network interfaces):
+  Frontend:  http://localhost or http://<host-ip>:80
+  Backend:   http://localhost:8000 or http://<host-ip>:8000
+  Postgres:  localhost:5432 or <host-ip>:5432
+  Redis:     localhost:6379 or <host-ip>:6379
+
+Note: Backend code changes are live via volume mount. For frontend changes,
+run 'mkv docker rebuild frontend' to rebuild and restart the frontend.
+
+Data/logs/jobs: project folder docker-data/ is bind-mounted to /data/mkvauto
+(data/, logs/, tmp/). Override with MKVAUTO_DOCKER_DATA in .env.
+If you previously used the default setup without this mount, app data (including
+MakeMKV) was in the mkv-auto-data volume; copy it into docker-data if you want to keep it.
+
+EOF
+}
+
+show_test_help() {
+  cat << 'EOF'
+Test Commands (mkv test)
+
+Run the same test suites as CI: backend (pytest), frontend (unit + build), e2e (Playwright full-stack).
+
+Usage: mkv test [backend|frontend|e2e|makemkv]
+
+Subcommands:
+  (none)     Run all tests in order: backend → frontend → e2e
+  backend    Run backend tests only (pytest). Requires Postgres and Redis (e.g. mkv dev start).
+  frontend   Run frontend unit tests and production build only.
+  e2e        Run full-stack E2E tests only (npm run e2e:full). Requires Redis; starts backend and serves frontend.
+  makemkv    MakeMKV updater E2E (container). Requires a running test container; run mkv build then scripts/test-docker.sh first.
+
+Environment (optional):
+  DATABASE_URL   Backend tests (default: postgresql://postgres:ripper_pass@localhost:5432/discs)
+  REDIS_URL      Backend and E2E (default: redis://localhost:6379/0)
+
+Examples:
+  mkv test              # Run everything (backend, frontend, e2e)
+  mkv test backend      # Backend only
+  mkv test frontend     # Frontend only
+  mkv test e2e          # E2E only
+  mkv test makemkv      # MakeMKV updater E2E (container must be running)
+
+EOF
+}
+
+show_build_help() {
+  cat << 'EOF'
+Docker Image Build Commands (mkv build)
+
+Build the MKV-Auto Docker image.
+
+Usage: mkv build [version]
+
+Arguments:
+  version    Version tag (default: latest)
+
+Examples:
+  mkv build              # Build with 'latest' tag
+  mkv build v1.0.0       # Build with 'v1.0.0' tag
+  mkv build dev-test     # Build with custom tag
+
+The build script will:
+  - Build the Docker image
+  - Tag it with both the specified version and 'latest'
+  - Include build metadata (date, git commit)
+
+EOF
+}
+
+#--------------------------
+# Command Routing
+#--------------------------
+cmd_dev() {
+  local subcmd="${1:-help}"
+  shift || true
+  
+  case "$subcmd" in
+    start)
+      dev_start
+      ;;
+    stop)
+      dev_stop
+      ;;
+    restart)
+      dev_restart "$@"
+      ;;
+    status)
+      dev_status
+      ;;
+    reset)
+      dev_reset
+      ;;
+    reset-all)
+      dev_reset_all
+      ;;
+    seed)
+      dev_seed "$@"
+      ;;
+    help|--help|-h)
+      show_dev_help
+      ;;
+    *)
+      echo "Error: Unknown dev command '$subcmd'"
+      echo ""
+      show_dev_help
+      exit 1
+      ;;
+  esac
+}
+
+cmd_docker() {
+  local subcmd="${1:-help}"
+  shift || true
+  
+  case "$subcmd" in
+    start)
+      docker_start "$@"
+      ;;
+    stop)
+      docker_stop "$@"
+      ;;
+    restart)
+      docker_restart "$@"
+      ;;
+    rebuild)
+      docker_rebuild "$@"
+      ;;
+    reset)
+      docker_reset
+      ;;
+    status)
+      docker_status
+      ;;
+    logs)
+      docker_logs "$@"
+      ;;
+    check)
+      docker_check "$@"
+      ;;
+    watch)
+      docker_watch "$@"
+      ;;
+    help|--help|-h)
+      show_docker_help
+      ;;
+    *)
+      echo "Error: Unknown docker command '$subcmd'"
+      echo ""
+      show_docker_help
+      exit 1
+      ;;
+  esac
+}
+
+cmd_build() {
+  local version="${1:-latest}"
+  
+  if [[ "$version" == "help" || "$version" == "--help" || "$version" == "-h" ]]; then
+    show_build_help
+    exit 0
+  fi
+  
+  build_image "$version"
+}
+
+cmd_test() {
+  local subcmd="${1:-}"
+  shift || true
+  
+  case "$subcmd" in
+    help|--help|-h)
+      show_test_help
+      ;;
+    backend)
+      run_backend_tests "$@"
+      ;;
+    frontend)
+      run_frontend_tests "$@"
+      ;;
+    e2e)
+      run_e2e_tests "$@"
+      ;;
+    makemkv)
+      run_makemkv_test "$@"
+      ;;
+    "")
+      run_all_tests
+      ;;
+    *)
+      echo "Error: Unknown test command '$subcmd'"
+      echo ""
+      show_test_help
+      exit 1
+      ;;
+  esac
+}
+
+#--------------------------
+# Disc (eject / inject)
+#--------------------------
+show_disc_help() {
+  cat << 'EOF'
+Optical drive tray commands (mkv disc)
+
+Eject or close the tray of an optical drive using the system 'eject' command.
+
+Usage: mkv disc <eject|inject> [DRIVE]
+
+Subcommands:
+  eject [DRIVE]    Eject (open) the tray. DRIVE defaults to 0 (/dev/sr0).
+  inject [DRIVE]   Close (load) the tray. DRIVE defaults to 0 (/dev/sr0).
+
+Arguments:
+  DRIVE            Drive number (0, 1, 2, ...). Device used is /dev/sr{DRIVE}.
+
+Examples:
+  mkv disc eject       # Open tray on first drive
+  mkv disc eject 1     # Open tray on second drive
+  mkv disc inject      # Close tray on first drive
+  mkv disc inject 0    # Close tray on first drive
+
+Requires: eject(1) and access to /dev/sr* (usually root or optical group).
+
+EOF
+}
+
+cmd_disc() {
+  local subcmd="${1:-help}"
+  shift || true
+  local drive="${1:-0}"
+
+  case "$subcmd" in
+    eject)
+      if [[ ! "$drive" =~ ^[0-9]+$ ]]; then
+        echo "Error: Drive must be a non-negative number (e.g. 0, 1)."
+        exit 1
+      fi
+      local dev="/dev/sr${drive}"
+      if [[ ! -b "$dev" ]]; then
+        echo "Error: Block device $dev not found."
+        exit 1
+      fi
+      if ! command -v eject &>/dev/null; then
+        echo "Error: 'eject' command not found. Install util-linux or eject package."
+        exit 1
+      fi
+      eject "$dev" || exit 1
+      echo "Ejected tray: $dev"
+      ;;
+    inject)
+      if [[ ! "$drive" =~ ^[0-9]+$ ]]; then
+        echo "Error: Drive must be a non-negative number (e.g. 0, 1)."
+        exit 1
+      fi
+      local dev="/dev/sr${drive}"
+      if [[ ! -b "$dev" ]]; then
+        echo "Error: Block device $dev not found."
+        exit 1
+      fi
+      if ! command -v eject &>/dev/null; then
+        echo "Error: 'eject' command not found. Install util-linux or eject package."
+        exit 1
+      fi
+      eject -t "$dev" || exit 1
+      echo "Closed tray: $dev"
+      ;;
+    help|--help|-h)
+      show_disc_help
+      ;;
+    *)
+      echo "Error: Unknown disc command '$subcmd'"
+      echo ""
+      show_disc_help
+      exit 1
+      ;;
+  esac
+}
+
+#--------------------------
+# Main Entry Point
+#--------------------------
+# Check and setup completion on every run
+check_and_setup_completion
+
+# Route to appropriate command
+case "${1:-help}" in
+  dev)
+    shift
+    cmd_dev "$@"
+    ;;
+  docker)
+    shift
+    cmd_docker "$@"
+    ;;
+  build)
+    shift
+    cmd_build "$@"
+    ;;
+  test)
+    shift
+    cmd_test "$@"
+    ;;
+  disc)
+    shift
+    cmd_disc "$@"
+    ;;
+  help|--help|-h)
+    show_help
+    ;;
+  *)
+    echo "Error: Unknown command '${1:-}'"
+    echo ""
+    show_help
+    exit 1
+    ;;
+esac

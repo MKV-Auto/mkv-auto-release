@@ -1,0 +1,64 @@
+<!-- Desktop: template-style flowing bar with large dots, icons, labels below, connecting lines -->
+<div class="stage-progress-desktop" *ngIf="stageTimeline.length > 0">
+  <div class="stage-progress-flex">
+    <ng-container *ngFor="let step of stageTimeline; let i = index">
+      <div class="stage-cell">
+        <!-- Row 1: dot + connector so the bar is centered to the circle -->
+        <div class="stage-dot-connector-row">
+          <div class="stage-dot-wrap">
+            <div class="stage-dot"
+                 [class.completed]="isStageCompletedCheck(step.key)"
+                 [class.active]="isStageActive(step.key, i)"
+                 [class.pending]="isStagePending(step.key, i)">
+              <span class="stage-dot-icon" *ngIf="isStageCompletedCheck(step.key)" aria-hidden="true">
+                <ui-icon name="check" [size]="14"></ui-icon>
+              </span>
+              <span class="stage-dot-icon stage-dot-spinner" *ngIf="isStageActive(step.key, i)" aria-hidden="true">
+                <ui-icon name="spinner" [size]="14"></ui-icon>
+              </span>
+            </div>
+          </div>
+          <div class="stage-connector" *ngIf="i < stageTimeline.length - 1">
+          <div class="stage-connector-track"></div>
+          <div class="stage-connector-fill stage-connector-fill-completed" *ngIf="isStageCompletedCheck(step.key)"></div>
+          <div class="stage-connector-fill stage-connector-fill-active" *ngIf="isStageActive(step.key, i) && (connectorProgress(step.key) || 0) > 0" [style.width.%]="connectorProgress(step.key)">
+            <span class="stage-connector-glow"></span>
+          </div>
+        </div>
+        </div>
+        <!-- Label below dot+bar row (template: text-[10px] font-semibold) -->
+        <div class="stage-label-wrap">
+          <span class="stage-label-text"
+                [class.completed]="isStageCompletedCheck(step.key)"
+                [class.active]="isStageActive(step.key, i)"
+                [class.pending]="isStagePending(step.key, i)">{{ step.label }}</span>
+          <span class="stage-label-pct" *ngIf="activeStagePercent(step.key) !== null && !getPhaseLabel(step.key)">{{ activeStagePercent(step.key) }}%</span>
+          <span class="stage-label-phase" *ngIf="getPhaseLabel(step.key)">{{ getPhaseLabel(step.key) }}</span>
+          <span class="stage-label-elapsed" *ngIf="step.key === 'rip' && ripElapsed">{{ ripElapsed }}</span>
+        </div>
+      </div>
+    </ng-container>
+  </div>
+</div>
+
+<!-- Mobile: circle left, stage name + count right; circle shows current-stage % -->
+<div class="stage-progress-mobile" *ngIf="stageTimeline.length > 0">
+  <div class="stage-progress-mobile-inner">
+    <svg class="stage-progress-circle" viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="42" class="stage-circle-bg" fill="none" stroke-width="6"/>
+      <g *ngFor="let step of stageTimeline; let i = index" [attr.stroke]="getSegmentStroke(step.key)">
+        <circle cx="50" cy="50" r="42" fill="none" stroke-width="6" stroke-linecap="round"
+                [attr.stroke-dasharray]="getSegmentDashArray(i)"
+                [attr.stroke-dashoffset]="getSegmentDashOffset(i)"
+                [class.stage-segment-active]="getSegmentStatus(step.key) === 'active'"/>
+      </g>
+      <text x="50" y="50" text-anchor="middle" dominant-baseline="middle" class="stage-circle-pct" transform="rotate(90 50 50)">{{ activeStageProgressPercentage }}%</text>
+    </svg>
+    <div class="stage-mobile-info">
+      <span class="stage-mobile-label" [class.complete]="mobileStageSummary === 'Complete'">{{ activeStageLabel }}</span>
+      <span class="stage-mobile-phase" *ngIf="activeStage && getPhaseLabel(activeStage)">{{ getPhaseLabel(activeStage) }}</span>
+      <span class="stage-mobile-summary" *ngIf="!activeStage || !getPhaseLabel(activeStage)">{{ mobileStageSummary }}</span>
+      <span class="stage-mobile-elapsed" *ngIf="ripElapsed">{{ ripElapsed }}</span>
+    </div>
+  </div>
+</div>

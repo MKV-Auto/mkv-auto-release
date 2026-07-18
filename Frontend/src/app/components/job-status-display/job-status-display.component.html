@@ -1,0 +1,59 @@
+<div class="flex flex-col gap-4" *ngIf="jobStatus">
+  <!-- Error Display -->
+  <div class="mb-2" *ngIf="error">
+    <div class="alert warning soft">
+      <div class="loading-content">
+        <div class="loading-text">{{ error }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stage Progress Bar -->
+  <div class="mb-2" *ngIf="stageTimeline.length > 0">
+    <app-stage-progress-bar
+      [stageTimeline]="stageTimeline"
+      [stageProgress]="stageProgress"
+      [activeStage]="activeStage"
+      [isStageCompleted]="isStageCompleted">
+    </app-stage-progress-bar>
+  </div>
+
+  <!-- CTA Button -->
+  <div class="flex justify-end mt-2" *ngIf="ctaState">
+    <button
+      type="button"
+      class="primary min-w-[120px]"
+      [disabled]="ctaState.disabled"
+      (click)="onActionClick()">
+      <span *ngIf="ctaState.spinner" class="inline-block animate-spin mr-2">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="8" cy="8" r="6" opacity=".25"></circle>
+          <path d="M14 8a6 6 0 0 1-6 6"></path>
+        </svg>
+      </span>
+      <span>{{ ctaState.label }}</span>
+    </button>
+  </div>
+
+  <!-- Job Status Info -->
+  <div class="flex flex-col gap-1 p-3 bg-white/5 rounded-lg text-xs" *ngIf="jobStatus">
+    <div class="flex gap-2" *ngIf="jobStatus.jobId">
+      <span class="text-white/60 font-medium">Job ID:</span>
+      <span class="text-white/90">{{ jobStatus.jobId }}</span>
+    </div>
+    <div class="flex gap-2" *ngIf="jobStatus.job_status">
+      <span class="text-white/60 font-medium">Status:</span>
+      <span class="text-white/90">{{ jobStatus.job_status }}</span>
+    </div>
+    <div class="flex gap-2" *ngIf="jobStatus.phase">
+      <span class="text-white/60 font-medium">Phase:</span>
+      <span class="text-white/90">{{ jobStatus.phase }}</span>
+    </div>
+  </div>
+</div>
+
+
+
+
+
+

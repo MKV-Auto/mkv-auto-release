@@ -1,0 +1,1751 @@
+// Desktop Card-Based Layout (template TitleCard.tsx: no ::before, no hover lift, no backdrop-filter)
+.title-card-desktop {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  padding: 16px;
+  margin-bottom: 16px;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: visible; /* allow comparison tooltip to show above card */
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  // Active state (currently ripping) — template ring-2 ring-blue-500/50
+  &.active {
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    background: rgba(59, 130, 246, 0.08);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5), 0 12px 48px rgba(0, 0, 0, 0.3);
+  }
+
+  // Ignored state — template opacity-60
+  &.ignored {
+    opacity: 0.6;
+  }
+}
+
+.title-card-desktop-wrap {
+  position: relative;
+}
+
+.title-card-duplicate-badge {
+  display: inline-flex;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+
+.title-card-detection-badge {
+  flex-shrink: 0;
+  margin-right: 0.5rem;
+}
+
+.title-card-duplicate-header {
+  margin-top: 0.75rem;
+}
+
+.title-card-metadata-tags {
+  margin-top: 0.5rem;
+  position: relative;
+  z-index: 50;
+  overflow: visible !important;
+}
+
+.title-card-desktop-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 8px; // reduced so preview/content row sits higher
+  flex-wrap: wrap;
+  
+  @media (max-width: 1024px) {
+    gap: 12px;
+  }
+}
+
+.title-card-desktop-status {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+// Template-aligned status pills px-3 py-1.5 rounded-lg (12px 6px, 8px radius)
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+
+  svg {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.status-pill-complete {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+.status-pill-running {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+
+  .spinner.mini {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: currentColor;
+    animation: spin 0.8s linear infinite;
+  }
+}
+
+.status-pill-failed {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.status-pill-pending {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+// Template: Title & Type section; title row has gap-2 mb-2, then series/edition row gap-2
+.title-card-desktop-title-section {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px; // mb-2 / gap-2 between title row and series/edition row
+}
+
+.title-card-desktop-title-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  
+  .title-card-desktop-input {
+    flex: 1;
+    min-width: 0;
+  }
+  
+  .title-card-desktop-type {
+    // Wide enough for longest option ("Deleted Scene") + padding + chevron (was 180px, clipped text)
+    flex: 0 0 14rem;
+    min-width: 14rem;
+    max-width: 16rem;
+  }
+}
+
+.title-card-desktop-row-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+// Template: Season/Episode row gap-2; inputs w-20 px-2 py-1.5 (80px, 8px 6px)
+.title-card-desktop-series-section {
+  display: flex;
+  align-items: center;
+  gap: 8px; // gap-2
+}
+
+.title-card-desktop-season,
+.title-card-desktop-episode {
+  width: 80px; // w-20
+  min-width: 0;
+  padding: 6px 8px; // py-1.5 px-2
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.875rem;
+  text-align: left;
+  transition: all 0.2s ease;
+
+  &:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+  }
+
+  &::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+}
+
+.title-card-desktop-edition-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-card-desktop-edition {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 12px; // template px-3 py-1.5
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+
+  &:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+  }
+
+  &::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+}
+
+// Template: inputs/selects background 0.06, border 0.1; px-3 py-2, text-sm; focus ring-2 ring-blue-500/50
+.title-card-desktop-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  
+  &:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+  }
+  
+  &::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+}
+
+.title-card-desktop-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+// Template TitleCard.tsx: grid grid-cols-[200px_1fr] gap-5 items-start — preview left, metadata right
+.title-card-desktop-content {
+  display: grid;
+  // minmax(0, 200px) prevents first column from growing; item min-width: 0 prevents overlap
+  grid-template-columns: minmax(0, 200px) 1fr;
+  gap: 20px; // gap-5 (1.25rem)
+  align-items: start;
+
+  // Keep preview strictly in first column (grid items default to min-width: auto and can overflow)
+  > .title-card-desktop-preview {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  // Keep metadata section from overflowing on narrow layouts
+  > .title-card-desktop-meta-section {
+    min-width: 0;
+  }
+  
+  // Responsive: stack on smaller desktop screens
+  @media (max-width: 1200px) {
+    grid-template-columns: minmax(0, 180px) 1fr;
+    gap: 20px;
+  }
+  
+  @media (max-width: 1024px) {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}
+
+// Ignored titles: metadata-only row (no preview), parity with mobile card meta
+.title-card-desktop-content-ignored {
+  grid-template-columns: 1fr;
+  gap: 0;
+  justify-items: start;
+
+  .title-card-desktop-meta-section-ignored {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 8px 0 0;
+    width: 100%;
+    text-align: left;
+  }
+
+  .title-card-desktop-meta {
+    padding: 0;
+    justify-content: flex-start;
+    text-align: left;
+  }
+}
+
+// Aspect ratio set from template (video metadata); default 16/9 so container matches actual video
+.title-card-desktop-preview {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 0;
+  width: 100%;
+  aspect-ratio: 16 / 9; // overridden by [style.aspect-ratio] when video metadata loads
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .preview-play-btn {
+    min-height: 44px;
+    padding: 12px 20px;
+    font-size: 0.875rem;
+    border-radius: 8px;
+  }
+}
+
+// Template: Metadata Section flex flex-col gap-3 (12px); edition and description in same column
+.title-card-desktop-meta-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px; // gap-3
+}
+
+.title-card-desktop-meta-field {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+// Edition in meta section: same padding as description (px-3 py-2) for alignment
+.title-card-desktop-meta-section .title-card-desktop-edition {
+  padding: 8px 12px;
+}
+
+.title-card-desktop-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0; // no extra padding; gap-3 from parent provides spacing
+
+  .metadata-info {
+    display: inline-flex;
+    align-items: center;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .metadata-info .icon-info {
+    flex-shrink: 0;
+  }
+}
+
+.title-card-desktop-description {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  
+  &:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+  }
+  
+  &::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+}
+
+.title-id {
+  width: 100%;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.title-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+  height: 80px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
+  
+  app-preview-player {
+    width: 100%;
+  }
+  
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: rgba(255, 255, 255, 0.9);
+    animation: spin 0.8s linear infinite;
+  }
+  
+  // Hover state for preview button
+  button:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+}
+
+.title-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.circular-progress {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.progress-ring {
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.progress-ring-background {
+  opacity: 1;
+}
+
+.progress-ring-fill {
+  transition: stroke-dashoffset 0.3s ease;
+  color: currentColor;
+  
+  &.muted {
+    opacity: 0.35;
+  }
+}
+
+
+.title-ignore-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ignore-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  &.ignored {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+
+    &:hover {
+      background: rgba(34, 197, 94, 0.2);
+    }
+  }
+
+  svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+}
+
+.type-select {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  min-height: 38px;
+  box-sizing: border-box;
+  padding: 8px 2.25rem 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.06);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 1.25rem;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+
+  &:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.2);
+    background-color: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+  }
+
+  // Muted placeholder when no type is selected
+  &.muted-placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+  
+  // Required field outline
+  &.required-field {
+    border-color: rgba(239, 68, 68, 0.5);
+    border-width: 2px;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.2);
+
+    &:focus {
+      border-color: rgba(239, 68, 68, 0.7);
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.5);
+    }
+  }
+
+  option {
+    background: #19202e;
+    color: #fff;
+    
+    &[value=""] {
+      color: rgba(255, 255, 255, 0.4);
+    }
+  }
+}
+
+// Required field outline for all input fields
+.required-field {
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  border-width: 2px !important;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.2) !important;
+  
+  &:focus {
+    border-color: rgba(239, 68, 68, 0.7) !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15) !important;
+  }
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.preview-square {
+  width: 100%;
+  height: auto;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.04);
+  border: none;
+  border-radius: inherit;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+// Fill the 16:9 padding-box so viewer and video match container
+.title-card-desktop-preview .preview-square {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.title-drawer-preview .preview-square {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  // Parent has [style.aspect-ratio] from video metadata (default 16/9)
+}
+
+.preview-square app-preview-viewer {
+  width: 100%;
+  height: 100%;
+}
+
+// Preserve video aspect ratio; container aspect is set from video metadata so they match
+.preview-square app-preview-viewer video {
+  width: 100%;
+  height: 100% !important;
+  object-fit: contain;
+  border-radius: 0;
+}
+
+.title-drawer-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  aspect-ratio: 16 / 9; // overridden by [style.aspect-ratio] when video metadata loads
+}
+
+// Preview status states (queued, running, no preview) — fill and center within preview area
+.preview-status-container,
+.preview-failed-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+}
+
+.preview-status-container {
+  gap: 6px;
+}
+
+.preview-failed-container {
+  gap: 8px;
+}
+
+// Desktop preview uses aspect-ratio + position:relative, so children must be absolute
+.title-card-desktop-preview .preview-status-container,
+.title-card-desktop-preview .preview-failed-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.preview-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  background: rgba(99, 102, 241, 0.1);
+  color: rgba(165, 180, 252, 0.9);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  line-height: 1;
+
+  &:hover {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.5);
+    color: #c7d2fe;
+  }
+
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+// Mobile styles (template: no box-shadow, no backdrop-filter, no ::before)
+@media (max-width: 768px) {
+  .title-card {
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 16px;
+    background: rgba(255, 255, 255, 0.04);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+    cursor: default;
+    
+    &.active {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(59, 130, 246, 0.08);
+      box-shadow: 0 0 20px rgba(59, 130, 246, 0.2);
+    }
+    
+    &:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+  }
+  
+  .title-card-actions-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding-right: 64px;
+    flex-wrap: wrap;
+    position: relative;
+  }
+
+  .title-card-title-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .title-card-title-text {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-strong);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-bottom: 4px; // template mb-1
+  }
+
+  .title-card-edition-type-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .title-card-edition-text {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+  }
+
+  .title-card-type-pill {
+    display: inline-block;
+    padding: 2px 8px; // template px-2 py-0.5
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .title-card-status-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    padding-top: 2px; // template pt-0.5 for status icon alignment
+    
+    .title-card-progress {
+      display: flex;
+      align-items: center;
+    }
+  }
+
+  .title-card-ignore-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border-radius: 8px;
+    border: none; // template: no border on mobile ignore button
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    transition: var(--transition);
+    flex-shrink: 0;
+    
+    svg {
+      display: block;
+      width: 16px;
+      height: 16px;
+      transition: var(--transition);
+    }
+    
+    svg.ignored {
+      color: #f87171;
+    }
+    
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    
+    &:hover svg.ignored {
+      color: #ef4444;
+    }
+    
+  }
+  
+  .title-card.ignored .title-card-ignore-btn {
+    background: rgba(34, 197, 94, 0.1);
+    color: #4ade80;
+    
+    &:hover {
+      background: rgba(34, 197, 94, 0.2);
+    }
+  }
+  
+  .title-card.ignored {
+    opacity: 0.6;
+  }
+
+  .title-card.emphasized {
+    border-color: rgba(59, 130, 246, 0.6);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+    transform: scale(1.01);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  }
+
+  .title-card-meta {
+    margin-bottom: 12px;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  // Template: TitlesStep.tsx mobile Edit button (icon + "Edit" text, blue tint, bottom-right).
+  // Background and border come from inline style in template for parity; SCSS handles layout and hover.
+  button.title-step-edit-btn.title-card-edit-btn {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #60a5fa; // text-blue-400
+    border-radius: 8px;
+    cursor: pointer;
+    transition: var(--transition);
+
+    svg {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+    }
+
+    &:hover {
+      background: rgba(99, 102, 241, 0.2) !important;
+      border-color: rgba(99, 102, 241, 0.3) !important;
+    }
+  }
+  
+  // Template TitleMobileDrawer: p-5 space-y-4 (padding from .drawer-content; 16px between sections)
+  .title-drawer-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px; // space-y-4
+    padding: 0;
+  }
+
+  .title-drawer-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px; // space-y-2 between label and input
+  }
+
+  .title-drawer-row {
+    display: flex;
+    gap: 16px; // template grid-cols-2 gap-4
+  }
+
+  .title-drawer-field-half {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  // Template: text-xs font-medium text-white/60 uppercase tracking-wide
+  .title-drawer-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  // Template: px-4 py-3 text-base, minHeight 44px, fontSize 16px
+  .title-drawer-input,
+  .title-drawer-select {
+    width: 100%;
+    padding: 12px 16px; // py-3 px-4
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    font-size: 16px;
+    min-height: 44px;
+    box-sizing: border-box;
+    transition: all 0.2s ease;
+    touch-action: manipulation; // Ensure taps register on mobile without delay
+
+    &:focus {
+      outline: none;
+      border-color: rgba(255, 255, 255, 0.2);
+      background-color: rgba(255, 255, 255, 0.06);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+    }
+
+    &::placeholder {
+      color: rgba(255, 255, 255, 0.4);
+    }
+  }
+
+  .title-drawer-select {
+    height: 44px;
+    min-height: 44px;
+    padding-right: 2.5rem;
+    background-color: rgba(255, 255, 255, 0.06);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    background-size: 1.25rem;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    cursor: pointer;
+
+    option {
+      background: #19202e;
+      color: #fff;
+    }
+  }
+
+  .title-drawer-duplicate-section {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+
+    .title-drawer-label {
+      display: block;
+      margin-bottom: 0.5rem;
+    }
+
+    .title-drawer-member-list {
+      margin-top: 0.5rem;
+    }
+
+    .title-drawer-tags {
+      margin-top: 0.5rem;
+    }
+  }
+
+  // Template TitleMobileDrawer: textarea for description (rows=3, resize-none)
+  .title-drawer-textarea {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    touch-action: manipulation; // Ensure taps register on mobile without delay
+    font-size: 16px;
+    min-height: 44px;
+    resize: none;
+    box-sizing: border-box;
+    transition: all 0.2s ease;
+    font-family: inherit;
+
+    &:focus {
+      outline: none;
+      border-color: rgba(255, 255, 255, 0.2);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+    }
+
+    &::placeholder {
+      color: rgba(255, 255, 255, 0.4);
+    }
+  }
+
+  // Template TitleMobileDrawer: metadata at bottom (Duration, Size, Chapters, Source)
+  .title-drawer-metadata {
+    padding-top: 8px;
+  }
+
+  .title-drawer-metadata-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.5);
+    margin-bottom: 4px;
+  }
+
+  .title-drawer-metadata-rows {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  // Template TitleMobileDrawer: footer flex gap-3 p-5 border-t, two buttons flex-1
+  .title-drawer-footer {
+    display: flex;
+    gap: 12px;
+    margin-top: 24px;
+    padding: 20px 0 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .title-drawer-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+
+  .title-drawer-btn-close {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.7);
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+
+  .title-drawer-btn-save {
+    border: none;
+    background: #6366f1;
+    color: white;
+
+    &:hover:not(:disabled) {
+      background: #5558e3;
+    }
+  }
+
+  .title-drawer-ignore-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-strong);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-height: 44px;
+    font-size: 16px;
+    
+    svg {
+      display: block;
+      width: 16px;
+      height: 16px;
+      transition: var(--transition);
+    }
+    
+    svg.ignored {
+      color: #f87171;
+    }
+    
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+    
+    &:active {
+      transform: scale(0.98);
+    }
+  }
+}
+
+/* ────────────────────────────────────────────────────
+   Primary / secondary duplicate controls
+   ──────────────────────────────────────────────────── */
+
+.title-card-primary-controls,
+.title-drawer-primary-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.primary-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+
+  svg {
+    color: #fbbf24;
+    flex-shrink: 0;
+  }
+}
+
+.make-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.65);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  svg {
+    color: rgba(255, 255, 255, 0.45);
+    flex-shrink: 0;
+  }
+
+  &:hover {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.1);
+    border-color: rgba(251, 191, 36, 0.25);
+
+    svg {
+      color: #fbbf24;
+    }
+  }
+}
+
+/* ────────────────────────────────────────────────────
+   Duplicate Group Card (desktop — DuplicateTitleCard.tsx)
+   ──────────────────────────────────────────────────── */
+
+.duplicate-group-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  padding: 16px;
+  margin-bottom: 16px;
+  transition: all 0.3s ease;
+  overflow: visible;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+}
+
+.duplicate-accent-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 12px 0 0 12px;
+}
+
+.duplicate-group-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.duplicate-group-card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.duplicate-group-card-header-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.duplicate-group-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+}
+
+.duplicate-group-card-label {
+  font-weight: 600;
+}
+
+.duplicate-group-card-info-icon {
+  display: inline-flex;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: help;
+
+  &:hover {
+    color: rgba(255, 255, 255, 0.6);
+  }
+}
+
+.duplicate-group-card-variants-text {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.75rem;
+}
+
+.duplicate-group-card-low-confidence {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: rgba(251, 191, 36, 0.8);
+  margin-top: 2px;
+}
+
+.collapse-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+.duplicate-group-card-form {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+
+  @media (max-width: 1024px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.duplicate-group-card-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.duplicate-group-card-title-type-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+
+  .title-card-desktop-input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .title-card-desktop-type {
+    flex: 0 1 12rem;
+    min-width: 10rem;
+    max-width: 14rem;
+  }
+
+  .duplicate-group-ignore-btn {
+    flex-shrink: 0;
+  }
+}
+
+.duplicate-drawer-type-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.duplicate-drawer-type-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.duplicate-drawer-ignore-btn {
+  flex-shrink: 0;
+}
+
+.duplicate-group-card-description {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 0.875rem;
+  font-family: inherit;
+  resize: none;
+  margin-bottom: 16px;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+
+  &:focus {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+  }
+
+  &::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+}
+
+.duplicate-group-card-collapsed-text {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 0 4px;
+
+  .text-white-70 {
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 500;
+  }
+}
+
+/* ────────────────────────────────────────────────────
+   Variant Selector (shared desktop + mobile drawer)
+   ──────────────────────────────────────────────────── */
+
+.variant-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.variant-selector-eyebrow {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 4px;
+  padding: 0 4px;
+}
+
+.variant-selector-subtitle {
+  padding: 0 4px 4px;
+  line-height: 1.35;
+  max-width: 48rem;
+}
+
+.variant-metadata-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.variant-metadata-line {
+  display: block;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.variant-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  &.primary {
+    background: rgba(99, 102, 241, 0.08);
+    border-color: rgba(99, 102, 241, 0.3);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+  }
+}
+
+.variant-radio {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  margin-top: 2px;
+
+  &.selected {
+    border-color: #3b82f6;
+    background: #3b82f6;
+    color: #fff;
+  }
+
+  &:not(.selected):hover {
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+}
+
+.variant-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.variant-source-file {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.variant-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 8px;
+}
+
+.variant-tags {
+  margin-top: 0;
+}
+
+.variant-primary-badge {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  align-self: flex-start;
+}
+
+/* ────────────────────────────────────────────────────
+   Duplicate Group Mobile Card (DuplicateTitleMobileCard.tsx)
+   ──────────────────────────────────────────────────── */
+
+.duplicate-group-mobile-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  transition: all 0.3s ease;
+  cursor: pointer;
+  overflow: hidden;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+}
+
+.duplicate-group-mobile-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-right: 32px;
+}
+
+.duplicate-group-mobile-card-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.duplicate-group-mobile-card-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-strong, #fff);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 4px;
+}
+
+.duplicate-group-mobile-card-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.duplicate-group-mobile-card-group-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.duplicate-group-mobile-card-chevron {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.duplicate-group-mobile-card-type {
+  margin-bottom: 12px;
+}
+
+.duplicate-group-mobile-card-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: #fcd34d;
+  margin-bottom: 8px;
+}
+
+/* ────────────────────────────────────────────────────
+   Duplicate Drawer (mobile — DuplicateTitleMobileDrawer.tsx)
+   ──────────────────────────────────────────────────── */
+
+.duplicate-drawer-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0;
+}
+
+.duplicate-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.duplicate-drawer-header-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* ────────────────────────────────────────────────────
+   Helper utility classes
+   ──────────────────────────────────────────────────── */
+
+.text-white-50 {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.text-white-60 {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.text-white-70 {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.text-xs {
+  font-size: 0.75rem;
+}
+
+/* ============================================================
+ * Phase 3: desktop list + editor split layout. Mobile-only rules
+ * above are unchanged; the legacy desktop card classes
+ * (.title-card-desktop, .duplicate-group-card, etc.) still live in
+ * this file but no template renders them now — left for a follow-up
+ * cleanup once the new layout has soaked.
+ * ============================================================ */
+
+.title-label-split {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.4fr);
+  gap: 16px;
+  align-items: stretch;
+  min-height: 480px;
+  margin-bottom: 16px;
+}
+
+.title-label-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--ui-card-radius, 14px);
+  overflow-y: auto;
+  max-height: 70vh;
+  min-height: 0;
+
+  app-title-row {
+    display: block;
+    width: 100%;
+  }
+
+  /* Brief flash when a row is navigated-to (e.g. from a duplicate-group
+   * "same as" link). Mirrors the existing .emphasized treatment used by
+   * the mobile cards. */
+  app-title-row.is-emphasized {
+    animation: title-row-pulse 1.6s ease-out;
+  }
+
+  /* Muted style for ignored rows surfaced via the Show-ignored toggle. */
+  app-title-row.title-label-row-muted {
+    opacity: 0.55;
+  }
+}
+
+/* Header strip above the title list — currently hosts the Show-ignored
+ * toggle. Stays hidden when no rows are ignored. */
+.title-label-list-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0 4px 0;
+}
+
+@keyframes title-row-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55); border-radius: 8px; }
+  60%  { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); border-radius: 8px; }
+  100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}
+
+/* Wrap obfuscation + detection badges in the title-row suffix slot. */
+.title-label-row-suffix {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+// Subtle green check icon — present when the row has type + title text
+// filled, absent when labeling work remains. Intentionally low-contrast
+// so a fully-labeled disc doesn't feel cluttered with checkmarks.
+.title-label-row-complete-check {
+  display: inline-flex;
+  align-items: center;
+  color: rgba(52, 211, 153, 0.85);  // emerald-400-ish
+  margin-left: 2px;
+}
+
+
+.title-label-editor {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+
+  /* TitleEditor renders its own .title-editor card; let it fill the
+   * available column height so the form sticks to the top while empty
+   * space lives below the action bar. */
+  app-title-editor {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  app-title-editor > * {
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  /* Below 900px the desktop split degrades to a single column — the list
+   * stacks above the editor. Mobile (<= MobileService threshold) renders
+   * the legacy card layout below this template, so this only applies to
+   * the desktop-but-narrow case (e.g. tablet portrait). */
+  .title-label-split {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+  .title-label-list {
+    max-height: 360px;
+  }
+}

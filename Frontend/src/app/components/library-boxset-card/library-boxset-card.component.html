@@ -1,0 +1,112 @@
+<!-- Library boxset card (Phase 3 — #500).
+     Wraps a list of nested library-release-card instances. -->
+<article class="library-boxset-card"
+         [class.is-editing]="editing"
+         [class.is-expanded]="expanded"
+         [attr.data-boxset-id]="boxset.id">
+
+  <div class="library-boxset-card__top">
+    <div class="library-boxset-card__poster"
+         [style.backgroundImage]="posterUrl ? 'url(' + posterUrl + ')' : null">
+      <span *ngIf="!posterUrl" aria-hidden="true">📦</span>
+    </div>
+
+    <!-- VIEW MODE -->
+    <div *ngIf="!editing" class="library-boxset-card__identity">
+      <div class="library-boxset-card__kind">Boxset</div>
+      <h3 class="library-boxset-card__title" [title]="displayName">{{ displayName }}</h3>
+      <div class="library-boxset-card__meta">
+        {{ releaseCount }} release{{ releaseCount === 1 ? '' : 's' }}
+        · {{ discCount }} disc{{ discCount === 1 ? '' : 's' }}
+      </div>
+    </div>
+
+    <!-- EDIT MODE -->
+    <form *ngIf="editing"
+          class="library-boxset-card__edit-form"
+          (ngSubmit)="saveEdit()">
+      <label class="library-boxset-card__field">
+        <span class="library-boxset-card__label">Name</span>
+        <input type="text"
+               class="library-boxset-card__input"
+               [(ngModel)]="editForm.name"
+               name="name"
+               placeholder="Boxset name"
+               [disabled]="saving"
+               required />
+      </label>
+      <label class="library-boxset-card__field library-boxset-card__field--year">
+        <span class="library-boxset-card__label">Year</span>
+        <input type="number"
+               class="library-boxset-card__input"
+               [(ngModel)]="editForm.year"
+               name="year"
+               placeholder="Year"
+               min="1900"
+               max="2100"
+               [disabled]="saving" />
+      </label>
+      <label class="library-boxset-card__field library-boxset-card__field--full">
+        <span class="library-boxset-card__label">Cover URL</span>
+        <input type="url"
+               class="library-boxset-card__input"
+               [(ngModel)]="editForm.cover_front_url"
+               name="cover_front_url"
+               placeholder="https://…"
+               [disabled]="saving" />
+      </label>
+      <p *ngIf="saveError" class="library-boxset-card__error">{{ saveError }}</p>
+      <div class="library-boxset-card__edit-actions">
+        <button type="submit"
+                class="library-boxset-card__btn library-boxset-card__btn--primary"
+                [disabled]="saving || !editForm.name?.trim()">
+          {{ saving ? 'Saving…' : 'Save' }}
+        </button>
+        <button type="button"
+                class="library-boxset-card__btn"
+                (click)="cancelEdit()"
+                [disabled]="saving">
+          Cancel
+        </button>
+      </div>
+    </form>
+
+    <div *ngIf="!editing" class="library-boxset-card__actions">
+      <button type="button"
+              class="library-boxset-card__btn"
+              (click)="startEdit()"
+              aria-label="Edit boxset">
+        ✎ Edit
+      </button>
+      <button type="button"
+              class="library-boxset-card__btn library-boxset-card__btn--danger"
+              (click)="confirmDelete()"
+              aria-label="Delete boxset">
+        🗑 Delete
+      </button>
+      <button type="button"
+              class="library-boxset-card__expand"
+              (click)="toggleExpanded()"
+              [attr.aria-expanded]="expanded"
+              [attr.aria-label]="(expanded ? 'Collapse' : 'Expand') + ' release list'">
+        <span class="library-boxset-card__chev" [class.is-open]="expanded">▾</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Nested releases -->
+  <div *ngIf="expanded" class="library-boxset-card__releases">
+    <p *ngIf="releases.length === 0" class="library-boxset-card__empty">
+      No completed releases inside this boxset yet.
+    </p>
+    <app-library-release-card
+      *ngFor="let rel of releases; trackBy: trackByReleaseId"
+      [release]="rel"
+      [discs]="getDiscsForRelease(rel)"
+      [nested]="true"
+      (updated)="onReleaseUpdated($event)"
+      (deleted)="onReleaseDeleted($event)"
+      (discOpen)="onDiscOpen($event)">
+    </app-library-release-card>
+  </div>
+</article>

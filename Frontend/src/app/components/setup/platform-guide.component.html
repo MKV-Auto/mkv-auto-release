@@ -1,0 +1,240 @@
+<!-- Backdrop -->
+<div class="platform-guide-backdrop" (click)="onClose()"></div>
+
+<!-- Modal -->
+<div class="platform-guide-wrapper">
+  <div class="platform-guide-modal">
+    <!-- Header -->
+    <div class="platform-guide-header">
+      <div class="platform-guide-header-content">
+        <div 
+          class="platform-guide-icon"
+          [style.background]="section.gradient"
+          [style.box-shadow]="'0 0 20px ' + section.glow"
+        >
+          <!-- Icon SVGs -->
+          <svg *ngIf="section.iconName === 'disc'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg *ngIf="section.iconName === 'search'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <svg *ngIf="section.iconName === 'film'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>
+          <svg *ngIf="section.iconName === 'package'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+          <svg *ngIf="section.iconName === 'list'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
+          <svg *ngIf="section.iconName === 'star'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        </div>
+        <div>
+          <h2 class="platform-guide-title">{{ section.title }}</h2>
+          <p class="platform-guide-subtitle">Section {{ currentSection }} of {{ sections.length }}</p>
+        </div>
+      </div>
+      <button type="button" class="platform-guide-close-btn" (click)="onClose()">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+
+    <!-- Progress Dots -->
+    <div class="platform-guide-progress">
+      <button
+        *ngFor="let s of sections"
+        type="button"
+        class="platform-guide-dot"
+        [class.active]="s.id === currentSection"
+        [style.background]="s.id === currentSection ? s.gradient : 'rgba(255, 255, 255, 0.2)'"
+        (click)="goTo(s.id)"
+      ></button>
+    </div>
+
+    <!-- Content -->
+    <div class="platform-guide-content">
+      <!-- Section 1: How We Identify Discs -->
+      <div *ngIf="currentSection === 1" class="guide-section">
+        <p class="guide-text">
+          When you insert a disc, we automatically scan it and create a unique fingerprint. 
+          We then look this up in databases like <strong>TheDiscDB</strong> to 
+          identify what movie or TV show it is.
+        </p>
+        <div class="guide-info-box" style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3);">
+          <p class="guide-info-title" style="color: #93c5fd;">✨ What happens when we find a match:</p>
+          <ul class="guide-list" style="color: rgba(147, 197, 253, 0.8);">
+            <li>Movie title, year, and metadata are pre-filled</li>
+            <li>Cover art and descriptions appear automatically</li>
+            <li>Title information is suggested based on the disc structure</li>
+            <li>You can still edit or override any information</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Section 2: When We Can't Identify Discs -->
+      <div *ngIf="currentSection === 2" class="guide-section">
+        <p class="guide-text">
+          Sometimes we can't find a match — this could be a rare release, a custom disc, 
+          or a disc that's not in our databases yet.
+        </p>
+        <div class="guide-info-box" style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3);">
+          <p class="guide-info-title" style="color: #c084fc;">🔍 Don't worry — you can still proceed:</p>
+          <ul class="guide-list" style="color: rgba(192, 132, 252, 0.8);">
+            <li>Search for the movie/show manually</li>
+            <li>Enter the title and metadata yourself</li>
+            <li>The workflow still works the same way</li>
+            <li>All labeling, ripping, and transfer features still work</li>
+          </ul>
+        </div>
+        <p class="guide-tip">
+          <strong>Pro tip:</strong> If you have the movie name and year, 
+          the manual search is usually very quick.
+        </p>
+      </div>
+
+      <!-- Section 3: Movie Selection & Creation -->
+      <div *ngIf="currentSection === 3" class="guide-section">
+        <p class="guide-text">
+          In the <strong>Film</strong> step, you choose which movie or show 
+          this disc belongs to. You can pick an existing entry or create a new one.
+        </p>
+        <div class="guide-cards">
+          <div class="guide-card" style="background: rgba(236, 72, 153, 0.1); border: 1px solid rgba(236, 72, 153, 0.3);">
+            <p class="guide-card-title" style="color: #f9a8d4;">Picking an existing movie:</p>
+            <p class="guide-card-text" style="color: rgba(249, 168, 212, 0.8);">
+              If you've already ripped this movie before (different disc, different edition), 
+              select the existing movie so all versions are grouped together.
+            </p>
+          </div>
+          <div class="guide-card" style="background: rgba(236, 72, 153, 0.1); border: 1px solid rgba(236, 72, 153, 0.3);">
+            <p class="guide-card-title" style="color: #f9a8d4;">Creating a new movie:</p>
+            <p class="guide-card-text" style="color: rgba(249, 168, 212, 0.8);">
+              For a brand new movie you haven't ripped before, create a new entry. 
+              We'll store all the metadata and group future editions under it.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 4: Boxset vs Release -->
+      <div *ngIf="currentSection === 4" class="guide-section">
+        <p class="guide-text">
+          Understanding the difference between a <strong>Boxset</strong> and 
+          a <strong>Release</strong> helps you organize your collection correctly.
+        </p>
+        <div class="guide-cards">
+          <div class="guide-card" style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3);">
+            <div class="guide-card-header">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #fbbf24;"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+              <p class="guide-card-title-bold" style="color: #fcd34d;">Boxset</p>
+            </div>
+            <p class="guide-card-text" style="color: rgba(252, 211, 77, 0.8);">
+              A single product that contains <strong>multiple movies</strong>
+            </p>
+            <p class="guide-card-example" style="color: rgba(252, 211, 77, 0.6);">
+              Examples: Lord of the Rings Trilogy, Marvel Phase One Collection, 
+              James Bond 007 Collection
+            </p>
+          </div>
+          <div class="guide-card" style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3);">
+            <div class="guide-card-header">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #fbbf24;"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>
+              <p class="guide-card-title-bold" style="color: #fcd34d;">Release</p>
+            </div>
+            <p class="guide-card-text" style="color: rgba(252, 211, 77, 0.8);">
+              A single production (one movie or one TV series/season)
+            </p>
+            <p class="guide-card-example" style="color: rgba(252, 211, 77, 0.6);">
+              Examples: The Matrix (single film), Breaking Bad Season 1, 
+              Avengers: Endgame Steelbook
+            </p>
+          </div>
+        </div>
+        <p class="guide-tip">
+          <strong>Think of it this way:</strong> Boxset = multiple productions in one package. 
+          Release = one production (even if it spans multiple discs).
+        </p>
+      </div>
+
+      <!-- Section 5: How Titles Work -->
+      <div *ngIf="currentSection === 5" class="guide-section">
+        <p class="guide-text">
+          In the <strong>Titles</strong> step, you see all the tracks 
+          (titles) available on the disc and choose which ones to rip.
+        </p>
+        <div class="guide-info-box" style="background: rgba(20, 184, 166, 0.1); border: 1px solid rgba(20, 184, 166, 0.3);">
+          <div class="guide-info-item">
+            <p class="guide-info-subtitle" style="color: #5eead4;">Main movie titles:</p>
+            <p class="guide-info-detail" style="color: rgba(94, 234, 212, 0.8);">
+              Usually the longest track — this is the feature film
+            </p>
+          </div>
+          <div class="guide-info-item">
+            <p class="guide-info-subtitle" style="color: #5eead4;">Bonus content:</p>
+            <p class="guide-info-detail" style="color: rgba(94, 234, 212, 0.8);">
+              Behind-the-scenes, deleted scenes, trailers, etc.
+            </p>
+          </div>
+          <div class="guide-info-item">
+            <p class="guide-info-subtitle" style="color: #5eead4;">Duplicates:</p>
+            <p class="guide-info-detail" style="color: rgba(94, 234, 212, 0.8);">
+              Sometimes the same cut appears multiple times with different audio/subtitle tracks
+            </p>
+          </div>
+        </div>
+        <p class="guide-tip">
+          You can name each title, set its type, and choose which to ignore. 
+          Each title becomes a separate output file.
+        </p>
+      </div>
+
+      <!-- Section 6: What Editions Are For -->
+      <div *ngIf="currentSection === 6" class="guide-section">
+        <p class="guide-text">
+          <strong>Editions</strong> help you distinguish different cuts 
+          or versions of the same movie.
+        </p>
+        <div class="guide-info-box" style="background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.3);">
+          <p class="guide-info-title" style="color: #fde047;">Common edition types:</p>
+          <ul class="guide-list" style="color: rgba(253, 224, 71, 0.8);">
+            <li><strong>Theatrical</strong> — the version shown in cinemas</li>
+            <li><strong>Extended</strong> — longer cut with additional scenes</li>
+            <li><strong>Director's Cut</strong> — the director's preferred version</li>
+            <li><strong>Unrated</strong> — version without rating restrictions</li>
+            <li><strong>4K UHD</strong>, <strong>Blu-ray</strong>, <strong>3D</strong> — format-specific releases</li>
+          </ul>
+        </div>
+        <p class="guide-tip">
+          <strong>Why it matters:</strong> Editions ensure your library correctly 
+          names and organizes different versions, so Plex/Jellyfin can show them as separate options.
+        </p>
+        <div class="guide-example-box" style="background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.2);">
+          <p style="color: rgba(253, 224, 71, 0.9);">
+            <strong>Example:</strong> If you rip both the theatrical and extended cuts of 
+            The Lord of the Rings, each gets its own edition tag so they're stored separately.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="platform-guide-footer">
+      <button
+        type="button"
+        class="platform-guide-btn platform-guide-btn-back"
+        [disabled]="currentSection === 1"
+        (click)="onBack()"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        Back
+      </button>
+      <button
+        type="button"
+        class="platform-guide-btn platform-guide-btn-next"
+        [style.background]="section.gradient"
+        [style.box-shadow]="'0 0 20px ' + section.glow"
+        (click)="onNext()"
+      >
+        <ng-container *ngIf="isLastSection">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          Got it!
+        </ng-container>
+        <ng-container *ngIf="!isLastSection">
+          Next
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </ng-container>
+      </button>
+    </div>
+  </div>
+</div>

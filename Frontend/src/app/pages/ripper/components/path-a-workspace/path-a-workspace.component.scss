@@ -1,0 +1,119 @@
+// Path A workspace — re-skinned against the design system primitives.
+// Outer ui-card now supplies the glass shell; this file only carries the
+// stage-body layout, the inline pill spinner animation, and the linear
+// progress bars (linear is more readable than a ring for slow rips).
+
+.paw-shell {
+  padding: 16px 0;
+}
+
+.paw-body {
+  padding: 24px;
+
+  &.paw-body-error ::ng-deep .ui-card {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.30);
+  }
+
+  h2 {
+    margin: 8px 0 4px;
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  p {
+    margin: 0 0 16px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.7);
+    max-width: 720px;
+
+    code {
+      font-family: var(--ui-font-mono, ui-monospace, monospace);
+      padding: 1px 6px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 4px;
+      font-size: 12px;
+      color: #a5b4fc;
+    }
+
+    strong {
+      color: #fff;
+    }
+  }
+}
+
+.paw-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.paw-pill-spin {
+  display: inline-flex;
+  animation: paw-spin 1s linear infinite;
+}
+
+@keyframes paw-spin {
+  to { transform: rotate(360deg); }
+}
+
+.paw-progress-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 12px;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.paw-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin: 4px 0 4px;
+}
+
+.paw-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #22d3ee);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+
+  &.paw-progress-bar-secondary {
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.5), rgba(34, 211, 238, 0.5));
+  }
+}
+
+.paw-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 12px;
+
+  &:last-of-type {
+    margin-bottom: 16px;
+  }
+}
+
+.paw-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-pill-spin {
+    animation: none;
+  }
+  .paw-progress-bar {
+    transition: none;
+  }
+}

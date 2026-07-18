@@ -1,0 +1,67 @@
+<div class="glass card" *ngIf="labelForm" (focusin)="onFocusIn()" (focusout)="onFocusOut()">
+  <div class="panel-eyebrow">
+    <p class="eyebrow">Film Metadata</p>
+    <div class="eyebrow-actions">
+      <ng-container *ngIf="showSpinner; else filmSaved">
+        <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="8" cy="8" r="6" opacity=".25"></circle>
+          <path d="M14 8a6 6 0 0 1-6 6"></path>
+        </svg>
+      </ng-container>
+      <ng-template #filmSaved>
+        <svg *ngIf="lastAutosaveOk && hasLabelContent && !showSpinner" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success">
+          <path d="M3 9l3 3 7-7"></path>
+        </svg>
+      </ng-template>
+    </div>
+  </div>
+  <div class="panel-header">
+    <div>
+      <h3>Film Information</h3>
+      <div class="muted text-xs">Enter TMDB URL to lookup movie information</div>
+    </div>
+  </div>
+  <div class="label-meta grid grid-cols-2 gap-3.5">
+    <label class="field span2">
+      <span>TMDB URL</span>
+      <div class="flex gap-2">
+        <input
+          type="text"
+          class="input w-full"
+          [ngClass]="{'border-red-500 ring-1 ring-red-500/30': missingFilmId}"
+          [(ngModel)]="tmdbUrl"
+          placeholder="https://www.themoviedb.org/movie/414906 or /tv/66732-stranger-things"
+          (keyup.enter)="onLookup()"
+          [disabled]="lookupLoading">
+        <button 
+          type="button" 
+          class="primary" 
+          (click)="onLookup()"
+          [disabled]="lookupLoading || !tmdbUrl.trim()">
+          <span *ngIf="lookupLoading">Loading...</span>
+          <span *ngIf="!lookupLoading">Lookup</span>
+        </button>
+      </div>
+      <div class="text-red-400 text-xs mt-1" *ngIf="lookupError">{{ lookupError }}</div>
+    </label>
+    
+    <div class="field span2" *ngIf="filmData || filmName">
+      <span class="muted text-xs">Movie</span>
+      <div class="text-sm font-semibold">{{ displayFilmName() }}</div>
+    </div>
+    
+    <div class="field span2" *ngIf="coverImageUrl || coverImagePath">
+      <div class="mt-2">
+        <img
+          *ngIf="coverImagePath || coverImageUrl"
+          [src]="coverImagePath || coverImageUrl"
+          alt="Film cover"
+          class="max-w-[200px] max-h-[300px] rounded-lg border border-white/10 object-cover"
+          (error)="onImageError($event)">
+      </div>
+    </div>
+  </div>
+</div>
+

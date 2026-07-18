@@ -1,0 +1,119 @@
+<!-- Backdrop -->
+<div class="setup-modal-backdrop" (click)="$event.stopPropagation()" role="presentation"></div>
+
+<!-- Loading -->
+<div *ngIf="loading" class="setup-modal-wrapper setup-modal-loading">
+  <div class="setup-modal-card setup-modal-loading-card">
+    <div class="setup-modal-loading-spinner" aria-hidden="true"></div>
+    <p class="setup-modal-loading-text">Loading setup…</p>
+  </div>
+</div>
+
+<!-- Modal Wrapper -->
+<div *ngIf="!loading" class="setup-modal-wrapper">
+  <!-- Modal Card -->
+  <div class="setup-modal-card" (click)="$event.stopPropagation()" role="dialog" aria-labelledby="setup-modal-title" aria-modal="true">
+    <header class="setup-modal-header">
+      <div class="setup-modal-header-inner">
+        <div class="setup-modal-icon">
+          <ui-icon name="settings" [size]="20"></ui-icon>
+        </div>
+        <div>
+          <h2 id="setup-modal-title" class="setup-modal-title">Welcome to MKVAuto</h2>
+          <p class="setup-modal-subtitle">Let's get you set up in just a few steps</p>
+        </div>
+      </div>
+
+      <div class="setup-stepper">
+        <ng-container *ngFor="let step of steps; let i = index">
+          <div class="setup-stepper-item">
+            <button
+              type="button"
+              class="setup-stepper-circle"
+              [class.setup-stepper-current]="step.id === currentStep"
+              [class.setup-stepper-done]="completedSteps.includes(step.id)"
+              [disabled]="!canGoToStep(step.id)"
+              (click)="goToStep(step.id)"
+              [attr.aria-current]="step.id === currentStep ? 'step' : null"
+              [attr.aria-label]="'Step ' + step.id + ': ' + step.name"
+            >
+              <ui-icon
+                *ngIf="completedSteps.includes(step.id)"
+                name="check"
+                [size]="14"
+                class="setup-stepper-check"></ui-icon>
+              <span *ngIf="!completedSteps.includes(step.id)">{{ step.id }}</span>
+            </button>
+            <div class="setup-stepper-label" [class.setup-stepper-label-current]="step.id === currentStep">{{ step.name }}</div>
+          </div>
+          <div *ngIf="i < steps.length - 1" class="setup-stepper-connector" [class.setup-stepper-connector-done]="completedSteps.includes(step.id)"></div>
+        </ng-container>
+      </div>
+    </header>
+
+    <div class="setup-modal-content">
+      <app-setup-step-makemkv
+        *ngIf="currentStep === 1"
+        [data]="stepData.makemkv"
+        (dataChange)="onStepDataChange('makemkv', $event)"
+      ></app-setup-step-makemkv>
+      <app-setup-step-transfer
+        *ngIf="currentStep === 2"
+        [data]="stepData.transfer"
+        (dataChange)="onStepDataChange('transfer', $event)"
+      ></app-setup-step-transfer>
+      <app-setup-step-preview
+        *ngIf="currentStep === 3"
+        [data]="stepData.preview"
+        (dataChange)="onStepDataChange('preview', $event)"
+      ></app-setup-step-preview>
+      <app-setup-step-library
+        *ngIf="currentStep === 4"
+        [data]="stepData.library"
+        (dataChange)="onStepDataChange('library', $event)"
+      ></app-setup-step-library>
+      <app-setup-step-tmdb
+        *ngIf="currentStep === 5"
+        [data]="stepData.tmdb"
+        (dataChange)="onStepDataChange('tmdb', $event)"
+      ></app-setup-step-tmdb>
+      <app-setup-step-discord
+        *ngIf="currentStep === 6"
+        [data]="stepData.discord"
+        (dataChange)="onStepDataChange('discord', $event)"
+      ></app-setup-step-discord>
+      <app-setup-step-complete
+        *ngIf="currentStep === 7"
+        (complete)="onComplete($event)"
+      ></app-setup-step-complete>
+    </div>
+
+    <footer *ngIf="currentStep < 7" class="setup-modal-footer">
+      <ui-btn variant="ghost" [disabled]="currentStep === 1" (click)="onBack()">
+        <ui-icon uiBtnIcon name="chevron-left" [size]="14"></ui-icon>
+        Back
+      </ui-btn>
+      <div class="setup-modal-footer-actions">
+        <ui-btn
+          *ngIf="currentStep === 5 && !stepData.tmdb.apiKeySet && !stepData.tmdb.dismissed"
+          variant="secondary"
+          (click)="skipTmdb()">
+          Skip for now
+        </ui-btn>
+        <ui-btn
+          *ngIf="currentStep === 6 && !stepData.discord.enabled && !stepData.discord.dismissed"
+          variant="secondary"
+          (click)="skipDiscord()">
+          Skip for now
+        </ui-btn>
+        <ui-btn
+          variant="primary"
+          [disabled]="!canProceed"
+          (click)="onNext()">
+          Continue
+          <ui-icon name="chevron-right" [size]="14"></ui-icon>
+        </ui-btn>
+      </div>
+    </footer>
+  </div>
+</div>

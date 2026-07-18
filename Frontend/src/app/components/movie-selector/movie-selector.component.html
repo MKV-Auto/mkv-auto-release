@@ -1,0 +1,326 @@
+<div class="w-full">
+  <!-- Selected: template-style cyan card -->
+  <ng-container *ngIf="selectedMovie as movie">
+    <div class="movie-selector-selected-card p-4 rounded-xl relative">
+      <div class="flex items-center gap-4">
+        <div class="w-16 h-24 rounded-lg bg-cover bg-center flex-shrink-0 overflow-hidden" *ngIf="movie.cover_url || movie.cover_path">
+          <img [src]="movie.cover_url || movie.cover_path" [alt]="movie.name" class="w-full h-full object-cover" />
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-1">
+            <ng-container *ngIf="isMovieType(movie); else iconTv">
+              <svg class="w-4 h-4 flex-shrink-0 text-white/80" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M17 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>
+            </ng-container>
+            <ng-template #iconTv>
+              <svg class="w-4 h-4 flex-shrink-0 text-white/80" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 21h10"/><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M12 17v4"/></svg>
+            </ng-template>
+            <h4 class="text-base font-bold text-white truncate flex-1 min-w-0">{{ movie.name }}</h4>
+            <svg class="w-5 h-5 text-cyan-400 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+          </div>
+          <p class="text-sm text-white/60 m-0" *ngIf="movie.production_year">{{ movie.production_year }}</p>
+          <div class="flex items-center gap-1.5 mt-1 text-xs text-white/40" *ngIf="movie.tmdb_id">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" class="flex-shrink-0"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            <span>TMDB #{{ movie.tmdb_id }}</span>
+          </div>
+        </div>
+        <button type="button" class="px-3 py-1.5 text-xs font-medium text-white/60 hover:text-white hover:bg-white/5 rounded-lg transition-colors" (click)="onClear()">Change</button>
+      </div>
+    </div>
+  </ng-container>
+
+  <!-- Unselected: trigger (template: background rgba(255,255,255,0.04), border rgba(255,255,255,0.1)) -->
+  <ng-container *ngIf="!selectedMovie">
+    <div class="w-full">
+      <button
+        type="button"
+        class="movie-selector-trigger w-full flex items-center justify-between px-4 py-3 text-sm text-white transition-colors disabled:opacity-50"
+        [disabled]="loading"
+        (click)="openPanel()">
+        <span class="text-white/60">Select {{ contentType === 'movie' ? 'a movie' : 'a series' }}...</span>
+        <svg class="w-4 h-4 text-white/40 flex-shrink-0" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+    </div>
+
+    <!-- Desktop: overlay + panel (template: same background, blur(20px), border) -->
+    <ng-container *ngIf="isOpen && !isMobile">
+      <div class="fixed inset-0 z-[15]" (click)="closePanel()" role="presentation"></div>
+      <div class="movie-selector-dropdown relative z-20" (click)="$event.stopPropagation()">
+        <ng-container *ngIf="!showTmdbInput && showRowEdit">
+          <app-edition-metadata-form
+            theme="movie"
+            heading="Edit movie"
+            [externalErrors]="rowEditErrors"
+            [loading]="loading || rowEditSaving"
+            nameLabel="Title *"
+            namePlaceholder="Title"
+            yearLabel="Production year *"
+            yearPlaceholder="1999"
+            frontCoverLabel="Poster URL"
+            cancelLabel="Back"
+            submitLabel="Save"
+            [prefill]="movieRowEditPrefill"
+            [resetVersion]="movieRowEditResetVersion"
+            (cancelled)="cancelMovieRowEdit()"
+            (submitted)="onMovieRowEditionSave($event)">
+          </app-edition-metadata-form>
+        </ng-container>
+        <ng-container *ngIf="!showTmdbInput && !showRowEdit">
+          <button type="button" class="movie-selector-tmdb-btn w-full flex items-center gap-2 text-sm" (click)="onShowTmdbInput()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            <span>Add from TMDB URL</span>
+          </button>
+          <div class="movie-selector-dropdown-divider"></div>
+          <!-- Search input for backend search-as-you-type -->
+          <div class="p-2">
+            <input
+              type="text"
+              class="movie-selector-dropdown-input w-full text-white text-sm"
+              [ngModel]="searchTerm"
+              (ngModelChange)="onSearchInput($event)"
+              [placeholder]="'Search ' + (contentType === 'movie' ? 'movies' : 'series') + '...'"
+              autocomplete="off" />
+          </div>
+          <div class="p-1">
+            <ng-container *ngIf="searching">
+              <div class="p-4 text-center text-sm text-white/50">Searching...</div>
+            </ng-container>
+            <ng-container *ngIf="!searching && filteredMovies.length === 0 && searchTerm.length >= 3">
+              <div class="p-4 text-center text-sm text-white/50">No {{ contentType === 'movie' ? 'movies' : 'series' }} found</div>
+              <!-- TMDB search CTA — only when the user has searched and got
+                   no local matches, and no TMDB query has been kicked off yet. -->
+              <button
+                *ngIf="showTmdbSearchCta"
+                type="button"
+                class="movie-selector-tmdb-btn w-full flex items-center justify-center gap-2 text-sm"
+                (click)="onTmdbSearchCtaClick()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span>Search TMDB for "{{ searchTerm }}"</span>
+              </button>
+            </ng-container>
+            <ng-container *ngIf="!searching && filteredMovies.length === 0 && searchTerm.length < 3 && searchTerm.length > 0">
+              <div class="p-4 text-center text-sm text-white/50">Type 3+ characters to search</div>
+            </ng-container>
+            <ng-container *ngIf="!searching && filteredMovies.length === 0 && searchTerm.length === 0">
+              <div class="p-4 text-center text-sm text-white/50">No {{ contentType === 'movie' ? 'movies' : 'series' }} found</div>
+            </ng-container>
+            <ng-container *ngIf="filteredMovies.length > 0">
+              <div
+                class="movie-selector-list-row"
+                *ngFor="let m of filteredMovies">
+                <button type="button" class="movie-selector-dropdown-item movie-selector-dropdown-item--main w-full flex items-center gap-3 text-left" (click)="onSelectMovie(m)">
+                  <div class="w-10 h-14 rounded bg-cover bg-center flex-shrink-0 min-w-[2.5rem] min-h-[3.5rem]" *ngIf="m.cover_url || m.cover_path" [style.backgroundImage]="'url(' + (m.cover_url || m.cover_path) + ')'"></div>
+                  <div class="w-10 h-14 rounded flex items-center justify-center flex-shrink-0 movie-selector-item-placeholder min-w-[2.5rem] min-h-[3.5rem]" *ngIf="!m.cover_url && !m.cover_path">
+                    <svg *ngIf="isMovieType(m)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
+                    <svg *ngIf="!isMovieType(m)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 21h10"/><rect width="20" height="14" x="2" y="3" rx="2"/></svg>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="movie-selector-dropdown-item-name">{{ m.name }}</div>
+                    <div class="movie-selector-dropdown-item-year" *ngIf="m.production_year">{{ m.production_year }}</div>
+                  </div>
+                </button>
+                <div class="movie-selector-list-row-actions">
+                  <button
+                    type="button"
+                    class="movie-selector-action-btn"
+                    (click)="openMovieRowEdit(m, $event)"
+                    [attr.aria-label]="'Edit movie ' + m.name">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                </div>
+              </div>
+            </ng-container>
+
+            <!-- TMDB live-search result list (#389 follow-up). Visible when the
+                 parent has populated tmdbSearchResults via the CTA above. -->
+            <ng-container *ngIf="tmdbSearchLoading">
+              <div class="p-4 text-center text-sm text-white/50">Searching TMDB…</div>
+            </ng-container>
+            <ng-container *ngIf="!tmdbSearchLoading && tmdbSearchError">
+              <div class="p-3 mx-2 mt-2 rounded bg-red-500/10 border border-red-500/30 text-xs text-red-400">{{ tmdbSearchError }}</div>
+            </ng-container>
+            <ng-container *ngIf="!tmdbSearchLoading && !tmdbSearchError && tmdbSearchResults && tmdbSearchResults.length > 0">
+              <div class="px-3 pt-3 pb-1 text-xs text-white/40 uppercase tracking-wider">From TMDB</div>
+              <button
+                type="button"
+                class="movie-selector-dropdown-item movie-selector-dropdown-item--main w-full flex items-center gap-3 text-left"
+                *ngFor="let c of tmdbSearchResults"
+                (click)="onTmdbCandidateClick(c)">
+                <div class="w-10 h-14 rounded bg-cover bg-center flex-shrink-0 min-w-[2.5rem] min-h-[3.5rem]" *ngIf="c.cover_url" [style.backgroundImage]="'url(' + c.cover_url + ')'"></div>
+                <div class="w-10 h-14 rounded flex items-center justify-center flex-shrink-0 movie-selector-item-placeholder min-w-[2.5rem] min-h-[3.5rem]" *ngIf="!c.cover_url">
+                  <svg *ngIf="isCandidateMovieType(c)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
+                  <svg *ngIf="!isCandidateMovieType(c)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 21h10"/><rect width="20" height="14" x="2" y="3" rx="2"/></svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="movie-selector-dropdown-item-name">{{ c.title }}</div>
+                  <div class="movie-selector-dropdown-item-year">
+                    <span *ngIf="c.year">{{ c.year }} · </span>
+                    <span>{{ isCandidateMovieType(c) ? 'Movie' : 'Series' }}</span>
+                  </div>
+                </div>
+              </button>
+            </ng-container>
+            <ng-container *ngIf="!tmdbSearchLoading && !tmdbSearchError && tmdbSearchResults !== null && tmdbSearchResults.length === 0">
+              <div class="px-3 py-2 text-xs text-white/40">No TMDB matches.</div>
+            </ng-container>
+          </div>
+        </ng-container>
+        <div class="p-4 space-y-3" *ngIf="showTmdbInput">
+          <div class="movie-selector-tmdb-form-header flex items-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            <span class="font-medium">Add from TMDB</span>
+          </div>
+          <input
+            type="text"
+            class="movie-selector-dropdown-input w-full text-white disabled:opacity-50"
+            [(ngModel)]="internalTmdbUrl"
+            placeholder="https://www.themoviedb.org/movie/603-the-matrix"
+            [disabled]="loading"
+            (keyup.enter)="onTmdbLookup()" />
+          <div class="flex items-center gap-2">
+            <button type="button" class="movie-selector-back-btn" [disabled]="loading" (click)="onBackFromTmdb()">Back</button>
+            <button type="button" class="movie-selector-lookup-btn flex-1 flex items-center justify-center gap-2" [disabled]="loading || !internalTmdbUrl.trim()" (click)="onTmdbLookup()">
+              <svg *ngIf="loading" class="w-4 h-4 animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
+              <svg *ngIf="!loading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              <span>{{ loading ? 'Looking up...' : 'Lookup & Add' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </ng-container>
+
+    <!-- Mobile: drawer (template Drawer) -->
+    <app-mobile-drawer
+      *ngIf="isOpen && isMobile"
+      [isOpen]="isOpen"
+      [title]="showRowEdit ? 'Edit movie' : drawerTitle"
+      (close)="closePanel()">
+      <ng-container *ngIf="!showTmdbInput && showRowEdit">
+        <app-edition-metadata-form
+          theme="movie"
+          heading="Edit movie"
+          [externalErrors]="rowEditErrors"
+          [loading]="loading || rowEditSaving"
+          [padded]="true"
+          nameLabel="Title *"
+          namePlaceholder="Title"
+          yearLabel="Production year *"
+          yearPlaceholder="1999"
+          frontCoverLabel="Poster URL"
+          cancelLabel="Back"
+          submitLabel="Save"
+          [prefill]="movieRowEditPrefill"
+          [resetVersion]="movieRowEditResetVersion"
+          (cancelled)="cancelMovieRowEdit()"
+          (submitted)="onMovieRowEditionSave($event)">
+        </app-edition-metadata-form>
+      </ng-container>
+      <ng-container *ngIf="!showTmdbInput && !showRowEdit">
+        <div class="p-4 space-y-2">
+          <button type="button" class="movie-selector-drawer-tmdb-btn w-full flex items-center gap-2 rounded-lg text-sm" (click)="onShowTmdbInput()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            <span>Add from TMDB URL</span>
+          </button>
+          <div class="movie-selector-dropdown-divider my-2"></div>
+          <!-- Search input for backend search-as-you-type (mobile) -->
+          <input
+            type="text"
+            class="movie-selector-dropdown-input w-full text-white text-sm mb-2"
+            [ngModel]="searchTerm"
+            (ngModelChange)="onSearchInput($event)"
+            [placeholder]="'Search ' + (contentType === 'movie' ? 'movies' : 'series') + '...'"
+            autocomplete="off" />
+          <ng-container *ngIf="searching">
+            <div class="p-4 text-center text-sm text-white/50">Searching...</div>
+          </ng-container>
+          <ng-container *ngIf="!searching && filteredMovies.length === 0">
+            <div class="p-4 text-center text-sm text-white/50">{{ searchTerm.length >= 3 ? 'No results' : (searchTerm.length > 0 ? 'Type 3+ characters' : ('No ' + (contentType === 'movie' ? 'movies' : 'series') + ' found')) }}</div>
+            <button
+              *ngIf="showTmdbSearchCta"
+              type="button"
+              class="movie-selector-drawer-tmdb-btn w-full flex items-center justify-center gap-2 rounded-lg text-sm"
+              (click)="onTmdbSearchCtaClick()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Search TMDB for "{{ searchTerm }}"</span>
+            </button>
+          </ng-container>
+          <ng-container *ngIf="filteredMovies.length > 0">
+            <div class="movie-selector-list-row movie-selector-list-row--drawer" *ngFor="let m of filteredMovies">
+              <button type="button" class="movie-selector-drawer-item movie-selector-drawer-item--main w-full flex items-center gap-3 text-left" (click)="onSelectMovie(m)">
+                <div class="movie-selector-drawer-cover rounded bg-cover bg-center" *ngIf="m.cover_url || m.cover_path" [style.backgroundImage]="'url(' + (m.cover_url || m.cover_path) + ')'"></div>
+                <div class="movie-selector-drawer-cover rounded flex items-center justify-center movie-selector-item-placeholder" *ngIf="!m.cover_url && !m.cover_path">
+                  <svg *ngIf="isMovieType(m)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
+                  <svg *ngIf="!isMovieType(m)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 21h10"/><rect width="20" height="14" x="2" y="3" rx="2"/></svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="movie-selector-dropdown-item-name">{{ m.name }}</div>
+                  <div class="movie-selector-dropdown-item-year" *ngIf="m.production_year">{{ m.production_year }}</div>
+                </div>
+              </button>
+              <div class="movie-selector-list-row-actions">
+                <button
+                  type="button"
+                  class="movie-selector-action-btn"
+                  (click)="openMovieRowEdit(m, $event)"
+                  [attr.aria-label]="'Edit movie ' + m.name">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+              </div>
+            </div>
+          </ng-container>
+
+          <!-- TMDB live-search result list (#389 follow-up) — mobile drawer. -->
+          <ng-container *ngIf="tmdbSearchLoading">
+            <div class="p-4 text-center text-sm text-white/50">Searching TMDB…</div>
+          </ng-container>
+          <ng-container *ngIf="!tmdbSearchLoading && tmdbSearchError">
+            <div class="p-3 mt-2 rounded bg-red-500/10 border border-red-500/30 text-xs text-red-400">{{ tmdbSearchError }}</div>
+          </ng-container>
+          <ng-container *ngIf="!tmdbSearchLoading && !tmdbSearchError && tmdbSearchResults && tmdbSearchResults.length > 0">
+            <div class="px-2 pt-3 pb-1 text-xs text-white/40 uppercase tracking-wider">From TMDB</div>
+            <button
+              type="button"
+              class="movie-selector-drawer-item movie-selector-drawer-item--main w-full flex items-center gap-3 text-left"
+              *ngFor="let c of tmdbSearchResults"
+              (click)="onTmdbCandidateClick(c)">
+              <div class="movie-selector-drawer-cover rounded bg-cover bg-center" *ngIf="c.cover_url" [style.backgroundImage]="'url(' + c.cover_url + ')'"></div>
+              <div class="movie-selector-drawer-cover rounded flex items-center justify-center movie-selector-item-placeholder" *ngIf="!c.cover_url">
+                <svg *ngIf="isCandidateMovieType(c)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
+                <svg *ngIf="!isCandidateMovieType(c)" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 21h10"/><rect width="20" height="14" x="2" y="3" rx="2"/></svg>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="movie-selector-dropdown-item-name">{{ c.title }}</div>
+                <div class="movie-selector-dropdown-item-year">
+                  <span *ngIf="c.year">{{ c.year }} · </span>
+                  <span>{{ isCandidateMovieType(c) ? 'Movie' : 'Series' }}</span>
+                </div>
+              </div>
+            </button>
+          </ng-container>
+        </div>
+      </ng-container>
+      <div class="p-4 space-y-4" *ngIf="showTmdbInput">
+        <p class="text-sm text-white/60 m-0">Paste a URL from TheMovieDB to automatically fetch and add the {{ contentType }}.</p>
+        <input
+          type="text"
+          class="movie-selector-dropdown-input w-full text-white disabled:opacity-50"
+          [(ngModel)]="internalTmdbUrl"
+          placeholder="https://www.themoviedb.org/movie/603-the-matrix"
+          [disabled]="loading" />
+        <div class="flex items-center gap-2">
+          <button type="button" class="movie-selector-back-btn py-3" [disabled]="loading" (click)="onBackFromTmdb()">Back</button>
+          <button type="button" class="movie-selector-lookup-btn flex-1 flex items-center justify-center gap-2 py-3" [disabled]="loading || !internalTmdbUrl.trim()" (click)="onTmdbLookup()">
+            <svg *ngIf="loading" class="w-4 h-4 animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
+            <svg *ngIf="!loading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            <span>{{ loading ? 'Looking up...' : 'Lookup & Add' }}</span>
+          </button>
+        </div>
+      </div>
+    </app-mobile-drawer>
+
+    <!-- Error (Tailwind) -->
+    <div class="flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30 mt-3" *ngIf="error">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" class="flex-shrink-0 mt-0.5 text-red-400"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span class="text-xs text-red-400">{{ error }}</span>
+    </div>
+  </ng-container>
+</div>

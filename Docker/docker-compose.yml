@@ -1,0 +1,38 @@
+# Docker Compose for MKV-Auto
+# Simple deployment with embedded PostgreSQL and Redis
+
+version: '3.8'
+
+services:
+  mkv-auto:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile
+    container_name: mkv-auto
+    ports:
+      - "8080:80"
+    volumes:
+      # Persistent data
+      - mkv-data:/data
+      # Optical drive access (adjust device path as needed)
+      - /dev/sr0:/dev/sr0
+    devices:
+      - /dev/sr0
+    # Privileged mode required for optical drive access and mount operations
+    privileged: true
+    environment:
+      # Optional: Override default timezone
+      - TZ=UTC
+      # Optional: Set log level (DEBUG, INFO, WARNING, ERROR)
+      - MKVAUTO_DEBUG_LEVEL=INFO
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  mkv-data:
+    driver: local

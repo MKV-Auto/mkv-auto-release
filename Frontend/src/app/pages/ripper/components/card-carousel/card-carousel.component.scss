@@ -1,0 +1,549 @@
+:host {
+  display: contents;
+  pointer-events: auto !important;
+}
+
+/* Template empty state: glass rounded-xl p-8 text-center */
+.carousel-empty {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.carousel-empty-icon {
+  display: block;
+  color: rgba(255, 255, 255, 0.2);
+  line-height: 0;
+}
+
+.carousel-empty-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+}
+
+.carousel-empty-text {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0;
+}
+
+.disc-card-wrapper {
+  display: contents;
+  pointer-events: auto !important;
+  cursor: pointer;
+}
+
+.disc-card-wrapper.disabled {
+  pointer-events: none !important;
+  cursor: not-allowed;
+}
+
+/* Card base — template: glass, p-4, rounded-xl, border-white/10 */
+button.disc-card,
+button.disc-card.card,
+button.disc-card.glass,
+.disc-card,
+.disc-card.card,
+.disc-card.glass {
+  margin: 0 !important;
+  // padding: 1rem !important; /* p-4 */
+  font-weight: inherit !important;
+  font-size: inherit !important;
+  box-shadow: none !important;
+
+  aspect-ratio: 2 / 1;
+  display: flex !important;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  cursor: pointer !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important; /* border-white/10 */
+  background: rgba(255, 255, 255, 0.04) !important;
+  position: relative;
+  width: calc((100% - 24px) / 3.5);
+  min-width: 200px;
+  max-width: 280px;
+  flex-shrink: 0;
+  gap: 0;
+  border-radius: 12px; /* rounded-xl */
+  transform-origin: center center;
+  will-change: transform;
+  user-select: none;
+  pointer-events: auto !important;
+  -webkit-tap-highlight-color: transparent;
+  z-index: 1;
+  touch-action: manipulation;
+  container-type: inline-size;
+  // margin-top: 1rem;
+
+  // &:first-of-type {
+  //   margin-left: 1rem;
+  // }
+}
+
+button.disc-card:hover:not(:disabled):not([aria-disabled="true"]),
+button.disc-card:not(:disabled):not([aria-disabled="true"]):hover,
+.disc-card:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  // transform-only lift — do NOT change padding, width, or any other box-model
+  // property on hover, or the card's real dimensions will change and the
+  // sibling cards in the flex row will reflow (visible as "compress vertically
+  // + expand horizontally" wobble on the hovered card and layout shift on the
+  // rest of the page).
+  transform: translateY(-4px) scale(1.05) !important;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3) !important;
+  z-index: 10;
+}
+
+button.disc-card.active:hover:not(:disabled):not([aria-disabled="true"]),
+.disc-card.active:hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.4), 0 10px 40px rgba(0, 0, 0, 0.3) !important;
+}
+
+button.disc-card:active:not(:disabled):not([aria-disabled="true"]),
+.disc-card:active:not(:disabled):not([aria-disabled="true"]) {
+  transform: translateY(-2px) scale(1.03) !important;
+}
+
+button.disc-card:disabled,
+.disc-card:disabled,
+button.disc-card[aria-disabled="true"],
+.disc-card[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none !important;
+  transform: none !important;
+}
+
+/* Allow pill/tooltip to receive clicks when card is aria-disabled (scanning). */
+button.disc-card[aria-disabled="true"] .disc-card-scan-tooltip-host,
+.disc-card[aria-disabled="true"] .disc-card-scan-tooltip-host {
+  pointer-events: auto !important;
+}
+
+button.disc-card:not(:disabled):not([aria-disabled="true"]),
+.disc-card:not(:disabled):not([aria-disabled="true"]) {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Selected — template: border-[#6366f1] shadow-[0_0_0_2px_rgba(99,102,241,0.3)] */
+button.disc-card.active,
+.disc-card.active {
+  border-color: #6366f1 !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3) !important;
+}
+
+button.disc-card.loading,
+.disc-card.loading {
+  opacity: 0.8;
+}
+
+/* ---- Header (template: first div, no border) ---- */
+.disc-card-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Eyebrow row — template: flex items-center gap-2 mb-2 */
+.disc-card-eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  width: 100%;
+}
+
+.disc-card-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.disc-card.drive-card .disc-icon,
+.disc-card-wrapper:not(.disabled) .drive-card .disc-icon {
+  color: #60a5fa; /* blue-400 */
+}
+
+.disc-card.job-card .job-icon {
+  color: #facc15; /* yellow-400 */
+}
+
+.disc-card-discdb-hit {
+  margin-left: auto;
+  flex-shrink: 0;  /* Don't compress the chip when eyebrow text is long. */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.15) 0%, rgba(6, 182, 212, 0.1) 100%);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  box-shadow: 0 0 8px rgba(14, 165, 233, 0.15);
+}
+
+.disc-card-discdb-hit-icon {
+  width: 10px;
+  height: 10px;
+  color: #22d3ee;
+  flex-shrink: 0;
+}
+
+.disc-card-discdb-hit-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #67e8f9;
+}
+
+/* Drive card: scanning spinner (top-right, matches job spinner + prototype) */
+.disc-card-drive-spinner-wrap {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #60a5fa; /* blue-400, matches drive icon */
+  pointer-events: none;
+  z-index: 2;
+}
+
+.disc-card-drive-spinner {
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+/* Drive card: scan failed warning icon (amber, top-right) */
+.disc-card-scan-failed-wrap {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.disc-card-scan-failed-icon {
+  color: #fbbf24; /* amber-400 */
+}
+
+/* Drive card: completed job check icon (green, top-right) */
+.disc-card-completed-wrap {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.disc-card-completed-icon {
+  color: #4ade80; /* green-400 */
+}
+
+/* Drive card: determinate rip progress ring (top-right, same position as job spinner) */
+.disc-card-rip-ring-wrap {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.disc-card-rip-ring {
+  color: #60a5fa; /* blue-400, matches drive icon */
+  transition: stroke-dashoffset 0.4s ease;
+}
+
+.disc-card-rip-ring-pct {
+  position: absolute;
+  font-size: 7px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1;
+  text-align: center;
+}
+
+/* Job card: loading spinner in top-right when processing (rip/postprocess/transfer) */
+.disc-card-job-spinner-wrap {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #facc15; /* yellow-400, match job icon */
+  pointer-events: none;
+}
+
+.disc-card-job-spinner {
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+/* Eyebrow label — template: text-xs font-semibold text-white/70 uppercase tracking-wide */
+.disc-card-eyebrow {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  /* On narrow cards (mobile) the HIT chip + icon leave too little room for
+     "UNFINISHED DISC" — let the eyebrow shrink and ellipsize instead of
+     wrapping to a second line. */
+  min-width: 0;
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Title — fluid 0.5rem–1rem, single line, ellipsis when truncated */
+.disc-card-name {
+  font-size: clamp(0.5rem, 6cqw, 1rem);
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.3;
+  margin-bottom: 0.25rem;
+  min-width: 0;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+/* Meta — template: text-xs text-white/60 */
+.disc-card-meta {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.3;
+  width: 100%;
+  text-align: left;
+}
+
+/* ---- Footer — single row: mount | Scanning... + pill (ui-lab: flex items-center justify-between gap-2) ---- */
+.disc-card-footer {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* Mount — template: text-xs font-mono text-white/50 truncate */
+.disc-card-mount {
+  font-size: 0.75rem;
+  font-family: ui-monospace, monospace;
+  color: rgba(255, 255, 255, 0.5);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Footer scan group: Scanning... + pill in one row (ui-lab: flex items-center gap-1.5 flex-shrink-0) */
+.disc-card-footer-scan {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+/* Failed job on Now Reading card — pill + date (matches job card footer pattern) */
+.disc-card-drive-failed-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* Scanning label — template: text-xs text-blue-400 font-medium whitespace-nowrap */
+.disc-card-scanning {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #60a5fa;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Extended-scan pill (after 30s) — match ui-lab: gap-1 px-1.5 py-0.5 rounded-full text-[10px], amber */
+.disc-card-scan-tooltip-host {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.disc-card-scan-long-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem; /* gap-1 */
+  padding: 0.125rem 0.375rem; /* py-0.5 px-1.5 */
+  font-size: 0.625rem; /* text-[10px] */
+  font-weight: 500;
+  line-height: 1;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 9999px;
+  cursor: default;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.disc-card-scan-long-pill-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px; /* w-2.5 */
+  height: 10px; /* h-2.5 */
+  color: inherit;
+
+  svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+}
+
+.disc-card-scan-long-pill-label-mobile {
+  display: inline;
+}
+
+.disc-card-scan-long-pill-label-desktop {
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .disc-card-scan-long-pill-label-mobile {
+    display: none;
+  }
+
+  .disc-card-scan-long-pill-label-desktop {
+    display: inline;
+  }
+}
+
+/* When scan tooltip is open, raise only the card's stack order (no layout change). */
+button.disc-card.scan-tooltip-open,
+.disc-card.scan-tooltip-open {
+  z-index: 100 !important;
+}
+
+/* Tooltip panel: hover (desktop) or tap (mobile) */
+.disc-card-scan-tooltip-panel {
+  position: absolute;
+  z-index: 10000;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(15, 23, 42, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  white-space: normal;
+  min-width: 14rem;
+  max-width: 20rem;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events: none;
+}
+
+.disc-card-scan-tooltip-panel.show {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Job pill — template: text-xs px-2 py-0.5 bg-yellow-500/20 text-yellow-300 rounded-full font-medium */
+.disc-card-pill {
+  font-size: 0.75rem;
+  padding: 0.125rem 0.5rem;
+  background: rgba(250, 204, 21, 0.2);
+  color: #facc15;
+  border-radius: 9999px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+/* Failed job pill — red instead of yellow */
+.disc-card-pill-failed {
+  background: rgba(239, 68, 68, 0.2) !important;
+  color: #f87171 !important;
+}
+
+/* Job date — template: text-xs text-white/40 */
+.disc-card-date {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 768px) {
+  button.disc-card,
+  .disc-card {
+    width: calc((100% - 8px) / 1.5);
+    min-width: 200px;
+    max-width: none;
+  }
+
+  .disc-card-footer-scan {
+    min-width: 0;
+  }
+
+  .disc-card-scan-long-pill {
+    min-height: 2rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.6875rem;
+  }
+}

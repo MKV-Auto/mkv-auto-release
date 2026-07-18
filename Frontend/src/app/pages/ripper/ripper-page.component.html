@@ -1,0 +1,348 @@
+<ng-container *ngIf="uiOrchestrationState$ | async as ui">
+<div *ngIf="ui?.driveError" class="glass card alert warning soft">
+  <div class="loading-content">
+    <div class="loading-text">Drive error: {{ ui?.driveError }}</div>
+  </div>
+</div>
+
+<div *ngIf="ui?.backendError" class="glass card alert warning soft backend-error-critical standalone">
+  <div class="loading-content">
+    <div class="loading-text">Critical Error: Unable to Connect to Backend Service.</div>
+  </div>
+</div>
+
+<ng-container *ngIf="!ui?.backendError">
+<!-- Card Header / Carousel — always visible when no backend error; does not depend on full ripper state -->
+<div class="card-header">
+  <div class="card-header-carousel">
+    <app-card-carousel></app-card-carousel>
+  </div>
+</div>
+
+<!-- #603: "Already in Library" surface — appears below the carousel when the
+     selected drive card represents a disc that's already been ripped. Single
+     Re-rip CTA dismisses the banner and reveals the regular labeling +
+     actions workflow below for a deliberate re-rip. -->
+<app-already-in-library-card></app-already-in-library-card>
+
+<ng-container *ngIf="ripperState$ | async as state">
+<!-- Show workflow loading overlay when context is being fetched or not yet ready to show -->
+<ng-container *ngIf="state?.selectedCard as card">
+  <ng-container *ngIf="state?.workflowContextStatus === 'loading' || ((state?.workflowContextStatus === 'ready' || state?.workflowContextStatus === 'pending') && !state?.isWorkflowReady)">
+    <div class="w-full">
+      <app-loading-card message="Loading Content"></app-loading-card>
+    </div>
+  </ng-container>
+</ng-container>
+
+<!-- Show error and retry when context fetch failed -->
+<ng-container *ngIf="state?.selectedCard && state?.workflowContextStatus === 'error'">
+  <div class="glass card alert warning soft">
+    <div class="loading-content">
+      <div class="loading-text">Failed to load workflow.</div>
+      <button type="button" class="btn primary mt-2" (click)="retryContextLoad()">Retry</button>
+    </div>
+  </div>
+</ng-container>
+  
+<!-- Workflow Labeling and Actions for Drive Cards (show when ready or pending) -->
+<!-- Path A (selective-rip + segment-reorder) used to render
+     <app-path-a-workspace> as a separate branch here. It now lives as a
+     workflow step inside <app-workflow-labeling> (currentStep ===
+     'exploratory_rip'), so the breadcrumb header + step-card shell wrap
+     it the same way they wrap every other step. -->
+<ng-container *ngIf="state?.selectedCard?.type === 'drive' && (state?.workflowContextStatus === 'ready' || state?.workflowContextStatus === 'pending') && state?.isWorkflowReady && state?.shouldRenderWorkflow">
+  <app-workflow-labeling></app-workflow-labeling>
+  <app-workflow-actions></app-workflow-actions>
+</ng-container>
+
+<ng-container *ngIf="discInfo$ | async as info">
+  <!-- Show workflow view when context is ready or pending -->
+  <ng-container *ngIf="(state?.workflowContextStatus === 'ready' || state?.workflowContextStatus === 'pending') && state?.selectedCard && state?.isWorkflowReady">
+
+  <!-- Title Modal for Mobile -->
+  <app-title-modal
+    *ngIf="selectedTitleForModal"
+    [title]="selectedTitleForModal"
+    [isSeries]="isSeriesLabel"
+    [titleProgress]="(titleProgress$ | async) || {}"
+    [titleStatusFn]="titleStatus.bind(this)"
+    [titleProgressValueFn]="titleProgressValue.bind(this)"
+    [titleActiveFn]="titleIsActive.bind(this)"
+    [previewUrlFn]="previewUrlForTitle.bind(this)"
+    [titlePathFn]="titlePath.bind(this)"
+    [previewStateFn]="titlePreviewState.bind(this)"
+    [labelSaving]="(workflowSvc.activeContext$ | async)?.labelSaving || false"
+    [lastAutosaveOk]="(workflowSvc.activeContext$ | async)?.lastAutosaveOk || true"
+    [devMode]="devMode"
+    (close)="closeTitleModal()"
+    (titleChanged)="onLabelChange()"
+    (titleBlur)="onFieldBlur()"
+    (titlePatched)="onTitleModalPatch($event)">
+  </app-title-modal>
+
+  <!-- Legacy Film Card (hidden, replaced by workflow) -->
+  <div class="glass card film-card hidden" *ngIf="false && (workflowLabelForm$ | async) && !(workflowSvc.activeContext$ | async)?.discdbHit">
+    <div class="film-card-content">
+      <!-- Movie|Series Selector -->
+      <div class="film-control-group">
+        <div class="toggle-row">
+          <button [class.active]="isMovieActive" (click)="setContentType('movie')">Movie</button>
+          <button [class.active]="isSeriesActive" (click)="setContentType('series')">Series</button>
+        </div>
+      </div>
+
+      <!-- Boxset Toggle -->
+      <div class="film-control-group">
+        <div class="toggle-row">
+          <button [class.active]="labelForm?.boxset_id" (click)="toggleBoxset()" [attr.data-boxset-id]="labelForm?.boxset_id">Boxset</button>
+        </div>
+      </div>
+
+      <!-- Film Dropdown -->
+      <div class="film-control-group film-dropdown-group" *ngIf="!labelForm?.movie_id">
+        <div class="combobox" *ngIf="movieOptions?.length" (mouseleave)="movieComboOpen = false">
+              <button type="button" class="combobox-trigger" (click)="movieComboOpen = !movieComboOpen">
+                <ng-container *ngIf="selectedMovieCover as img">
+                  <img class="combo-thumb" [src]="img" alt="cover">
+                </ng-container>
+                <div class="combo-trigger-text">
+                  <div class="combo-title">
+                    {{ selectedMovieName || 'Select movie' }}
+                  </div>
+                  <div class="muted text-xs">
+                    {{ selectedMovieYear || 'Or enter TMDB URL' }}
+                  </div>
+                </div>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
+              <button type="button" class="combo-add" (click)="clearMovieSelection()" title="New movie">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+              </button>
+              <div class="combobox-panel" *ngIf="movieComboOpen">
+                <input
+                  type="text"
+                  [(ngModel)]="movieSearch"
+                  placeholder="Search movies"
+                  (ngModelChange)="onMovieSearchChange($event)">
+                <div class="combobox-options">
+                  <ng-container *ngFor="let movie of filteredMovieOptions; trackBy: trackByMovieId">
+                    <div class="combo-option-wrapper">
+                      <button
+                        class="combo-option"
+                        (click)="onSelectMovie(movie)">
+                        <ng-container *ngIf="movie.cover_url">
+                          <img class="combo-thumb" [src]="movie.cover_url" alt="cover">
+                        </ng-container>
+                        <div class="combo-option-text">
+                          <div class="combo-title">{{ movie.name }}</div>
+                          <div class="muted text-xs">
+                            {{ movie.production_year || '—' }}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  </ng-container>
+                  <div class="muted text-xs empty" *ngIf="filteredMovieOptions.length === 0">
+                    No matches
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+      <!-- Boxset Selector (when boxset is active) -->
+      <div class="film-control-group film-boxset-group" *ngIf="labelForm?.boxset_id">
+        <div class="combobox" (mouseleave)="closeBoxsetCombo()">
+          <button type="button" class="combobox-trigger" (click)="toggleBoxsetCombo()">
+            <ng-container *ngIf="selectedBoxset?.cover_front_url as img">
+              <img class="combo-thumb" [src]="img" alt="cover">
+            </ng-container>
+            <div class="combo-trigger-text">
+              <div class="combo-title">
+                {{ selectedBoxset?.name || selectedBoxset?.title || 'Select boxset...' }}
+              </div>
+              <div class="muted text-xs" *ngIf="selectedBoxset">
+                {{ selectedBoxset.year }} · {{ selectedBoxset.release_count }} releases
+              </div>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <button type="button" class="combo-add" (click)="openBoxsetCreateModal()" title="Create new boxset">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          <div class="combobox-panel" *ngIf="boxsetOpen">
+            <input
+              type="text"
+              [(ngModel)]="boxsetSearch"
+              placeholder="Search boxsets"
+              (ngModelChange)="_filteredBoxsetOptionsCache = null; cdr.markForCheck()">
+            <div class="combobox-options">
+              <ng-container *ngFor="let boxset of filteredBoxsetOptions; trackBy: trackByBoxsetId">
+                <div class="combo-option-wrapper">
+                  <button
+                    class="combo-option"
+                    (click)="selectBoxset(boxset)">
+                    <ng-container *ngIf="boxset.cover_front_url">
+                      <img class="combo-thumb" [src]="boxset.cover_front_url" alt="cover">
+                    </ng-container>
+                    <div class="combo-option-text">
+                      <div class="combo-title">{{ boxset.name || boxset.title || boxset.slug }}</div>
+                      <div class="muted text-xs">
+                        {{ boxset.year }} · {{ boxset.release_count }} releases
+                      </div>
+                    </div>
+                    <button class="combo-edit" type="button" (click)="openBoxsetEditModal(boxset, $event)" title="Edit boxset">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                      </svg>
+                    </button>
+                  </button>
+                </div>
+              </ng-container>
+              <div class="muted text-xs empty" *ngIf="filteredBoxsetOptions.length === 0">
+                No matches
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TMDB URL Section -->
+      <div class="film-control-group film-tmdb-group" *ngIf="shouldShowTmdbUrl(info)">
+        <div class="tmdb-url-input">
+          <input 
+            type="text" 
+            [(ngModel)]="tmdbUrl" 
+            placeholder="https://www.themoviedb.org/movie/414906"
+            (keyup.enter)="onMovieLookup()"
+            [disabled]="filmLookupLoading">
+        <button
+            type="button" 
+            class="primary" 
+            (click)="onMovieLookup()"
+            [disabled]="filmLookupLoading || !tmdbUrl.trim()">
+            <span *ngIf="filmLookupLoading">Loading...</span>
+            <span *ngIf="!filmLookupLoading">Lookup</span>
+        </button>
+      </div>
+        <div class="text-danger-200 text-xs mt-1" *ngIf="filmLookupError">{{ filmLookupError }}</div>
+      </div>
+    </div>
+  </div>
+
+  </ng-container>
+</ng-container>
+
+<!-- Workflow Labeling and Actions for Unfinished Jobs (renders when no disc info available).
+     Show whenever a job card is selected so the same component stays mounted and updates when
+     context loads; loading overlay (above) handles "Loading Content" during fetch. -->
+<!-- Path A workspace renders inside workflow-labeling as the exploratory_rip
+     step (same shell as the other workflow steps). -->
+<ng-container *ngIf="state?.selectedCard?.type === 'job'">
+  <app-workflow-labeling></app-workflow-labeling>
+  <app-workflow-actions></app-workflow-actions>
+</ng-container>
+
+</ng-container>
+
+<!-- Boxset Selection Modal - outside state block so modals render without waiting on combined state -->
+<div class="modal-backdrop modal-fullscreen-backdrop" *ngIf="showBoxsetSelectModal">
+  <div class="modal modal-fullscreen">
+    <div class="modal-head">
+      <button class="icon-btn" (click)="closeBoxsetSelectModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field mb-4" *ngIf="boxsetOptions.length > 0">
+        <input
+          type="text"
+          [(ngModel)]="boxsetSearch"
+          placeholder="Search boxsets..."
+          class="input">
+      </div>
+      <div class="boxset-list" *ngIf="filteredBoxsetOptions.length > 0">
+        <div 
+          *ngFor="let boxset of filteredBoxsetOptions; trackBy: trackByBoxsetId" 
+          class="boxset-item"
+          (click)="selectBoxsetFromModal(boxset)">
+          <ng-container *ngIf="boxset.cover_front_url">
+            <img class="boxset-cover" [src]="boxset.cover_front_url" alt="cover">
+          </ng-container>
+          <div class="boxset-info">
+            <div class="boxset-name">{{ boxset.name || boxset.title || boxset.slug }}</div>
+            <div class="muted text-xs">
+              {{ boxset.year }} · {{ boxset.release_count }} releases
+            </div>
+          </div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </div>
+      </div>
+      <div class="muted text-center" *ngIf="filteredBoxsetOptions.length === 0 && boxsetOptions.length > 0">
+        No boxsets match your search.
+      </div>
+      <div class="muted text-center" *ngIf="boxsetOptions.length === 0">
+        No boxsets available. Create one to get started.
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button class="secondary" (click)="closeBoxsetSelectModal()">Cancel</button>
+        <button class="primary" (click)="openCreateBoxsetFromSelectModal()">Create New Boxset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Boxset Creation/Edit Modal - Outside card container to avoid clipping -->
+<div class="modal-backdrop modal-fullscreen-backdrop" *ngIf="showBoxsetCreateModal">
+  <div class="modal modal-fullscreen">
+    <div class="modal-head">
+          <h3>{{ editingBoxsetId ? 'Edit Boxset' : 'Create New Boxset' }}</h3>
+      <button class="icon-btn" (click)="closeBoxsetCreateModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Name <span class="required">*</span></label>
+        <input type="text" [(ngModel)]="newBoxset.name" placeholder="Boxset name">
+      </div>
+      <div class="field">
+        <label>Release Year <span class="required">*</span></label>
+        <input type="number" [(ngModel)]="newBoxset.year" placeholder="2020">
+      </div>
+      <div class="field">
+        <label>UPC</label>
+        <input type="text" [(ngModel)]="newBoxset.upc" placeholder="UPC">
+      </div>
+      <div class="field">
+        <label>ASIN</label>
+        <input type="text" [(ngModel)]="newBoxset.asin" placeholder="ASIN">
+      </div>
+      <div class="field">
+        <label>Front Cover URL</label>
+        <input type="text" [(ngModel)]="newBoxset.cover_front_url" placeholder="https://...">
+      </div>
+      <div class="field">
+        <label>Back Cover URL</label>
+        <input type="text" [(ngModel)]="newBoxset.cover_back_url" placeholder="https://...">
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button class="secondary" (click)="closeBoxsetCreateModal()">Cancel</button>
+            <button class="primary" (click)="createBoxset()">{{ editingBoxsetId ? 'Update' : 'Create' }}</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</ng-container>
+</ng-container>

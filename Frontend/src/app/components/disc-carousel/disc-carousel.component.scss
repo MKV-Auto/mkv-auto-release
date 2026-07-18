@@ -1,0 +1,222 @@
+:host {
+  display: contents;
+  pointer-events: auto !important; // Ensure host doesn't block events
+}
+
+.disc-card-wrapper {
+  display: contents; // Don't create extra wrapper box
+  pointer-events: auto !important;
+  cursor: pointer;
+}
+
+.disc-card-wrapper.disabled {
+  pointer-events: none !important;
+  cursor: not-allowed;
+}
+
+// Reset button defaults to prevent global button styles from interfering
+// Override .card and .glass classes from parent/global styles
+button.disc-card,
+button.disc-card.card,
+button.disc-card.glass,
+.disc-card,
+.disc-card.card,
+.disc-card.glass {
+  // Reset global button styles
+  margin: 0 !important;
+  padding: 16px !important;
+  font-weight: inherit !important;
+  font-size: inherit !important;
+  box-shadow: none !important;
+  
+  aspect-ratio: 2;
+  display: flex !important;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  cursor: pointer !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  position: relative;
+  width: calc((100% - 36px) / 3.5);
+  min-width: 200px;
+  max-width: 280px;
+  flex-shrink: 0;
+  gap: 12px;
+  border-radius: 12px;
+  transform-origin: center center;
+  will-change: transform;
+  user-select: none;
+  pointer-events: auto !important;
+  -webkit-tap-highlight-color: transparent;
+  z-index: 1; // Ensure cards are above any potential overlays
+  touch-action: manipulation; // Improve touch responsiveness
+}
+
+// Higher specificity to override global button:hover styles
+button.disc-card:hover:not(:disabled),
+button.disc-card:not(:disabled):hover,
+.disc-card:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  transform: translateY(-4px) scale(1.05) !important;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3) !important;
+  z-index: 10;
+  // Override global button:hover transform
+  padding: 16px !important;
+}
+
+// Active state on hover - maintain active styling
+button.disc-card.active:hover:not(:disabled),
+.disc-card.active:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.4), 0 10px 40px rgba(0, 0, 0, 0.3) !important;
+}
+
+// Override global button:active to prevent transform reset
+button.disc-card:active:not(:disabled),
+.disc-card:active:not(:disabled) {
+  transform: translateY(-2px) scale(1.03) !important;
+}
+
+button.disc-card:disabled,
+.disc-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none !important;
+  transform: none !important;
+}
+
+// CRITICAL: Ensure enabled buttons are always interactive and can receive events
+button.disc-card:not(:disabled),
+.disc-card:not(:disabled) {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  // Force interaction
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+button.disc-card.active,
+.disc-card.active {
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3) !important;
+}
+
+button.disc-card.loading,
+.disc-card.loading {
+  opacity: 0.8;
+}
+
+.disc-card .eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+  margin: 0;
+  width: 100%;
+}
+
+.disc-card .eyebrow svg {
+  width: 12px;
+  height: 12px;
+}
+
+.disc-card-top {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  flex: 1;
+}
+
+.disc-card-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+}
+
+.disc-card-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  margin-top: auto;
+}
+
+.disc-card-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.3;
+  word-break: break-word;
+  text-align: left;
+  width: 100%;
+}
+
+.disc-card-meta {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: left;
+  width: 100%;
+  line-height: 1.3;
+}
+
+.disc-card-mount {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: left;
+  width: 100%;
+  line-height: 1.3;
+}
+
+.disc-card-stage {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: left;
+  width: 100%;
+  line-height: 1.3;
+}
+
+.disc-card-loading {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.75rem;
+}
+
+.disc-card-loading .spinner {
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 720px) {
+  .disc-card {
+    width: calc((100% - 12px) / 1.5);
+    min-width: 200px;
+    max-width: none;
+  }
+
+  .disc-card-name {
+    font-size: 0.85rem;
+  }
+}

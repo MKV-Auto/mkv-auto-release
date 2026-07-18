@@ -1,0 +1,33 @@
+// Design system tokens for the UI redesign port.
+// Namespaced under --ui-* so they coexist with the legacy --primary / --surface-* tokens
+// in src/styles.scss until consumers migrate. Source: combined plan, "Design tokens" table.
+
+:root {
+  // Surfaces
+  --ui-bg-base: #0f172a;
+  --ui-glow-indigo: rgba(99, 102, 241, 0.15);
+  --ui-glow-emerald: rgba(16, 185, 129, 0.10);
+  --ui-card-bg: rgba(255, 255, 255, 0.04);
+  --ui-card-border: rgba(255, 255, 255, 0.10);
+  --ui-card-radius: 14px;
+  --ui-card-blur: 12px;
+
+  // Accents
+  --ui-accent: #6366f1;
+  --ui-accent-ring: 0 0 0 2px rgba(99, 102, 241, 0.3);
+
+  // Status
+  --ui-success: #10b981;
+  --ui-warning: #facc15;
+  --ui-info: #60a5fa;
+  --ui-danger: #ef4444;
+
+  // Typography
+  --ui-font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --ui-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  // Animation
+  --ui-anim-modal: 200ms ease-out;
+  --ui-anim-reorder: 150ms ease-in-out;
+  --ui-anim-fade: 250ms;
+}

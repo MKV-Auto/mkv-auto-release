@@ -1,0 +1,149 @@
+<ng-container *ngIf="{ cards: allCards$ | async, selectedCard: selectedCard$ | async, driveScanState: driveScanState$ | async, driveLoadingStates: driveLoadingStates$ | async, jobIdsProcessing: jobIdsProcessing$ | async, driveRipProgress: driveRipProgress$ | async } as state">
+  <!-- Template empty state: glass rounded-xl p-8 text-center -->
+  <div *ngIf="(state.cards?.length ?? 0) === 0" class="carousel-empty glass rounded-xl p-8 text-center border border-white/10">
+    <span class="carousel-empty-icon" aria-hidden="true">
+      <ui-icon name="disc" [size]="48"></ui-icon>
+    </span>
+    <h3 class="carousel-empty-title">No Discs or Jobs</h3>
+    <p class="carousel-empty-text">Insert a disc to get started</p>
+  </div>
+  <ng-container *ngIf="(state.cards?.length ?? 0) > 0">
+  <div
+    *ngFor="let card of state.cards; trackBy: trackByCardId"
+    class="disc-card-wrapper"
+    [class.disabled]="card.type === 'drive' && (card.data.scan_state === 'pending' || card.data.scan_state === 'scanning' || state.driveScanState === 'scanning')"
+    (click)="onCardSelected(card); $event.stopPropagation()">
+    <button
+      type="button"
+      class="disc-card glass card"
+      [class.active]="isCardActive(card, state.selectedCard)"
+      [class.loading]="isCardLoading(card, state.driveScanState, state.driveLoadingStates)"
+      [class.drive-card]="card.type === 'drive'"
+      [class.job-card]="card.type === 'job'"
+      [class.scan-tooltip-open]="card.type === 'drive' && isCardLoading(card, state.driveScanState, state.driveLoadingStates) && showScanTooltip"
+      [attr.aria-disabled]="card.type === 'drive' && (card.data.scan_state === 'pending' || card.data.scan_state === 'scanning' || state.driveScanState === 'scanning') ? true : null"
+      [attr.aria-busy]="card.type === 'job' && isJobCardProcessing(card, state.jobIdsProcessing) ? true : null"
+      tabindex="-1">
+
+      <!-- Drive Card: template structure = header (eyebrow + title + meta) + footer (mount | Scanning...) -->
+      <ng-container *ngIf="card.type === 'drive'">
+        <!-- Scan failed warning (amber, top-right) — shown when disc scan failed -->
+        <div
+          class="disc-card-scan-failed-wrap"
+          *ngIf="card.data.scan_state === 'failed' && !isCardLoading(card, state.driveScanState, state.driveLoadingStates)"
+          [attr.title]="card.data.scan_error || 'Disc scan failed'"
+          [attr.aria-label]="card.data.scan_error || 'Disc scan failed'">
+          <ui-icon name="alert" [size]="20"></ui-icon>
+        </div>
+        <!-- Completed job check (green, top-right) — shown when disc has a completed job and NOT ripping -->
+        <div
+          class="disc-card-completed-wrap"
+          *ngIf="card.data.has_completed_job && getDriveRipProgress(card, state.driveRipProgress) <= 0 && !isCardLoading(card, state.driveScanState, state.driveLoadingStates) && card.data.scan_state !== 'failed' && card.data.job_status !== 'failed'"
+          title="Rip completed for this disc"
+          aria-label="Rip completed for this disc">
+          <ui-icon name="check-circle" [size]="20"></ui-icon>
+        </div>
+        <!-- Drive scanning spinner (top-right) — matches the prototype + job-card pattern -->
+        <div
+          class="disc-card-drive-spinner-wrap"
+          *ngIf="isCardLoading(card, state.driveScanState, state.driveLoadingStates)"
+          aria-hidden="true">
+          <span class="disc-card-drive-spinner inline-flex"><ui-icon name="spinner" [size]="16"></ui-icon></span>
+        </div>
+
+        <!-- Rip progress ring (determinate, top-right) — shown when ripping and NOT scanning -->
+        <div
+          class="disc-card-rip-ring-wrap"
+          *ngIf="getDriveRipProgress(card, state.driveRipProgress) > 0 && getDriveRipProgress(card, state.driveRipProgress) < 100 && !isCardLoading(card, state.driveScanState, state.driveLoadingStates)"
+          [attr.aria-valuenow]="getDriveRipProgress(card, state.driveRipProgress)"
+          [attr.aria-valuemin]="0"
+          [attr.aria-valuemax]="100"
+          role="progressbar"
+          [attr.aria-label]="'Rip progress: ' + getDriveRipProgress(card, state.driveRipProgress) + '%'">
+          <ui-progress-ring [value]="getDriveRipProgress(card, state.driveRipProgress)" [size]="28" tone="blue"></ui-progress-ring>
+        </div>
+        <div class="disc-card-header">
+          <div class="disc-card-eyebrow-row">
+            <span class="disc-card-icon disc-icon" aria-hidden="true">
+              <ui-icon name="disc" [size]="16"></ui-icon>
+            </span>
+            <span class="disc-card-eyebrow">{{ isDriveCardJobFailed(card.data) ? 'Failed disc' : 'Now Reading' }}</span>
+            <span class="disc-card-discdb-hit" *ngIf="showDiscdbSuggestedOnCard(card.data)" title="TheDiscDB Suggested Metadata">
+              <svg class="disc-card-discdb-hit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                <path d="M3 5v6c0 1.7 4 3 9 3s9-1.3 9-3V5"></path>
+                <path d="M3 11v6c0 1.7 4 3 9 3s9-1.3 9-3v-6"></path>
+              </svg>
+              <span class="disc-card-discdb-hit-label">HIT</span>
+            </span>
+          </div>
+          <h3 class="disc-card-name" [attr.title]="getDiscTitle(card.data)">{{ getDiscTitle(card.data) }}</h3>
+          <div class="disc-card-meta">{{ getDiscMeta(card.data) }}</div>
+        </div>
+        <div class="disc-card-footer">
+          <span class="disc-card-mount">{{ getDriveMount(card.data) }}</span>
+          <div
+            class="disc-card-drive-failed-group"
+            *ngIf="isDriveCardJobFailed(card.data) && !isCardLoading(card, state.driveScanState, state.driveLoadingStates)">
+            <ui-pill tone="red">Failed</ui-pill>
+            <span class="disc-card-date">{{ getJobCreatedDate(card.data) }}</span>
+          </div>
+          <div class="disc-card-footer-scan" *ngIf="isCardLoading(card, state.driveScanState, state.driveLoadingStates)">
+            <span class="disc-card-scanning">Scanning...</span>
+            <div
+              class="disc-card-scan-tooltip-host"
+              *ngIf="showScanLongMessage$ | async"
+              (mouseenter)="showScanTooltip = true"
+              (mouseleave)="showScanTooltip = false">
+              <button
+                type="button"
+                class="disc-card-scan-long-pill"
+                [attr.title]="scanTooltipText"
+                [attr.aria-label]="scanTooltipText"
+                (click)="$event.stopPropagation(); toggleScanTooltip()">
+                <span class="disc-card-scan-long-pill-icon" aria-hidden="true">
+                  <ui-icon name="clock" [size]="12"></ui-icon>
+                </span>
+                <span class="disc-card-scan-long-pill-label-desktop">Taking longer</span>
+                <span class="disc-card-scan-long-pill-label-mobile">Slow</span>
+              </button>
+              <div class="disc-card-scan-tooltip-panel" [class.show]="showScanTooltip">{{ scanTooltipText }}</div>
+            </div>
+          </div>
+        </div>
+      </ng-container>
+
+      <!-- Job Card: template structure = header (eyebrow + title + meta) + footer (Unfinished pill | date) -->
+      <ng-container *ngIf="card.type === 'job'">
+        <div class="disc-card-job-spinner-wrap" *ngIf="isJobCardProcessing(card, state.jobIdsProcessing)" aria-hidden="true">
+          <span class="disc-card-job-spinner inline-flex"><ui-icon name="spinner" [size]="16"></ui-icon></span>
+        </div>
+        <div class="disc-card-header">
+          <div class="disc-card-eyebrow-row">
+            <span class="disc-card-icon job-icon" aria-hidden="true">
+              <ui-icon name="file" [size]="16"></ui-icon>
+            </span>
+            <span class="disc-card-eyebrow">{{ card.data.job_status === 'failed' ? 'Failed disc' : 'Unfinished disc' }}</span>
+            <span class="disc-card-discdb-hit" *ngIf="showDiscdbSuggestedOnCard(card.data)" title="TheDiscDB Suggested Metadata">
+              <svg class="disc-card-discdb-hit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                <path d="M3 5v6c0 1.7 4 3 9 3s9-1.3 9-3V5"></path>
+                <path d="M3 11v6c0 1.7 4 3 9 3s9-1.3 9-3v-6"></path>
+              </svg>
+              <span class="disc-card-discdb-hit-label">HIT</span>
+            </span>
+          </div>
+          <h3 class="disc-card-name" [attr.title]="getDiscTitle(card.data)">{{ getDiscTitle(card.data) }}</h3>
+          <div class="disc-card-meta">{{ getDiscMeta(card.data) }}</div>
+        </div>
+        <div class="disc-card-footer">
+          <ui-pill [tone]="card.data.job_status === 'failed' ? 'red' : 'amber'">
+            {{ card.data.job_status === 'failed' ? 'Failed' : 'Unfinished' }}
+          </ui-pill>
+          <span class="disc-card-date">{{ getJobCreatedDate(card.data) }}</span>
+        </div>
+      </ng-container>
+    </button>
+  </div>
+  </ng-container>
+</ng-container>

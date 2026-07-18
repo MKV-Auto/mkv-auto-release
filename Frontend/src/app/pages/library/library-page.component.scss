@@ -1,0 +1,165 @@
+/* Library page (Phase 2 — minimal skeleton). Phase 3 replaces this with
+ * the ui-lab's card + boxset design + sticky-header treatment.
+ * Keeping the SCSS small so we're not throwing styles away when Phase 3
+ * lands. Tailwind utility classes carry most of the layout in shipping
+ * components; we use scoped SCSS here only for the few things Tailwind
+ * doesn't express well (e.g. tab-pill active state). */
+
+.library-page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  gap: 1rem;
+}
+
+.library-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  // No background / blur / border — the dark rgba(0,0,0,0.4) stripe
+  // clashed with the cyan/purple tinted release cards below (#596).
+  // Sticky positioning is preserved.
+  padding: 1rem 0;
+
+  &__title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  &__title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: white;
+    margin: 0;
+  }
+  &__subtitle {
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.55);
+    margin: 0;
+  }
+}
+
+.library-search {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  color: white;
+  font-size: 0.875rem;
+  margin-bottom: 0.75rem;
+
+  &::placeholder { color: rgba(255, 255, 255, 0.4); }
+  &:focus { outline: none; border-color: rgba(99, 102, 241, 0.5); }
+}
+
+.library-tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.library-tab {
+  padding: 0.375rem 0.75rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+
+  &:hover { background: rgba(255, 255, 255, 0.08); color: white; }
+  &.is-active {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: rgba(99, 102, 241, 0.4);
+    color: white;
+  }
+}
+
+.library-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.library-status {
+  padding: 1.5rem;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.875rem;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 0.75rem;
+
+  &--error {
+    color: #fca5a5;
+    border-color: rgba(248, 113, 113, 0.3);
+    background: rgba(248, 113, 113, 0.05);
+  }
+}
+
+.library-card-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.library-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: background 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+
+  &__kind {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.5);
+  }
+  &__title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: white;
+  }
+  &__meta {
+    font-size: 0.8125rem;
+    color: rgba(255, 255, 255, 0.55);
+  }
+}
+
+.library-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 0.75rem 0;
+
+  &__btn {
+    padding: 0.5rem 1.25rem;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 9999px;
+    color: white;
+    font-size: 0.875rem;
+    cursor: pointer;
+
+    &:hover { background: rgba(255, 255, 255, 0.12); }
+  }
+}

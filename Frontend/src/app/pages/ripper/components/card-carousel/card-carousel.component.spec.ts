@@ -1,0 +1,380 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { of, Observable } from 'rxjs';
+import { CardCarouselComponent, CardType } from './card-carousel.component';
+import { WorkflowService } from '../../../../services/workflow.service';
+import { MetadataService } from '../../../../services/metadata.service';
+import { LoggerService } from '../../../../services/logger.service';
+import { DiscMetadata, ProgressUpdateMessage } from '../../../../services/workflow.service';
+import { createMockDiscs$ } from '../../../../testing/drive-mock';
+
+describe('CardCarouselComponent', () => {
+  let component: CardCarouselComponent;
+  let fixture: ComponentFixture<CardCarouselComponent>;
+  let mockWorkflow: {
+    discs$: Observable<DiscMetadata[]>;
+    getSelectedCard$: jasmine.Spy;
+    getUIOrchestrationState$: jasmine.Spy;
+    setSelectedCard: jasmine.Spy;
+    setContextByCard: jasmine.Spy;
+  };
+
+  beforeEach(async () => {
+    mockWorkflow = {
+      discs$: of([] as DiscMetadata[]),
+      getSelectedCard$: jasmine.createSpy('getSelectedCard$').and.returnValue(of(null)),
+      getUIOrchestrationState$: jasmine.createSpy('getUIOrchestrationState$').and.returnValue(
+        of({ driveLoadingStates: new Map(), driveScanState: 'idle' })
+      ),
+      setSelectedCard: jasmine.createSpy('setSelectedCard'),
+      setContextByCard: jasmine.createSpy('setContextByCard').and.returnValue(of(undefined)),
+    };
+    await TestBed.configureTestingModule({
+      imports: [CardCarouselComponent],
+      providers: [
+        { provide: WorkflowService, useValue: mockWorkflow },
+        { provide: MetadataService, useValue: { getMovieOptions: () => of([]) } },
+        { provide: LoggerService, useValue: { error: () => {} } },
+      ],
+    }).compileComponents();
+    fixture = TestBed.createComponent(CardCarouselComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
+
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+
+  it('trackByCardId returns type-id', () => {
+    const card: CardType = { type: 'drive', id: 'd1', data: {} as DiscMetadata };
+    expect(component.trackByCardId(0, card)).toBe('drive-d1');
+  });
+
+  describe('isDriveCardJobFailed', () => {
+    it('is true for ready in-drive card with failed job', () => {
+      expect(
+        component.isDriveCardJobFailed({
+          disc_id: 'd1',
+          disc_state: 'in_drive',
+          scan_state: 'ready',
+          job_id: 'j1',
+          job_status: 'failed',
+        } as DiscMetadata)
+      ).toBe(true);
+    });
+
+    it('is false when scan is not ready', () => {
+      expect(
+        component.isDriveCardJobFailed({
+          disc_id: 'd1',
+          disc_state: 'in_drive',
+          scan_state: 'scanning',
+          job_id: 'j1',
+          job_status: 'failed',
+        } as DiscMetadata)
+      ).toBe(false);
+    });
+
+    it('is false for unfinished job card pattern', () => {
+      expect(
+        component.isDriveCardJobFailed({
+          disc_id: 'd1',
+          disc_state: 'unfinished',
+          job_id: 'j1',
+          job_status: 'failed',
+        } as DiscMetadata)
+      ).toBe(false);
+    });
+  });
+
+  describe('isProgressProcessing', () => {
+    const mk = (over: Partial<ProgressUpdateMessage>): ProgressUpdateMessage => ({
+      type: 'progress_update',
+      job_id: 'j1',
+      rip_progress: 0,
+      post_progress: 0,
+      ...over,
+    });
+
+    it('returns false when progress is null', () => {
+      expect(component.isProgressProcessing(null)).toBe(false);
+    });
+
+    it('returns false when awaiting user input between stages (rip done, post not started)', () => {
+      expect(component.isProgressProcessing(mk({ rip_progress: 100, post_progress: 0 }))).toBe(false);
+    });
+
+    it('returns true while rip is in pre-heartbeat copy phase (rip_phase set, rip_progress 0)', () => {
+      expect(component.isProgressProcessing(mk({ rip_phase: 'copy', rip_progress: 0 }))).toBe(true);
+    });
+
+    it('returns true mid-rip on progress alone', () => {
+      expect(component.isProgressProcessing(mk({ rip_progress: 42 }))).toBe(true);
+    });
+
+    it('returns true mid-postprocess', () => {
+      expect(component.isProgressProcessing(mk({ rip_progress: 100, post_progress: 50 }))).toBe(true);
+    });
+
+    it('returns true mid-transfer', () => {
+      expect(
+        component.isProgressProcessing(
+          mk({ rip_progress: 100, post_progress: 100, transfer_progress: 30 })
+        )
+      ).toBe(true);
+    });
+
+    it('returns false when fully complete (all stages at 100)', () => {
+      expect(
+        component.isProgressProcessing(
+          mk({ rip_progress: 100, post_progress: 100, transfer_progress: 100 })
+        )
+      ).toBe(false);
+    });
+  });
+
+  describe('isJobCardProcessing', () => {
+    const jobCard = (over: Partial<DiscMetadata> = {}): CardType => ({
+      type: 'job',
+      id: 'j1',
+      data: { disc_id: 'd1', disc_state: 'unfinished', job_id: 'j1', ...over } as DiscMetadata,
+    });
+
+    it('returns false when job_id missing', () => {
+      expect(component.isJobCardProcessing(jobCard({ job_id: undefined }), new Set(['j1']))).toBe(false);
+    });
+
+    it('returns false for failed jobs even when in jobIdsProcessing (defensive)', () => {
+      expect(
+        component.isJobCardProcessing(jobCard({ job_status: 'failed' }), new Set(['j1']))
+      ).toBe(false);
+    });
+
+    it('returns false for completed jobs even when in jobIdsProcessing', () => {
+      expect(
+        component.isJobCardProcessing(jobCard({ job_status: 'completed' }), new Set(['j1']))
+      ).toBe(false);
+    });
+
+    it('returns false for cancelled jobs even when in jobIdsProcessing', () => {
+      expect(
+        component.isJobCardProcessing(jobCard({ job_status: 'cancelled' }), new Set(['j1']))
+      ).toBe(false);
+    });
+
+    it('returns true for a running job in jobIdsProcessing', () => {
+      expect(
+        component.isJobCardProcessing(jobCard({ job_status: 'running' }), new Set(['j1']))
+      ).toBe(true);
+    });
+
+    it('returns false for a running job not in jobIdsProcessing (no active stage)', () => {
+      expect(
+        component.isJobCardProcessing(jobCard({ job_status: 'running' }), new Set())
+      ).toBe(false);
+    });
+  });
+
+  it('isCardActive returns true when selectedCard matches', () => {
+    const card: CardType = { type: 'job', id: 'j1', data: {} as DiscMetadata };
+    expect(component.isCardActive(card, { type: 'job', id: 'j1' })).toBe(true);
+    expect(component.isCardActive(card, { type: 'job', id: 'j2' })).toBe(false);
+  });
+
+  it('onCardSelected calls setSelectedCard and setContextByCard', () => {
+    const card: CardType = {
+      type: 'job',
+      id: 'j1',
+      data: { disc_state: 'unfinished', job_id: 'j1' } as DiscMetadata,
+    };
+    component.onCardSelected(card);
+    expect(mockWorkflow.setSelectedCard).toHaveBeenCalledWith({ type: 'job', id: 'j1' });
+    expect(mockWorkflow.setContextByCard).toHaveBeenCalledWith({ type: 'job', id: 'j1' });
+  });
+
+  describe('getDiscTitle', () => {
+    it('uses movie_name then info_title only (no release_name); disc number is shown in meta not title', () => {
+      expect(
+        component.getDiscTitle({
+          disc_id: 'd1',
+          disc_state: 'unfinished',
+          movie_name: 'My Movie',
+          release_name: 'Release Edition',
+          info_title: 'MakeMKV',
+          disc_number: 2,
+        } as DiscMetadata)
+      ).toBe('My Movie');
+      expect(
+        component.getDiscTitle({
+          disc_id: 'd2',
+          disc_state: 'unfinished',
+          info_title: 'Fallback Title',
+          disc_number: 1,
+        } as DiscMetadata)
+      ).toBe('Fallback Title');
+    });
+
+    it('returns name only when disc_number is missing', () => {
+      expect(
+        component.getDiscTitle({
+          disc_id: 'd1',
+          disc_state: 'unfinished',
+          movie_name: 'Movie Only',
+        } as DiscMetadata)
+      ).toBe('Movie Only');
+    });
+
+    it('returns Insert Disc for in_drive when no name and no disc_hash', () => {
+      expect(
+        component.getDiscTitle({
+          disc_id: 'pending-1',
+          disc_state: 'in_drive',
+          disc_num: '1',
+          mount_point: '/dev/sr0',
+        } as DiscMetadata)
+      ).toBe('Insert Disc');
+    });
+
+    it('returns Drive X for in_drive when name is empty but disc_hash set', () => {
+      expect(
+        component.getDiscTitle({
+          disc_id: 'd1',
+          disc_state: 'in_drive',
+          disc_num: '1',
+          disc_hash: 'abc',
+        } as DiscMetadata)
+      ).toBe('Drive 1');
+    });
+
+    it('returns Unknown Disc for unfinished when no movie_name or info_title', () => {
+      expect(
+        component.getDiscTitle({
+          disc_id: 'd1',
+          disc_state: 'unfinished',
+          release_name: 'Only Release',
+        } as DiscMetadata)
+      ).toBe('Unknown Disc');
+    });
+  });
+
+  describe('getDiscMeta', () => {
+    it('includes Disc N when disc_number is set', () => {
+      expect(
+        component.getDiscMeta({
+          disc_id: 'd1',
+          production_year: 2005,
+          disc_format: 'Blu-Ray',
+          disc_number: 4,
+        } as DiscMetadata)
+      ).toBe('(2005) · Blu-Ray · Disc 4');
+      expect(
+        component.getDiscMeta({
+          disc_id: 'd2',
+          disc_number: 1,
+        } as DiscMetadata)
+      ).toBe('Disc 1');
+    });
+
+    it('omits Disc when disc_number is missing', () => {
+      expect(
+        component.getDiscMeta({
+          disc_id: 'd1',
+          production_year: 2005,
+          disc_format: 'Blu-Ray',
+        } as DiscMetadata)
+      ).toBe('(2005) · Blu-Ray');
+      expect(
+        component.getDiscMeta({
+          disc_id: 'd2',
+        } as DiscMetadata)
+      ).toBe('—');
+    });
+  });
+
+  describe('when discs$ emits drive metadata', () => {
+    beforeEach(async () => {
+      TestBed.resetTestingModule();
+      const workflowWithDrives = {
+        discs$: createMockDiscs$(),
+        getSelectedCard$: jasmine.createSpy('getSelectedCard$').and.returnValue(of(null)),
+        getUIOrchestrationState$: jasmine.createSpy('getUIOrchestrationState$').and.returnValue(
+          of({ driveLoadingStates: new Map(), driveScanState: 'idle' })
+        ),
+        setSelectedCard: jasmine.createSpy('setSelectedCard'),
+        setContextByCard: jasmine.createSpy('setContextByCard').and.returnValue(of(undefined)),
+      };
+      await TestBed.configureTestingModule({
+        imports: [CardCarouselComponent],
+        providers: [
+          { provide: WorkflowService, useValue: workflowWithDrives },
+          { provide: MetadataService, useValue: { getMovieOptions: () => of([]) } },
+          { provide: LoggerService, useValue: { error: () => {} } },
+        ],
+      }).compileComponents();
+      fixture = TestBed.createComponent(CardCarouselComponent);
+      component = fixture.componentInstance;
+      fixture.detectChanges();
+    });
+
+    it('renders drive cards when discs$ emits drive metadata', async () => {
+      await fixture.whenStable();
+      fixture.detectChanges();
+      const driveCards = fixture.nativeElement.querySelectorAll('.drive-card');
+      expect(driveCards.length).toBe(2);
+    });
+  });
+
+  describe('allCards$ suppresses job cards when a finalized drive shares the disc_id (#603)', () => {
+    beforeEach(async () => {
+      TestBed.resetTestingModule();
+      const finalizedDriveAndJob: DiscMetadata[] = [
+        {
+          disc_id: 'd-shared',
+          disc_num: '1',
+          mount_point: '/dev/sr0',
+          disc_state: 'in_drive',
+          scan_state: 'ready',
+          finalized: true,
+          finalized_release_name: 'The Goonies',
+        } as DiscMetadata,
+        {
+          disc_id: 'd-shared',
+          disc_state: 'unfinished',
+          job_id: 'j-old',
+          job_status: 'failed',
+        } as DiscMetadata,
+      ];
+      const workflowWithBoth = {
+        discs$: of(finalizedDriveAndJob),
+        getSelectedCard$: jasmine.createSpy('getSelectedCard$').and.returnValue(of(null)),
+        getUIOrchestrationState$: jasmine.createSpy('getUIOrchestrationState$').and.returnValue(
+          of({ driveLoadingStates: new Map(), driveScanState: 'idle' })
+        ),
+        setSelectedCard: jasmine.createSpy('setSelectedCard'),
+        setContextByCard: jasmine.createSpy('setContextByCard').and.returnValue(of(undefined)),
+        getJobProgress: jasmine.createSpy('getJobProgress').and.returnValue(of(null)),
+      };
+      await TestBed.configureTestingModule({
+        imports: [CardCarouselComponent],
+        providers: [
+          { provide: WorkflowService, useValue: workflowWithBoth },
+          { provide: MetadataService, useValue: { getMovieOptions: () => of([]) } },
+          { provide: LoggerService, useValue: { error: () => {} } },
+        ],
+      }).compileComponents();
+      fixture = TestBed.createComponent(CardCarouselComponent);
+      component = fixture.componentInstance;
+      fixture.detectChanges();
+    });
+
+    it('renders exactly one card — the finalized drive, with the job-card hidden', async () => {
+      await fixture.whenStable();
+      fixture.detectChanges();
+      const driveCards = fixture.nativeElement.querySelectorAll('.drive-card');
+      const jobCards = fixture.nativeElement.querySelectorAll('.job-card');
+      expect(driveCards.length).toBe(1);
+      expect(jobCards.length).toBe(0);
+    });
+
+  });
+});

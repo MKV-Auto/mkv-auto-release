@@ -1,0 +1,285 @@
+<section class="sr-page">
+  <!-- Live region for keyboard reorder announcements -->
+  <div class="sr-sr-only" aria-live="polite" aria-atomic="true">{{ announce }}</div>
+
+  <!-- Disc-presence guard. Surfaces when the bound disc isn't in the
+       drive or isn't done scanning. Disables every destructive action
+       (submit / confirm / flag-decoys / rip-superset / rip-the-rest)
+       so the user can't queue work against a drive that won't accept
+       it. -->
+  <div class="sr-disc-guard" *ngIf="discNotReady" role="alert">
+    <ui-icon name="alert" [size]="18"></ui-icon>
+    <div class="sr-disc-guard-text">
+      <strong>Please reinsert the disc before continuing.</strong>
+      <p>{{ discNotReadyReason }}</p>
+    </div>
+  </div>
+
+  <header class="sr-header">
+    <div class="sr-header-text">
+      <div class="sr-pills">
+        <ui-pill tone="indigo">Path A · Segment Reorder</ui-pill>
+        <ui-pill tone="emerald" *ngIf="segments.length">
+          {{ segments.length }} / {{ segments.length }} previews ready
+        </ui-pill>
+        <ui-pill tone="amber" *ngIf="eliminatedTitleIndexes.length">
+          {{ eliminatedTitleIndexes.length }} playlist{{ eliminatedTitleIndexes.length === 1 ? '' : 's' }} eliminated
+        </ui-pill>
+      </div>
+      <h1>Put these clips in story order</h1>
+      <p>
+        Each card is a short preview from the disc. Watch them and drag into the
+        order they appear in the movie. We'll match the sequence and rip the
+        right playlist.
+      </p>
+    </div>
+    <div class="sr-header-actions">
+      <ui-btn variant="primary"
+              *ngIf="canRipTheRest"
+              [disabled]="busy || discNotReady"
+              (click)="onRipTheRestClick()">
+        Rip the rest ({{ formatBytes(remainingSizeInfo?.remaining_size_b) }})
+      </ui-btn>
+      <ui-btn variant="ghost"
+              [disabled]="busy || discNotReady || exploratoryTitleIndex === null"
+              (click)="onFlagDecoysClick()">
+        Previous order had decoys
+      </ui-btn>
+      <ui-btn variant="ghost" [disabled]="busy" (click)="onCancel()">
+        Cancel and pick manually
+      </ui-btn>
+    </div>
+  </header>
+
+  <!-- Disk-pressure gauge — only shown when the backend has loaded a
+       remaining-size snapshot. Pinkish-amber bar visualises how close
+       the remaining playlists are to the rip-the-rest threshold. -->
+  <div class="sr-gauge"
+       *ngIf="remainingSizeInfo && remainingSizeInfo.total_count > 0"
+       role="status"
+       aria-label="Remaining playlist storage">
+    <div class="sr-gauge-meta">
+      <span>
+        <strong>{{ formatBytes(remainingSizeInfo.remaining_size_b) }}</strong>
+        remaining
+        <span class="sr-gauge-muted">
+          across {{ remainingSizeInfo.total_count - remainingSizeInfo.ignored_count }}
+          playlist{{ (remainingSizeInfo.total_count - remainingSizeInfo.ignored_count) === 1 ? '' : 's' }}
+        </span>
+      </span>
+      <span class="sr-gauge-threshold">
+        Rip-the-rest unlocks under
+        <strong>{{ formatBytes(remainingSizeInfo.threshold_b) }}</strong>
+      </span>
+    </div>
+    <div class="sr-gauge-track">
+      <div class="sr-gauge-fill"
+           [style.width.%]="gaugeFillPercent()"
+           [class.sr-gauge-fill-allowed]="remainingSizeInfo.allows_rip_rest"></div>
+    </div>
+  </div>
+
+  <div class="sr-no-match-hint" *ngIf="noMatchHint" role="alert">
+    <strong>Heads up.</strong> {{ noMatchHint }}
+  </div>
+
+  <div class="sr-empty" *ngIf="segments.length === 0">
+    <p>Loading segment previews…</p>
+  </div>
+
+  <div class="sr-list"
+       cdkDropList
+       cdkDropListOrientation="mixed"
+       (cdkDropListDropped)="onDrop($event)"
+       role="listbox"
+       aria-label="Segments in story order">
+    <article class="sr-card"
+             *ngFor="let seg of segments; let i = index"
+             cdkDrag
+             role="option"
+             [attr.aria-label]="'Segment ' + seg.index + ', position ' + (i+1) + ' of ' + segments.length">
+      <header class="sr-card-head">
+        <span class="sr-position">{{ i + 1 }}</span>
+        <span class="sr-card-id">seg {{ seg.index }}</span>
+        <span class="sr-card-mode">{{ seg.mode === 'stitch' ? 'head + tail' : 'full' }}</span>
+        <button type="button"
+                class="sr-flag-toggle"
+                [class.sr-flag-potentially]="clipFlagFor(seg) === 'potentially'"
+                [class.sr-flag-definitely]="clipFlagFor(seg) === 'definitely'"
+                [disabled]="busy || !discId || discNotReady"
+                (click)="onCycleClipFlag(seg)"
+                [attr.aria-label]="clipFlagLabel(clipFlagFor(seg)) + ' — click to cycle: clear → possible → definite → clear'"
+                [attr.title]="clipFlagLabel(clipFlagFor(seg))">
+          <ng-container [ngSwitch]="clipFlagFor(seg)">
+            <ui-icon *ngSwitchCase="'clear'" name="alert" [size]="12"></ui-icon>
+            <ui-icon *ngSwitchCase="'potentially'" name="alert" [size]="12"></ui-icon>
+            <ui-icon *ngSwitchCase="'definitely'" name="close" [size]="12"></ui-icon>
+          </ng-container>
+        </button>
+        <span class="sr-card-grip" aria-hidden="true" cdkDragHandle>
+          <ui-icon name="grip" [size]="14"></ui-icon>
+        </span>
+      </header>
+
+      <video class="sr-card-video"
+             [src]="previewUrl(seg)"
+             controls
+             preload="metadata">
+        Your browser doesn't support the video tag.
+      </video>
+
+      <footer class="sr-card-foot">
+        <span class="sr-card-dur">{{ formatDuration(seg.src_dur_s) }} src</span>
+        <div class="sr-card-buttons">
+          <button type="button"
+                  class="sr-mini-btn"
+                  [disabled]="i === 0 || busy"
+                  (click)="move(i, -1)"
+                  [attr.aria-label]="'Move segment ' + seg.index + ' up'">
+            <ui-icon name="up" [size]="12"></ui-icon> Up
+          </button>
+          <button type="button"
+                  class="sr-mini-btn"
+                  [disabled]="i === segments.length - 1 || busy"
+                  (click)="move(i, 1)"
+                  [attr.aria-label]="'Move segment ' + seg.index + ' down'">
+            <ui-icon name="down" [size]="12"></ui-icon> Down
+          </button>
+        </div>
+      </footer>
+    </article>
+  </div>
+
+  <footer class="sr-actions">
+    <p class="sr-tip">
+      Tip: keyboard users can <ui-kbd>Tab</ui-kbd> to a card and use
+      <ui-kbd>↑</ui-kbd> <ui-kbd>↓</ui-kbd> arrow buttons to reorder.
+    </p>
+    <ui-btn variant="primary"
+            [disabled]="segments.length === 0 || discNotReady"
+            [loading]="busy"
+            (click)="onSubmit()">
+      Submit order
+    </ui-btn>
+  </footer>
+
+  <!-- Confirmation gate: shown after a no-match submit, before we surface
+       subsequence-superset candidates. Asks the user to re-affirm their
+       order so we don't bombard them with supersets when they just got the
+       order wrong. -->
+  <div class="sr-confirm-backdrop"
+       *ngIf="showConfirmationGate"
+       role="dialog"
+       aria-modal="true"
+       aria-labelledby="sr-confirm-title">
+    <div class="sr-confirm-dialog">
+      <h2 id="sr-confirm-title">Is this order right?</h2>
+      <p>
+        We couldn't find an exact playlist match for your ordering. Sometimes
+        the real movie's playlist has additional segments interleaved with
+        the ones you see in the previews — that's how advanced obfuscation
+        works on some discs. We can search for playlists like that, but
+        only if you're confident the order you've set is correct.
+      </p>
+      <div class="sr-confirm-actions">
+        <ui-btn variant="ghost"
+                [disabled]="busy"
+                (click)="onRejectConfirmation()">
+          Let me re-order
+        </ui-btn>
+        <ui-btn variant="primary"
+                [loading]="busy"
+                [disabled]="discNotReady"
+                (click)="onConfirmOrder()">
+          Yes, my order is correct
+        </ui-btn>
+      </div>
+    </div>
+  </div>
+
+  <!-- Superset-candidate picker: opened after the user confirms their
+       order via the gate above. Each cluster groups mpls that share a
+       sorted-segment-set; the largest cluster is most likely to contain
+       the real movie. -->
+  <app-segment-superset-picker
+    *ngIf="supersetClusters.length > 0"
+    [clusters]="supersetClusters"
+    [pendingTitleIndex]="pendingPickerTitleIndex"
+    (select)="onSupersetSelect($event)"
+    (dismiss)="onSupersetDismiss()">
+  </app-segment-superset-picker>
+
+  <!-- "Rip the rest" confirmation. Final escape hatch — rips every
+       non-ignored, non-subsumed playlist on the disc and exits the
+       segment-reorder workflow into the regular title browser. -->
+  <div class="sr-confirm-backdrop"
+       *ngIf="showRipTheRestConfirmation"
+       role="dialog"
+       aria-modal="true"
+       aria-labelledby="sr-rip-rest-title">
+    <div class="sr-confirm-dialog">
+      <h2 id="sr-rip-rest-title">Rip the remaining playlists?</h2>
+      <p>
+        This will rip every playlist on the disc that hasn't been ruled
+        out — totalling
+        <strong>{{ formatBytes(remainingSizeInfo?.remaining_size_b) }}</strong>
+        across
+        <strong>{{ (remainingSizeInfo?.total_count || 0) - (remainingSizeInfo?.ignored_count || 0) }}</strong>
+        playlist{{ ((remainingSizeInfo?.total_count || 0) - (remainingSizeInfo?.ignored_count || 0)) === 1 ? '' : 's' }}.
+        When the rip completes you'll review them manually from the titles step.
+      </p>
+      <p class="sr-confirm-aside">
+        Tip: this is the final escape hatch. If you'd rather keep iterating,
+        click "Never mind" and continue confirming orders or flagging decoys.
+      </p>
+      <div class="sr-confirm-actions">
+        <ui-btn variant="ghost"
+                [disabled]="busy"
+                (click)="onRipTheRestCancel()">
+          Never mind
+        </ui-btn>
+        <ui-btn variant="primary"
+                [loading]="busy"
+                (click)="onRipTheRestConfirm()">
+          Yes, rip them all
+        </ui-btn>
+      </div>
+    </div>
+  </div>
+
+  <!-- "Previous order had decoys" confirmation. Marks the exploratory mpls
+       AND every sibling sharing its sorted-segment-set as type='ignore',
+       then returns the user to the ripper to pick a fresh exploratory. -->
+  <div class="sr-confirm-backdrop"
+       *ngIf="showDecoyConfirmation"
+       role="dialog"
+       aria-modal="true"
+       aria-labelledby="sr-decoy-title">
+    <div class="sr-confirm-dialog">
+      <h2 id="sr-decoy-title">Mark this exploratory rip as decoy?</h2>
+      <p>
+        This will mark the mpls we just ripped (and every playlist sharing
+        its segment set) as ignored so the iteration loop won't pick them
+        again. You'll be returned to the ripper to start a fresh exploratory
+        rip from a different cluster.
+      </p>
+      <p>
+        Use this when the previews looked plausible but the order didn't
+        match any playlist — a sign that what we ripped wasn't a real
+        candidate for the movie.
+      </p>
+      <div class="sr-confirm-actions">
+        <ui-btn variant="ghost"
+                [disabled]="busy"
+                (click)="onFlagDecoysCancel()">
+          Never mind
+        </ui-btn>
+        <ui-btn variant="primary"
+                [loading]="busy"
+                (click)="onFlagDecoysConfirm()">
+          Yes, mark as decoy
+        </ui-btn>
+      </div>
+    </div>
+  </div>
+</section>

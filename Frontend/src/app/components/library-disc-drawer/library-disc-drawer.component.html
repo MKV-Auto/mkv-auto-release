@@ -1,0 +1,308 @@
+<!-- library-disc-drawer (Phase 4 — #500).
+     Slide-over on desktop, full-screen overlay on mobile. -->
+<aside *ngIf="disc"
+       class="library-disc-drawer"
+       (keydown)="onKeydown($event)"
+       role="dialog"
+       aria-modal="true"
+       [attr.aria-label]="breadcrumb">
+  <div class="library-disc-drawer__scrim" (click)="close()" aria-hidden="true"></div>
+
+  <div class="library-disc-drawer__panel">
+    <header class="library-disc-drawer__header">
+      <div class="library-disc-drawer__breadcrumb" [title]="breadcrumb">{{ breadcrumb }}</div>
+      <button type="button"
+              class="library-disc-drawer__close"
+              (click)="close()"
+              aria-label="Close drawer">✕</button>
+    </header>
+
+    <!-- Loading / error -->
+    <div *ngIf="loading" class="library-disc-drawer__status">Loading disc…</div>
+    <div *ngIf="loadError" class="library-disc-drawer__status library-disc-drawer__status--error">
+      {{ loadError }}
+    </div>
+
+    <ng-container *ngIf="!loading && !loadError && discRecord">
+
+      <!-- Section 1: disc-level form -->
+      <section class="library-disc-drawer__section">
+        <h2 class="library-disc-drawer__section-title">Disc</h2>
+
+        <label class="library-disc-drawer__field">
+          <span class="library-disc-drawer__label">Disc name</span>
+          <input type="text"
+                 class="library-disc-drawer__input"
+                 [(ngModel)]="discForm.disc_name"
+                 (blur)="saveDiscForm()"
+                 placeholder="e.g. Theatrical Cut · Bonus Disc"
+                 [disabled]="isFinalized || saving" />
+        </label>
+
+        <div class="library-disc-drawer__field">
+          <span class="library-disc-drawer__label">Format</span>
+          <div class="library-disc-drawer__format-row" role="radiogroup" aria-label="Disc format">
+            <button type="button"
+                    role="radio"
+                    class="library-disc-drawer__format-pill"
+                    [class.is-selected]="discForm.disc_format === 'Blu-Ray'"
+                    [attr.aria-checked]="discForm.disc_format === 'Blu-Ray'"
+                    (click)="selectFormat('Blu-Ray')"
+                    [disabled]="isFinalized || saving">Blu-Ray</button>
+            <button type="button"
+                    role="radio"
+                    class="library-disc-drawer__format-pill"
+                    [class.is-selected]="discForm.disc_format === 'UHD'"
+                    [attr.aria-checked]="discForm.disc_format === 'UHD'"
+                    (click)="selectFormat('UHD')"
+                    [disabled]="isFinalized || saving">UHD</button>
+            <button type="button"
+                    role="radio"
+                    class="library-disc-drawer__format-pill"
+                    [class.is-selected]="discForm.disc_format === 'DVD'"
+                    [attr.aria-checked]="discForm.disc_format === 'DVD'"
+                    (click)="selectFormat('DVD')"
+                    [disabled]="isFinalized || saving">DVD</button>
+          </div>
+        </div>
+
+        <p *ngIf="isFinalized" class="library-disc-drawer__hint">
+          Disc is finalized — disc-level edits are locked. Title edits still flow through the optimistic
+          PATCH path; they fail-soft if the server rejects them.
+        </p>
+
+        <!-- #86: manual contribution export — misses only (hits came from
+             TheDiscDB, nothing new to contribute). Downloads the JSON
+             bundle; submission itself stays manual in v1. -->
+        <div *ngIf="canExportDiscDbBundle" class="library-disc-drawer__field">
+          <button type="button"
+                  class="library-disc-drawer__export"
+                  (click)="exportDiscDbBundle()"
+                  [disabled]="exporting"
+                  title="Download a TheDiscDB-format JSON bundle for manual contribution">
+            {{ exporting ? 'Exporting…' : '⬇ Export DiscDB bundle' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- Section 2: titles -->
+      <section class="library-disc-drawer__section library-disc-drawer__section--titles">
+        <h2 class="library-disc-drawer__section-title">
+          Titles
+          <!-- #599: show "visible / total" when some are hidden so the user
+               knows how many are tucked behind the Show-ignored toggle. -->
+          <span class="library-disc-drawer__count" *ngIf="!showIgnored && ignoredCount > 0">
+            ({{ visibleCount }} / {{ allTitles.length }})
+          </span>
+          <span class="library-disc-drawer__count" *ngIf="showIgnored || ignoredCount === 0">
+            ({{ allTitles.length }})
+          </span>
+        </h2>
+
+        <!-- #599: hide-by-default ignored bucket. Same UX as title-label.
+             The button stays sticky right under the section title so it's
+             visible without scrolling all the way back up. -->
+        <div *ngIf="ignoredCount > 0" class="library-disc-drawer__title-actions">
+          <button type="button"
+                  class="library-disc-drawer__toggle-ignored"
+                  (click)="toggleShowIgnored()">
+            {{ showIgnored ? 'Hide ignored' : 'Show ignored (' + ignoredCount + ')' }}
+          </button>
+        </div>
+
+        <p *ngIf="allTitles.length === 0" class="library-disc-drawer__hint">
+          No titles ripped for this disc yet.
+        </p>
+        <p *ngIf="allTitles.length > 0 && visibleTitles.length === 0" class="library-disc-drawer__hint">
+          All {{ allTitles.length }} titles on this disc are marked Ignore.
+          Click "Show ignored" above to reveal them.
+        </p>
+
+        <!-- CDK virtual scroll. Discs with 100+ titles exist; flat *ngFor
+             would render every row and tank scroll perf.
+             #531: itemSize MUST equal the rendered row height enforced in
+             the SCSS. The Phase-4 layout used 420px; #601 redesigned the
+             row to a compact card and dropped itemSize to 200. The
+             rendered-height spec pins both. -->
+        <cdk-virtual-scroll-viewport
+          *ngIf="visibleTitles.length > 0"
+          class="library-disc-drawer__titles"
+          itemSize="200"
+          minBufferPx="400"
+          maxBufferPx="800">
+          <article *cdkVirtualFor="let row of visibleTitles; trackBy: trackByTitleId"
+                   class="library-disc-drawer__title-row"
+                   [class.is-ignored]="isRowIgnored(row)"
+                   [class.is-editing]="isEditingRow(row)"
+                   [attr.data-tone]="typeChipTone(row.type)"
+                   [attr.data-title-id]="row.title_id">
+
+            <!-- Display mode (#601 follow-up). Plain text by default; the
+                 inputs only render in edit mode so empty rows aren't
+                 cluttered with input borders. -->
+            <ng-container *ngIf="!isEditingRow(row)">
+              <header class="library-disc-drawer__title-head">
+                <span *ngIf="typeChipLabel(row.type) as chipLabel"
+                      class="library-disc-drawer__title-chip"
+                      [attr.data-tone]="typeChipTone(row.type)">{{ chipLabel }}</span>
+                <!-- #602: Backdrop rows are auto-named — hide the title text
+                     entirely; the chip and duration are the whole story. -->
+                <span *ngIf="!isBackdrop(row)"
+                      class="library-disc-drawer__title-title-text"
+                      [class.is-muted]="!row.title">
+                  {{ row.title || 'Untitled' }}
+                </span>
+                <span class="library-disc-drawer__title-duration">{{ formatDuration(row.duration) }}</span>
+                <button type="button"
+                        class="library-disc-drawer__title-edit-btn"
+                        (click)="startEditing(row)"
+                        [disabled]="isFinalized"
+                        aria-label="Edit this title">Edit</button>
+              </header>
+
+              <p *ngIf="rowSubline(row) as subline" class="library-disc-drawer__title-subline">{{ subline }}</p>
+              <!-- #602: same rule for the series meta line — Backdrop rows
+                   never carry season/episode. -->
+              <p *ngIf="isSeries && !isBackdrop(row) && (row.season != null || row.episode != null)"
+                 class="library-disc-drawer__title-subline library-disc-drawer__title-subline--meta">
+                S{{ row.season ?? '?' }} · E{{ row.episode ?? '?' }}
+              </p>
+
+              <footer class="library-disc-drawer__title-foot">
+                <span class="library-disc-drawer__title-stage"
+                      [class.is-transferred]="row.file_path_stage === 'transfer'"
+                      [class.is-transient]="row.file_path_stage === 'postprocess'"
+                      [title]="row.file_path || 'No file path on record'">
+                  {{ filePathStageLabel(row) }}
+                </span>
+                <code *ngIf="row.file_path"
+                      class="library-disc-drawer__title-path"
+                      [title]="row.file_path">{{ formatFilePath(row) }}</code>
+                <span *ngIf="!row.file_path"
+                      class="library-disc-drawer__title-path library-disc-drawer__title-path--muted">
+                  No file on disk yet
+                </span>
+                <span *ngIf="row.contributed_to_discdb"
+                      class="library-disc-drawer__title-discdb"
+                      title="This title's metadata has been contributed to TheDiscDB">
+                  ✓ DiscDB
+                </span>
+              </footer>
+            </ng-container>
+
+            <!-- Edit mode. Shown only for the single row whose Edit was
+                 clicked; replaced by display mode when the user clicks
+                 Done (or chooses another row). -->
+            <ng-container *ngIf="isEditingRow(row)">
+              <header class="library-disc-drawer__title-head">
+                <span *ngIf="typeChipLabel(row.type) as chipLabel"
+                      class="library-disc-drawer__title-chip"
+                      [attr.data-tone]="typeChipTone(row.type)">{{ chipLabel }}</span>
+                <!-- #602: Backdrop rows skip the title input — there's
+                     nothing to name. The chip + duration + Done fill the
+                     header by themselves. -->
+                <input *ngIf="!isBackdrop(row)"
+                       type="text"
+                       class="library-disc-drawer__title-title"
+                       [(ngModel)]="row.title"
+                       (ngModelChange)="onTitleFieldChange(row)"
+                       placeholder="Title…"
+                       [disabled]="isFinalized" />
+                <span *ngIf="isBackdrop(row)" class="library-disc-drawer__title-title-spacer"></span>
+                <span class="library-disc-drawer__title-duration">{{ formatDuration(row.duration) }}</span>
+                <button type="button"
+                        class="library-disc-drawer__title-edit-btn library-disc-drawer__title-edit-btn--done"
+                        (click)="stopEditing()"
+                        aria-label="Stop editing">Done</button>
+              </header>
+
+              <!-- Non-series, non-backdrop: type + edition side by side. -->
+              <div class="library-disc-drawer__title-row-form" *ngIf="!isSeries && !isBackdrop(row)">
+                <select class="library-disc-drawer__title-type"
+                        [(ngModel)]="row.type"
+                        (ngModelChange)="onTitleFieldChange(row)"
+                        [disabled]="isFinalized"
+                        aria-label="Title type">
+                  <option *ngFor="let opt of titleTypeOptions" [value]="opt.value">{{ opt.label }}</option>
+                </select>
+                <input type="text"
+                       class="library-disc-drawer__title-edition"
+                       [(ngModel)]="row.edition"
+                       (ngModelChange)="onTitleFieldChange(row)"
+                       placeholder="Edition (e.g. Director's Cut)"
+                       [disabled]="isFinalized" />
+              </div>
+              <!-- Series, non-backdrop: season + episode + type. -->
+              <div class="library-disc-drawer__title-row-form library-disc-drawer__title-row-form--series" *ngIf="isSeries && !isBackdrop(row)">
+                <input type="number"
+                       class="library-disc-drawer__title-num"
+                       [(ngModel)]="row.season"
+                       (ngModelChange)="onTitleFieldChange(row)"
+                       min="0"
+                       max="200"
+                       placeholder="Season"
+                       [disabled]="isFinalized" />
+                <input type="number"
+                       class="library-disc-drawer__title-num"
+                       [(ngModel)]="row.episode"
+                       (ngModelChange)="onTitleFieldChange(row)"
+                       min="0"
+                       max="500"
+                       placeholder="Episode"
+                       [disabled]="isFinalized" />
+                <select class="library-disc-drawer__title-type"
+                        [(ngModel)]="row.type"
+                        (ngModelChange)="onTitleFieldChange(row)"
+                        [disabled]="isFinalized"
+                        aria-label="Title type">
+                  <option *ngFor="let opt of titleTypeOptions" [value]="opt.value">{{ opt.label }}</option>
+                </select>
+              </div>
+              <!-- #602: Backdrop rows show only the type select on the form
+                   line — the user might want to change the type away from
+                   Backdrop, so the affordance has to stay. -->
+              <div class="library-disc-drawer__title-row-form library-disc-drawer__title-row-form--backdrop" *ngIf="isBackdrop(row)">
+                <select class="library-disc-drawer__title-type"
+                        [(ngModel)]="row.type"
+                        (ngModelChange)="onTitleFieldChange(row)"
+                        [disabled]="isFinalized"
+                        aria-label="Title type">
+                  <option *ngFor="let opt of titleTypeOptions" [value]="opt.value">{{ opt.label }}</option>
+                </select>
+              </div>
+
+              <input type="text"
+                     class="library-disc-drawer__title-desc"
+                     [(ngModel)]="row.description"
+                     (ngModelChange)="onTitleFieldChange(row)"
+                     placeholder="Description (optional)"
+                     [disabled]="isFinalized" />
+
+              <footer class="library-disc-drawer__title-foot">
+                <span class="library-disc-drawer__title-stage"
+                      [class.is-transferred]="row.file_path_stage === 'transfer'"
+                      [class.is-transient]="row.file_path_stage === 'postprocess'"
+                      [title]="row.file_path || 'No file path on record'">
+                  {{ filePathStageLabel(row) }}
+                </span>
+                <code *ngIf="row.file_path"
+                      class="library-disc-drawer__title-path"
+                      [title]="row.file_path">{{ formatFilePath(row) }}</code>
+                <span *ngIf="!row.file_path"
+                      class="library-disc-drawer__title-path library-disc-drawer__title-path--muted">
+                  No file on disk yet
+                </span>
+                <span *ngIf="row.contributed_to_discdb"
+                      class="library-disc-drawer__title-discdb"
+                      title="This title's metadata has been contributed to TheDiscDB">
+                  ✓ DiscDB
+                </span>
+              </footer>
+            </ng-container>
+          </article>
+        </cdk-virtual-scroll-viewport>
+      </section>
+
+    </ng-container>
+  </div>
+</aside>

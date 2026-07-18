@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MKV Auto</title>
+  <base href="/">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="alternate icon" type="image/x-icon" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!--
+    Static "Setting Up" overlay shown during initial page load and removed by the
+    APP_INITIALIZER once the backend /readyz endpoint reports 200 (see
+    src/app/app.config.ts and src/app/services/readiness.service.ts). Visible by
+    default so the user sees a friendly state during Postgres WAL recovery on
+    container startup instead of a blank page or CORS-stripped 500s.
+  -->
+  <style>@keyframes appLoadingSpin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}</style>
+  <div id="app-loading-overlay" role="status" aria-live="polite"
+       style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;background:#0f1117;color:#e7ebf2;z-index:99999;font-family:Inter,system-ui,sans-serif;">
+    <div aria-hidden="true"
+         style="width:48px;height:48px;border-radius:50%;border:4px solid rgba(231,235,242,0.18);border-top-color:#5dadec;animation:appLoadingSpin 0.9s linear infinite;margin-bottom:24px;"></div>
+    <div style="font-size:18px;font-weight:600;letter-spacing:0.01em;">Setting Up</div>
+    <div data-loading-caption style="margin-top:8px;font-size:14px;color:#9aa4b3;max-width:320px;text-align:center;line-height:1.5;">
+      Waiting for backend…
+    </div>
+  </div>
+  <app-root></app-root>
+</body>
+</html>

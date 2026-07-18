@@ -1,0 +1,976 @@
+:host {
+  display: block;
+  width: 100%;
+  
+  // Hide scrollbars in webkit browsers
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  
+  // Hide scrollbar in Firefox
+  scrollbar-width: none;
+}
+
+// .glass: use global from workflow-template.scss
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.control-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+}
+
+.drive-select {
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.drive-select:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.drive-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toggle-row {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.toggle-row button {
+  flex: 1;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.toggle-row button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.toggle-row button.active {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+// Hero card styles removed - content moved to breadcrumb and action bar
+
+.content-type-selector {
+  display: flex;
+  align-items: center;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mode-selector {
+  display: flex;
+  align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-actions .spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.movie-selection {
+  margin-top: 16px;
+}
+
+.movie-url-input .field {
+  margin-bottom: 0;
+}
+
+.tmdb-url-section {
+  margin-bottom: 16px;
+}
+
+.tmdb-url-section .field {
+  margin-bottom: 0;
+}
+
+// Hero main, cover, hero-copy, hero-progress styles removed - content moved to breadcrumb and action bar
+
+.controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.mode-toggle .toggle-row {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.meta-line {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+// Stage progress styles moved to stage-progress-bar component
+
+.mode-toggle button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.mode-toggle button.active {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.cta-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.card-header {
+  // Base styles for consistent spacing; contain horizontal overflow so page doesn't scroll
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: visible;
+}
+
+.card-header-carousel {
+  display: flex;
+  gap: 8px;
+  min-width: 0; // allow shrinking so carousel scrolls inside container, not the page
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  padding-left: 1rem;
+  pointer-events: auto;
+
+  // Template-style thin scrollbar (Phase 2)
+  &::-webkit-scrollbar {
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 3px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  @media (max-width: 768px) {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+    &::-webkit-scrollbar {
+      display: none; /* Chrome, Safari, Opera */
+    }
+  }
+}
+
+.drive-card {
+  aspect-ratio: 2;
+  padding: 16px; // Consistent padding with other cards
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  position: relative;
+  // Calculate width to show part of next card
+  // Formula: (container width - gaps) / cards to show
+  // Desktop: show 3.5 cards = (100% - 3*8px gap) / 3.5
+  width: calc((100% - 24px) / 3.5);
+  min-width: 200px; // Minimum width on mobile
+  max-width: 280px; // Maximum width on desktop
+  flex-shrink: 0; // Prevent shrinking in carousel
+  gap: 12px; // Gap between top and bottom groups
+}
+
+.drive-card:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+.drive-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.drive-card.active {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+}
+
+.drive-card.loading {
+  opacity: 0.8;
+}
+
+.drive-card .eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+  margin: 0;
+  width: 100%;
+}
+
+.drive-card .eyebrow svg {
+  width: 12px;
+  height: 12px;
+}
+
+.drive-card-top {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  flex: 1;
+}
+
+.drive-card-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+}
+
+.drive-card-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  margin-top: auto;
+}
+
+.drive-card-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.3;
+  word-break: break-word;
+  text-align: left;
+  width: 100%;
+}
+
+.drive-card-meta {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: left;
+  width: 100%;
+  line-height: 1.3;
+}
+
+.drive-card-mount {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: left;
+  width: 100%;
+  line-height: 1.3;
+}
+
+.drive-card-loading {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.8rem;
+}
+
+.drive-card-loading .spinner {
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.jobs-card {
+  aspect-ratio: 2;
+  padding: 16px; // Consistent padding with other cards
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  // Match drive-card width for uniformity
+  width: calc((100% - 24px) / 3.5);
+  min-width: 200px; // Minimum width on mobile
+  max-width: 280px; // Maximum width on desktop
+  flex-shrink: 0; // Prevent shrinking in carousel
+}
+
+.jobs-card .eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+  margin: 0 0 6px 0;
+  width: 100%;
+}
+
+.jobs-card-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.jobs-count {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+
+.jobs-label {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Film Card */
+.film-card {
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+
+.film-card-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.film-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.film-dropdown-group {
+  grid-column: 1 / -1;
+}
+
+.film-boxset-group {
+  grid-column: 1 / -1;
+}
+
+.film-tmdb-group {
+  grid-column: 1 / -1;
+}
+
+.tmdb-url-input {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tmdb-url-input input {
+  flex: 1;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 0.9rem;
+}
+
+.tmdb-url-input input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.tmdb-url-input input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.tmdb-url-input button {
+  padding: 8px 16px;
+  white-space: nowrap;
+}
+
+// Carousel works the same on all screen sizes
+
+@media (max-width: 1024px) {
+  .film-card-content {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .film-dropdown-group,
+  .film-boxset-group,
+  .film-tmdb-group {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .card-header {
+    // Mobile styles
+    // margin-bottom: 24px; // Increase spacing between dashboard cards and hero card on mobile
+  }
+  
+
+  .drive-card,
+  .jobs-card {
+    // Mobile: show ~1.5 cards (so ~50% of 2nd card is visible)
+    // Formula: (container width - 1*8px gap) / 1.5
+    width: calc((100% - 8px) / 1.5);
+    min-width: 200px;
+    max-width: none; // Remove max-width constraint on mobile
+  }
+  
+
+  .drive-card-name {
+    font-size: 0.85rem;
+  }
+
+  .jobs-count {
+    font-size: 1.25rem;
+  }
+}
+
+.primary-cta {
+  min-width: 180px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  padding: 16px;
+}
+
+.label-meta {
+  display: grid;
+  gap: 12px;
+}
+
+.label-meta.two-col {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.label-meta.release-grid {
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+}
+
+.label-meta.release-grid .span2 {
+  grid-column: span 2;
+}
+
+@media (max-width: 900px) {
+  .label-meta.release-grid {
+    grid-template-columns: repeat(2, minmax(200px, 1fr));
+  }
+  .label-meta.release-grid .span2 {
+    grid-column: span 2;
+  }
+}
+
+.label-meta .finalize-inline {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.label-meta .finalize-inline button {
+  width: 100%;
+  height: 40px;
+  align-self: stretch;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: grid;
+  place-items: center;
+  z-index: 2000;
+}
+
+.modal {
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 18px;
+  min-width: 280px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.modal-fullscreen-backdrop {
+  place-items: stretch;
+  padding: 0;
+}
+
+.modal-fullscreen-backdrop .modal {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.modal h3 {
+  margin: 0 0 8px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.modal-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+  flex-shrink: 0;
+}
+
+.title-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 80px 80px 140px 1fr 100px 140px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.title-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hero-shell.skeleton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.loading-card {
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-content {
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.8);
+  text-align: center;
+}
+
+.loading-text {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.empty-card {
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.backend-error-critical {
+  &.standalone {
+    min-height: auto; // Changed from 400px to auto for rectangular shape
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 2rem auto;
+    max-width: 100%; // Changed from 600px to allow wider card
+    padding: 1.5rem 2rem; // Reduced vertical padding, kept horizontal
+    width: 100%; // Allow card to be wider
+    
+    .loading-content {
+      flex-direction: column;
+      gap: 1rem;
+    }
+    
+    .loading-text {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.95);
+    }
+  }
+}
+
+.combo-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.movie-selection .combo-grid {
+  grid-template-columns: 1fr;
+}
+
+.combobox {
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.combobox-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #0b0b0f;
+  color: #fff;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  min-height: 40px;
+}
+
+.combo-trigger-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.combo-trigger-text .combo-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.combo-thumb {
+  height: 34px;
+  width: auto;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.combo-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  height: 100%;
+  min-height: 100%;
+  align-self: stretch;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #0b0b0f;
+  color: #fff;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  padding: 0;
+}
+
+.combo-add:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: #12121a;
+}
+
+.combobox-trigger:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: #0f0f15;
+}
+
+.combobox-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: #0b0b0f;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+  padding: 0;
+  overflow: hidden;
+}
+
+.combobox-panel input {
+  width: 100%;
+  padding: 12px 12px 12px 34px;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0;
+  background: #0b0b0f;
+  color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6.5' cy='6.5' r='4.5'/%3E%3Cpath d='m11 11 3 3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 10px center;
+}
+
+.combobox-options {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.combo-option {
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  background: transparent;
+  border: none;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.combo-option:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.combo-title {
+  font-weight: 600;
+}
+
+.combo-option-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 1;
+}
+
+.combo-option-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.combo-edit {
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 4px;
+  flex-shrink: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.combo-edit:hover {
+  opacity: 0.8;
+}
+
+.combobox .empty {
+  padding: 8px;
+}
+
+@media (max-width: 900px) {
+  // Hero card styles removed
+  .cta-stack {
+    align-items: stretch;
+  }
+  .title-row {
+    grid-template-columns: 60px 1fr;
+    grid-template-rows: repeat(4, auto);
+    grid-auto-flow: row;
+  }
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.eyebrow-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.boxset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.boxset-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.boxset-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateX(4px);
+}
+
+.boxset-cover {
+  width: 60px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.boxset-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.boxset-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #fff;
+}

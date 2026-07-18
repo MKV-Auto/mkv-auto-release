@@ -1,0 +1,233 @@
+.label-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+// .glass: use global from workflow-template.scss
+
+.card {
+  padding: 16px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.eyebrow-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.label-meta {
+  display: grid;
+  gap: 12px;
+}
+
+.label-meta.two-col {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.label-meta.release-grid {
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+}
+
+.label-meta.release-grid .span2 {
+  grid-column: span 2;
+}
+
+@media (max-width: 900px) {
+  .label-meta.release-grid {
+    grid-template-columns: repeat(2, minmax(200px, 1fr));
+  }
+  .label-meta.release-grid .span2 {
+    grid-column: span 2;
+  }
+}
+
+.combobox {
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.combo-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+/* Template: rounded-lg border border-white/10 bg white/5 */
+.combobox-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.combo-trigger-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.combo-thumb {
+  height: 34px;
+  width: auto;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.combo-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  height: 100%;
+  min-height: 100%;
+  align-self: stretch;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #0b0b0f;
+  color: #fff;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  padding: 0;
+}
+
+.combo-add:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: #12121a;
+}
+
+.combobox-trigger:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.combobox-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: #0b0b0f;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+  padding: 0;
+  overflow: hidden;
+}
+
+.combobox-panel input {
+  width: 100%;
+  padding: 12px 12px 12px 34px;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0;
+  background: #0b0b0f;
+  color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6.5' cy='6.5' r='4.5'/%3E%3Cpath d='m11 11 3 3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 10px center;
+}
+
+.combobox-options {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.combo-option {
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  background: transparent;
+  border: none;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+}
+
+.combo-option:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.combo-title {
+  font-weight: 600;
+}
+
+.combo-option-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.combobox .empty {
+  padding: 8px;
+}
+
+.title-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 80px 80px 140px 1fr 100px 140px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.title-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.missing-list {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #ef4444;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.missing-list h4 {
+  margin: 0 0 8px 0;
+  color: #ef4444;
+}
+
+.missing-list ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.missing-list li {
+  margin: 2px 0;
+}

@@ -1,0 +1,26 @@
+<ng-container *ngIf="finalized$ | async as disc">
+  <section class="already-in-library glass card" aria-labelledby="ail-heading">
+    <div class="already-in-library__icon" aria-hidden="true">
+      <ui-icon name="check-circle" [size]="28"></ui-icon>
+    </div>
+    <div class="already-in-library__body">
+      <div class="already-in-library__eyebrow-row">
+        <span class="already-in-library__eyebrow">Already in Library</span>
+        <ui-pill tone="emerald">Ripped</ui-pill>
+      </div>
+      <h2 id="ail-heading" class="already-in-library__title">{{ cardTitle(disc) }}</h2>
+      <p class="already-in-library__sub">
+        This disc has already been ripped. Use the workflow below to re-rip.
+      </p>
+    </div>
+    <div class="already-in-library__actions">
+      <a
+        *ngIf="disc.finalized_release_slug"
+        class="btn primary already-in-library__library-link"
+        [routerLink]="['/library']"
+        [queryParams]="{ release: disc.finalized_release_slug }">
+        Open in Library →
+      </a>
+    </div>
+  </section>
+</ng-container>

@@ -1,0 +1,80 @@
+# Docker Compose for MKV-Auto with External Databases
+# Use this for production deployments requiring separate database containers
+
+version: '3.8'
+
+services:
+  mkv-auto:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile
+    container_name: mkv-auto
+    ports:
+      - "8080:80"
+    volumes:
+      # Persistent data (jobs, logs, temp files)
+      - mkv-data:/data
+      # Optical drive access (adjust device path as needed)
+      - /dev/sr0:/dev/sr0
+    devices:
+      - /dev/sr0
+    # Privileged mode required for optical drive access and mount operations
+    privileged: true
+    environment:
+      # External database connections
+      - DATABASE_URL=postgresql://postgres:changeme@postgres:5432/discs
+      - REDIS_URL=redis://redis:6379/0
+      # Optional: Override default timezone
+      - TZ=UTC
+      # Optional: Set log level (DEBUG, INFO, WARNING, ERROR)
+      - MKVAUTO_DEBUG_LEVEL=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  postgres:
+    image: postgres:17
+    container_name: mkv-auto-postgres
+    environment:
+      POSTGRES_DB: discs
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8
+    container_name: mkv-auto-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mkv-data:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local

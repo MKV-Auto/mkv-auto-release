@@ -1,0 +1,547 @@
+/* library-disc-drawer — Phase 4 (#500).
+ * Desktop: right-rail at 480px with a soft scrim across the rest.
+ * Mobile (< 720px): full-screen overlay. */
+
+.library-disc-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+
+  &__scrim {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    pointer-events: auto;
+    animation: library-disc-drawer-scrim-in 160ms ease-out;
+  }
+
+  &__panel {
+    position: relative;
+    // #598: 480px was too narrow for the per-title editor (5 stacked
+    // form fields × dozens of titles). 720px gives ~50% of a 1440px
+    // viewport with 40px breathing room; the mobile breakpoint below
+    // still escalates to full-width.
+    width: min(720px, calc(100vw - 40px));
+    height: 100%;
+    background: rgba(15, 17, 26, 0.96);
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
+    pointer-events: auto;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    animation: library-disc-drawer-slide-in 200ms cubic-bezier(0.32, 0.72, 0.32, 1);
+
+    @media (max-width: 720px) {
+      width: 100vw;
+      border-left: none;
+    }
+  }
+
+  &__header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.875rem 1rem;
+    background: rgba(15, 17, 26, 0.98);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  &__breadcrumb {
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  &__close {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.875rem;
+    cursor: pointer;
+
+    &:hover { background: rgba(255, 255, 255, 0.12); color: white; }
+  }
+
+  &__status {
+    padding: 1.25rem 1rem;
+    text-align: center;
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.6);
+
+    &--error { color: #fca5a5; }
+  }
+
+  &__section {
+    padding: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+
+    &--titles {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      padding-bottom: 0;
+    }
+  }
+  &__section-title {
+    margin: 0 0 0.625rem;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.55);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  &__count {
+    margin-left: 0.25rem;
+    color: rgba(255, 255, 255, 0.4);
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  // #599: Show ignored / Hide ignored ghost button under the section title.
+  &__title-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin: -0.25rem 0 0.5rem;
+  }
+  &__toggle-ignored {
+    appearance: none;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: white;
+    }
+    &:focus-visible {
+      outline: 2px solid rgba(99, 102, 241, 0.7);
+      outline-offset: 2px;
+    }
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    margin-bottom: 0.625rem;
+
+    &--full { grid-column: 1 / -1; }
+  }
+  &__label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  &__input {
+    width: 100%;
+    padding: 0.375rem 0.5rem;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.375rem;
+    color: white;
+    font-size: 0.875rem;
+
+    &:focus { outline: none; border-color: rgba(99, 102, 241, 0.5); }
+    &[disabled] { opacity: 0.5; cursor: not-allowed; }
+  }
+  &__select { padding-right: 1.5rem; }
+  &__textarea { resize: vertical; min-height: 2.5rem; }
+
+  &__hint {
+    margin: 0.375rem 0 0;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  &__format-row {
+    display: flex;
+    gap: 0.375rem;
+  }
+  &__format-pill {
+    flex: 1 1 0;
+    padding: 0.375rem 0.5rem;
+    border-radius: 0.375rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+
+    &:hover:not([disabled]) {
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+    }
+    &.is-selected {
+      background: rgba(6, 182, 212, 0.2);
+      border-color: rgba(6, 182, 212, 0.55);
+      color: white;
+    }
+    &[disabled] { opacity: 0.45; cursor: not-allowed; }
+  }
+
+  /* Titles list — virtual-scroll viewport host. */
+  &__titles {
+    flex: 1 1 auto;
+    min-height: 200px;
+    margin: 0 -1rem; /* bleed to panel edges so rows feel full-width */
+  }
+  &__title-row {
+    // #601 redesign: compact card replacing the 420px stacked-form layout.
+    // #531 contract still holds — itemSize="200" on the viewport must
+    // match this box height. The rendered-height spec pins both.
+    box-sizing: border-box;
+    height: 200px;
+    overflow: hidden;
+    position: relative;
+    padding: 0.625rem 1rem 0.5rem 1.25rem;
+    margin: 0 0.5rem 0.75rem; // 12px gap between cards
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+
+    // Left-edge accent bar, tone-tinted per `[data-tone]` set in the
+    // template via `typeChipTone(row.type)`. Empty for unset / ignored.
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 8px;
+      bottom: 8px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: transparent;
+    }
+    &[data-tone="cyan"]::before   { background: #67e8f9; }
+    &[data-tone="indigo"]::before { background: #a5b4fc; }
+    &[data-tone="amber"]::before  { background: #fcd34d; }
+    &[data-tone="blue"]::before   { background: #93c5fd; }
+    &[data-tone="purple"]::before { background: #d8b4fe; }
+    &[data-tone="slate"]::before  { background: rgba(203, 213, 225, 0.55); }
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.045);
+      border-color: rgba(255, 255, 255, 0.18);
+      transform: translateY(-1px);
+    }
+
+    // #599: visible dimming for ignored rows when the user reveals them
+    // via the Show-ignored toggle. Drop the accent entirely too — the row
+    // is signalling "this is being skipped," tone color would conflict.
+    &.is-ignored {
+      opacity: 0.5;
+      &::before { background: transparent !important; }
+      &:hover { opacity: 0.85; }
+    }
+  }
+
+  /* Title-row line 1: chip + title input + duration. */
+  &__title-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 28px;
+  }
+  &__title-chip {
+    flex-shrink: 0;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.75);
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+
+    &[data-tone="cyan"]   { color: #67e8f9; background: rgba(34, 211, 238, 0.12); border-color: rgba(34, 211, 238, 0.3); }
+    &[data-tone="indigo"] { color: #a5b4fc; background: rgba(99, 102, 241, 0.18); border-color: rgba(99, 102, 241, 0.35); }
+    &[data-tone="amber"]  { color: #fcd34d; background: rgba(251, 191, 36, 0.18); border-color: rgba(251, 191, 36, 0.35); }
+    &[data-tone="blue"]   { color: #93c5fd; background: rgba(96, 165, 250, 0.15); border-color: rgba(96, 165, 250, 0.35); }
+    &[data-tone="purple"] { color: #d8b4fe; background: rgba(168, 85, 247, 0.18); border-color: rgba(168, 85, 247, 0.35); }
+    &[data-tone="slate"]  { color: #cbd5e1; background: rgba(148, 163, 184, 0.12); border-color: rgba(148, 163, 184, 0.25); }
+  }
+  /* Inline-text title input. Looks almost identical to the display-mode
+   * text span — same size, same weight, transparent background — so the
+   * Edit / Done flip doesn't feel like switching to a form. The caret +
+   * subtle hover tint are the only affordance; focus adds an indigo ring
+   * to mark the active field. */
+  &__title-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.25rem 0.375rem;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 0.375rem;
+    color: white;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    transition: background-color 100ms ease, border-color 100ms ease;
+
+    &::placeholder { color: rgba(255, 255, 255, 0.3); font-weight: 500; }
+    &:hover:not([disabled]) {
+      background: rgba(255, 255, 255, 0.04);
+    }
+    &:focus {
+      outline: none;
+      background: rgba(99, 102, 241, 0.08);
+      border-color: rgba(99, 102, 241, 0.45);
+    }
+    &[disabled] { opacity: 0.6; cursor: not-allowed; }
+  }
+  /* Display-mode counterpart of __title-title — plain text, no input
+   * chrome. The whole row sits on the bordered card so the title doesn't
+   * need its own affordance. */
+  &__title-title-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.25rem 0.125rem;
+    color: white;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &.is-muted {
+      color: rgba(255, 255, 255, 0.35);
+      font-style: italic;
+      font-weight: 500;
+    }
+  }
+  &__title-duration {
+    flex-shrink: 0;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Edit / Done button (#601 follow-up). Ghost variant in display mode,
+   * filled accent when toggled to "Done" so it reads as the primary
+   * action while editing. */
+  &__title-edit-btn {
+    flex-shrink: 0;
+    padding: 0.25rem 0.625rem;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.375rem;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+
+    &:hover:not([disabled]) {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: white;
+    }
+    &:focus-visible {
+      outline: 2px solid rgba(99, 102, 241, 0.7);
+      outline-offset: 2px;
+    }
+    &[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+    &--done {
+      background: rgba(99, 102, 241, 0.18);
+      border-color: rgba(99, 102, 241, 0.45);
+      color: #c7d2fe;
+      &:hover:not([disabled]) {
+        background: rgba(99, 102, 241, 0.28);
+        border-color: rgba(99, 102, 241, 0.6);
+        color: white;
+      }
+    }
+  }
+  /* Display-mode subline (#601 follow-up): edition · description in a
+   * single line, truncated. Kept light so it never competes with the
+   * title for visual weight. */
+  &__title-subline {
+    margin: 0 0 0 0;
+    padding: 0 0.125rem;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.8125rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &--meta {
+      color: rgba(165, 180, 252, 0.85);
+      font-variant-numeric: tabular-nums;
+      font-size: 0.75rem;
+    }
+  }
+
+  /* Title-row line 2: form-row with type + edition (movie) or season + episode + type (series). */
+  &__title-row-form {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    gap: 0.5rem;
+
+    &--series { grid-template-columns: 70px 70px 1fr; }
+    // #602: Backdrop rows render only the type select on this line. Give
+    // the type a sensible bounded width so it doesn't stretch across the
+    // whole row like a textarea.
+    &--backdrop { grid-template-columns: 180px; }
+  }
+  // #602: spacer that takes the slot where the title input would live on
+  // non-Backdrop rows, keeping duration + Done aligned to the right edge
+  // of the header.
+  &__title-title-spacer {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  /* Inline-text style inputs — same philosophy as __title-title above.
+   * Quiet by default (transparent, hairline border, dim placeholder),
+   * a subtle hover tint, and only on focus do they take on a real
+   * background + indigo border to mark the active field. */
+  &__title-type,
+  &__title-edition,
+  &__title-num,
+  &__title-desc {
+    width: 100%;
+    padding: 0.25rem 0.375rem;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.375rem;
+    color: white;
+    font-size: 0.8125rem;
+    transition: background-color 100ms ease, border-color 100ms ease;
+
+    &::placeholder { color: rgba(255, 255, 255, 0.28); }
+    &:hover:not([disabled]) {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+    &:focus {
+      outline: none;
+      background: rgba(99, 102, 241, 0.06);
+      border-color: rgba(99, 102, 241, 0.45);
+    }
+    &[disabled] { opacity: 0.5; cursor: not-allowed; }
+  }
+  &__title-type {
+    padding-right: 1rem;
+    // Style the select itself; the option list is rendered by the OS so
+    // its styling is browser-controlled.
+    color: rgba(255, 255, 255, 0.85);
+    font-weight: 500;
+  }
+  &__title-num {
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Title-row line 4: read-only footer. */
+  &__title-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    margin-top: auto; // push to bottom of the fixed-height card
+  }
+  &__title-stage {
+    flex-shrink: 0;
+    padding: 0.125rem 0.375rem;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+
+    &.is-transferred {
+      background: rgba(74, 222, 128, 0.12);
+      border-color: rgba(74, 222, 128, 0.3);
+      color: #86efac;
+    }
+    &.is-transient {
+      background: rgba(251, 191, 36, 0.12);
+      border-color: rgba(251, 191, 36, 0.3);
+      color: #fcd34d;
+    }
+  }
+  &__title-path {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.55);
+    font-family: ui-monospace, monospace;
+    font-size: 0.6875rem;
+
+    &--muted {
+      color: rgba(255, 255, 255, 0.3);
+      font-style: italic;
+      font-family: inherit;
+      font-size: 0.75rem;
+    }
+  }
+  /* #500 Phase 5 — passive contribution chip on the title footer.
+   * Cyan accent matches the DiscDB pill aesthetic. */
+  &__title-discdb {
+    flex-shrink: 0;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    background: rgba(6, 182, 212, 0.12);
+    border: 1px solid rgba(6, 182, 212, 0.3);
+    color: #67e8f9;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  &__export {
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.375rem;
+    background: rgba(6, 182, 212, 0.12);
+    border: 1px solid rgba(6, 182, 212, 0.3);
+    color: #67e8f9; /* cyan-300, matches the DiscDB chip */
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    &:hover:not(:disabled) { background: rgba(6, 182, 212, 0.22); }
+    &:disabled { opacity: 0.5; cursor: wait; }
+  }
+}
+
+@keyframes library-disc-drawer-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes library-disc-drawer-slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}

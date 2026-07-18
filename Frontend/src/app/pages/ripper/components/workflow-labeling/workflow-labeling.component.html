@@ -1,0 +1,761 @@
+<ng-container *ngIf="{ 
+  context: context$ | async, 
+  groups: groupOptions$ | async,
+  movies: movieOptions$ | async,
+  boxsets: boxsetOptions$ | async,
+  releases: releaseOptions$ | async,
+  pendingRel: (context$ | async)?.pendingRelease
+} as state; else loading">
+  <div class="workflow-labeling-container" *ngIf="state.context && (state.context.labelForm || state.context.discdbHit)">
+    <!-- Breadcrumb Navigation -->
+    <app-workflow-breadcrumb
+      [steps]="getBreadcrumbSteps()"
+      [currentStep]="currentStep"
+      [canNavigateToStep]="canNavigateToStep.bind(this)"
+      [getStepLabel]="getStepLabel.bind(this)"
+      [movieCover]="getMovieCover(state.context)"
+      [movieName]="getMovieName(state.context)"
+      [productionYear]="getProductionYear(state.context)"
+      [isMobile]="isMobile"
+      [showDiscdbSuggestedBadge]="state.context.discdbResult === 'hit'"
+      [tvSeasonCount]="workflowService.getTvSeasonCount$() | async"
+      [primarySeason]="workflowService.getPrimarySeason$() | async"
+      (stepNavigate)="onStepNavigate($event)"
+      (primarySeasonChange)="workflowService.setPrimarySeason($event)">
+    </app-workflow-breadcrumb>
+
+    <!-- Step Content Container with Animation -->
+    <div class="step-container" [@slideAnimation]="currentStepIndex">
+      <!-- Film Step: Type selection + Movie/Series selection (template-aligned) -->
+      <div class="workflow-step step-card glass card film-step-card" *ngIf="currentStep === 'film' && state.context && !state.context.discdbHit">
+        <!-- <div class="panel-eyebrow">
+          <p class="eyebrow">{{ (state.context.labelForm?.group_type === 'series') ? 'Series' : 'Movie' }} Selection</p>
+        </div> -->
+        <div class="step-header">
+          <h2 class="text-xl font-bold text-white mb-2">Select Movie or Series</h2>
+          <p class="step-description">Choose the content type and select or create an entry from TheMovieDB.</p>
+        </div>
+
+        <div class="step-content space-y-6">
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium film-step-toggle"
+              [ngClass]="{ 'film-step-toggle-active': isMovieActive(state.context) }"
+              (click)="setContentType('movie')">
+              <svg class="w-5 h-5 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M17 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>
+              <span>Movie</span>
+            </button>
+            <button
+              type="button"
+              class="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium film-step-toggle"
+              [ngClass]="{ 'film-step-toggle-active': isSeriesActive(state.context) }"
+              (click)="setContentType('series')">
+              <svg class="w-5 h-5 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 21h10"/><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M12 17v4"/></svg>
+              <span>Series</span>
+            </button>
+          </div>
+
+          <!-- TMDB auto-suggestion card (#389). Renders when
+               disc.disc_info.tmdb_suggestion is set, the user hasn't
+               already picked a movie, and they haven't clicked Change to
+               enter override mode. Highest-leverage UI in the whole epic:
+               on DiscDB-miss the user can advance the film step in one
+               click instead of pasting a URL or hunting through the
+               combobox. -->
+          <ng-container *ngIf="getTmdbSuggestion(state.context) as suggestion">
+            <div class="tmdb-suggestion-card glass card" *ngIf="showTmdbSuggestionCard(state.context)">
+              <div class="flex gap-3 items-start">
+                <img
+                  *ngIf="suggestion.cover_url"
+                  [src]="suggestion.cover_url"
+                  alt=""
+                  class="tmdb-suggestion-cover"
+                  loading="lazy">
+                <div class="flex-1">
+                  <div class="text-xs text-white/60">We think this disc is:</div>
+                  <div class="text-base font-semibold text-white">{{ suggestion.title }}</div>
+                  <div class="text-xs text-white/60 mt-0.5">
+                    <span *ngIf="suggestion.year">{{ suggestion.year }} · </span>
+                    {{ suggestion.tmdb_type === 'tv' ? 'Series' : 'Movie' }}
+                  </div>
+                  <!-- #536: low-confidence warning commented out — Use this /
+                       Change buttons + the trailing "Accuracy here affects
+                       renaming and library placement downstream." line already
+                       constitute the verify step.
+                  <div class="text-xs text-yellow-300 mt-1.5" *ngIf="suggestion.score < TMDB_HIGH_CONFIDENCE_THRESHOLD">
+                    Low-confidence match — please verify before continuing.
+                  </div>
+                  -->
+
+                  <div class="flex gap-2 mt-3">
+                    <button
+                      type="button"
+                      class="primary"
+                      (click)="onAcceptTmdbSuggestion(suggestion)"
+                      [disabled]="metadataSaving">
+                      Use this
+                    </button>
+                    <button
+                      type="button"
+                      class="secondary"
+                      (click)="enterTmdbOverrideMode()"
+                      [disabled]="metadataSaving">
+                      Change
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="text-xs text-white/50 mt-2">
+                Accuracy here affects renaming and library placement downstream.
+              </div>
+            </div>
+          </ng-container>
+
+          <!-- Movie/series selector — visible whenever the suggestion card
+               is not showing in its place. After "Use this" sets
+               labelForm.movie_id, the selector remains visible and renders
+               the selected-film chip so the user can verify or Change. -->
+          <ng-container *ngIf="showTmdbOverrideControls(state.context)">
+            <div class="tmdb-override-controls"
+                 *ngIf="getTmdbSuggestion(state.context) && tmdbSuggestionMode === 'override' && !state.context?.labelForm?.movie_id">
+              <button
+                type="button"
+                class="text-xs text-white/60 hover:text-white mb-2"
+                (click)="dismissTmdbOverride()">
+                ← Back to suggestion
+              </button>
+            </div>
+
+            <app-movie-selector
+              [movieOptions]="state.movies || []"
+              [selectedMovieId]="state.context.labelForm?.movie_id || null"
+              [contentType]="state.context.labelForm?.group_type === 'series' ? 'series' : 'movie'"
+              [tmdbUrl]="tmdbUrl"
+              [loading]="filmLookupLoading || metadataSaving"
+              [error]="filmLookupError"
+              [tmdbSearchResults]="tmdbSearchResults"
+              [tmdbSearchLoading]="tmdbSearchLoading"
+              [tmdbSearchError]="tmdbSearchError"
+              (movieSelected)="onSelectMovie($event)"
+              (movieCleared)="onMovieCleared()"
+              (tmdbUrlLookup)="onMovieLookup($event)"
+              (movieMetadataPatched)="onMovieMetadataPatched($event)"
+              (tmdbSearchRequested)="onTmdbSearchRequested($event)"
+              (tmdbCandidateSelected)="onTmdbCandidatePicked($event)">
+            </app-movie-selector>
+
+            <!-- Info card (template: "Info Box" — shown when no movie selected) -->
+            <div class="movie-step-info-card" *ngIf="!state.context?.labelForm?.movie_id">
+              <p class="mb-2"><strong class="text-white/80">Need to add a new title?</strong></p>
+              <p>Select an existing {{ state.context.labelForm?.group_type === 'series' ? 'series' : 'movie' }} from the list, or use the "Add from TMDB URL" option to fetch details directly from TheMovieDB. Paste a URL like:</p>
+              <code class="block mt-2 text-xs text-cyan-400">https://www.themoviedb.org/{{ state.context.labelForm?.group_type === 'series' ? 'tv' : 'movie' }}/603-the-matrix</code>
+            </div>
+          </ng-container>
+        </div>
+      </div>
+
+      <!-- Exploratory-rip Step: Path A's selective-rip workspace, hosted in
+           the same step-card shell as the other workflow steps so the
+           breadcrumb header / step animation / wrapper styling stay
+           consistent. The path-a-workspace component still owns its
+           per-stage rendering (exploratory_ripping / awaiting_segment_order
+           / matching_playlists / canonical_ripping_pending / etc.) and the
+           embedded segment-reorder UI inside awaiting_segment_order. -->
+      <div class="workflow-step step-card glass card" *ngIf="currentStep === 'exploratory_rip' && state.context">
+        <app-path-a-workspace></app-path-a-workspace>
+      </div>
+
+      <!-- Boxset/Release Step: two-button toggle + Release/Boxset selection (template-aligned) -->
+      <div class="workflow-step step-card glass card" *ngIf="currentStep === 'boxset' && state.context && !state.context.discdbHit">
+        <!-- <div class="panel-eyebrow">
+          <p class="eyebrow">{{ isBoxsetMode(state.context) ? 'Boxset Selection' : 'Release Selection' }}</p>
+        </div> -->
+        <div class="step-header">
+          <h2 class="text-xl font-bold text-white mb-2">{{ isBoxsetMode(state.context) ? 'Select Boxset' : 'Select Release' }}</h2>
+          <p class="step-description">{{ isBoxsetMode(state.context) ? 'Choose a boxset for multi-disc collections or series' : 'Select a standalone release for this disc' }}</p>
+        </div>
+
+        <div class="step-content space-y-6">
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all boxset-step-toggle"
+              [ngClass]="!isBoxsetMode(state.context) ? 'boxset-step-toggle-release-active' : 'bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'"
+              (click)="setReleaseMode()">
+              <svg class="w-5 h-5 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <span>Release</span>
+            </button>
+            <button
+              type="button"
+              class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all boxset-step-toggle"
+              [ngClass]="isBoxsetMode(state.context) ? 'boxset-step-toggle-boxset-active' : 'bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'"
+              (click)="setBoxsetMode()">
+              <svg class="w-5 h-5 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+              <span>Boxset</span>
+            </button>
+          </div>
+
+          <!-- Boxset Selector (when boxset mode) -->
+          <app-boxset-selector
+            *ngIf="state.context?.labelForm?.boxset_id"
+            [boxsetOptions]="state.boxsets || []"
+            [selectedBoxsetId]="state.context.labelForm?.boxset_id || null"
+            [loading]="metadataSaving"
+            (boxsetSelected)="onBoxsetSelected($event)"
+            (boxsetToggled)="toggleBoxsetCombo()"
+            (boxsetCleared)="onBoxsetCleared()"
+            (boxsetCreated)="onBoxsetCreated($event)"
+            (boxsetMetadataPatched)="onBoxsetMetadataPatched($event)"
+            (boxsetDeleted)="onBoxsetDeleted($event)">
+          </app-boxset-selector>
+
+          <!-- Release Selector (when release mode) -->
+          <app-release-selector
+            *ngIf="!state.context?.labelForm?.boxset_id"
+            [releaseOptions]="state.releases || []"
+            [pendingRelease]="state.pendingRel || null"
+            [selectedReleaseId]="state.context.labelForm?.release_id || null"
+            [labelFormReleaseName]="state.context.labelForm?.release_name || null"
+            [labelFormCoverFrontUrl]="state.context.labelForm?.cover_front_url || null"
+            [movieId]="state.context.labelForm?.movie_id || null"
+            [searchTerm]="releaseSearch"
+            [loading]="metadataSaving"
+            (releaseSelected)="onReleaseSelected($event)"
+            (releaseCleared)="onReleaseCleared()"
+            (releaseCreated)="onReleaseCreated($event)"
+            (releaseMetadataPatched)="onReleaseMetadataPatched($event)"
+            (releaseDeleted)="onReleaseDeleted($event)">
+          </app-release-selector>
+
+          <!-- Info box (template: shown when nothing selected; __pending__ = boxset mode but no boxset chosen) -->
+          <div class="boxset-step-info-card" [ngClass]="isBoxsetMode(state.context) ? 'boxset-mode' : 'release-mode'" *ngIf="!state.context?.labelForm?.release_id && (!state.context?.labelForm?.boxset_id || state.context?.labelForm?.boxset_id === '__pending__')">
+            <p class="mb-2"><strong class="text-white/80">{{ isBoxsetMode(state.context) ? 'What is a boxset?' : 'What is a release?' }}</strong></p>
+            <p>{{ isBoxsetMode(state.context) ? 'A boxset groups multiple releases together (e.g., "The Matrix Collection"). Each disc in the collection belongs to a specific release within the boxset.' : 'A release represents a specific edition of a movie or series (e.g., "The Matrix 4K UHD 2021"). Most discs belong to a single release.' }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Disc Step: Disc labeling (ui-lab pattern – single header and content from app-disc-label) -->
+      <div class="workflow-step step-card glass card disc-step-card" *ngIf="currentStep === 'disc' && state.context">
+        <p *ngIf="isDiscNumberAssigning(state.context)" class="disc-number-assigning-hint text-sm text-white/60 mb-2 px-1">
+          Assigning disc number…
+        </p>
+        <div class="step-content">
+          <app-disc-label
+            [labelForm]="state.context.labelForm"
+            [displayDiscNumber]="state.context.labelForm?.disc_number ?? state.context.discInfo?.disc_number ?? null"
+            [labelSaving]="false"
+            [lastAutosaveOk]="true"
+            (labelChanged)="onLabelChange(state.context.labelForm)"
+            (nameChanged)="onNameChange()"
+            (fieldBlur)="onNameBlur()">
+          </app-disc-label>
+        </div>
+      </div>
+
+      <!-- Titles Step: Title labeling (template: TitlesStep.tsx – eyebrow only, no header) -->
+      <div class="workflow-step step-card glass card" *ngIf="currentStep === 'titles' && state.context">
+        <div class="panel-eyebrow panel-eyebrow--titles">
+          <div class="panel-eyebrow-titles-left" *ngIf="getTitlesLabelStats(state.context) as tls">
+            <p class="eyebrow">
+              Titles metadata ({{ tls.total }})<span
+                *ngIf="tls.rawTitleCount !== tls.total"
+                class="eyebrow-tracks"> · {{ tls.rawTitleCount }} tracks</span>
+            </p>
+            <div class="titles-label-stats-line">
+              <span>{{ tls.labeledComplete }} labeled</span>
+              <span class="titles-label-stats-sep">·</span>
+              <span>{{ tls.ignored }} ignored</span>
+              <span class="titles-label-stats-sep">·</span>
+              <span>{{ tls.remainingIncomplete }} remaining</span>
+            </div>
+            <details class="titles-label-stats-by-type" *ngIf="sortedTitleTypeRows(tls.byType).length > 0">
+              <summary>By type</summary>
+              <ul class="titles-label-stats-by-type-list">
+                <li *ngFor="let row of sortedTitleTypeRows(tls.byType)">
+                  <span class="titles-label-stats-type-name">{{ row.type }}</span>
+                  <span class="titles-label-stats-type-count">{{ row.count }}</span>
+                </li>
+              </ul>
+            </details>
+          </div>
+          <div class="eyebrow-actions">
+            <button
+              *ngIf="getFailedPreviewCount(state.context) > 0"
+              type="button"
+              class="regenerate-previews-btn"
+              (click)="regenerateAllPreviews(state.context)"
+              [disabled]="regeneratingPreviews">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+              {{ regeneratingPreviews ? 'Regenerating...' : 'Regenerate Previews (' + getFailedPreviewCount(state.context) + ')' }}
+            </button>
+            <button
+              type="button"
+              class="rescan-titles-btn"
+              (click)="rescanTitlesDetection(state.context)"
+              [disabled]="rescanningTitles"
+              title="Re-run ffprobe metadata and padding detection for every ripped title (raw MKV must exist)">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              {{ rescanningTitles ? 'Queueing…' : 'Rescan Titles' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="step-content titles-step-content">
+          <app-title-label
+            [titles]="state.context.titles || []"
+            [isSeries]="state.context.labelForm?.group_type === 'series'"
+            [titleProgress]="cachedTitleProgress"
+            [titleStatusFn]="cachedTitleStatusFn"
+            [titleProgressValueFn]="cachedTitleProgressValueFn"
+            [titleActiveFn]="cachedTitleActiveFn"
+            [showTitleStatus]="true"
+            [previewUrlFn]="cachedPreviewUrlFn"
+            [previewStateFn]="cachedPreviewStateFn"
+            [retryPreviewFn]="cachedRetryPreviewFn"
+            [titlePathFn]="cachedTitlePathFn"
+            [labelSaving]="false"
+            [lastAutosaveOk]="true"
+            [devMode]="false"
+            [dedupeGroups]="state.context.dedupeGroups || []"
+            [discdbHit]="state.context.discdbResult === 'hit'"
+            [matchedCanonicalIndex]="state.context.jobStatus?.segment_reorder_state?.matched_playlist_index ?? null"
+            (labelChanged)="onTitlesChanged($event)"
+            (titlePatched)="onTitlePatch($event)"
+            (titleBatchPatched)="onTitleBatchPatch($event)"
+            (primaryChanged)="onPrimaryChanged($event)"
+            (labelBlur)="onNameBlur()">
+          </app-title-label>
+        </div>
+      </div>
+
+      <!-- #365 Phase 2 § 6.4 — Post-Process step card removed. The Transfer
+           step card (below) renders the same Boxset/Release progress info and
+           adds transferPhaseLabel ("Preparing files…") for the prep sub-phase
+           that used to live here. -->
+
+      <!-- Transfer Step (template: TransferStep.tsx) -->
+      <div class="workflow-step step-card step-card-wt glass card" *ngIf="currentStep === 'transfer' && state.context">
+        <div class="panel-eyebrow">
+          <p class="eyebrow">Transfer</p>
+        </div>
+
+        <div class="mb-6">
+          <h4 class="text-lg font-semibold text-white mb-2">Transferring to Library</h4>
+          <p class="text-sm text-white/60 m-0">Moving processed files to final destination with verification</p>
+        </div>
+
+        <!-- Re-rename files (#329): preview + apply before transfer starts -->
+        <div class="mb-4 p-3 rounded-lg border border-white/10" style="background: rgba(255,255,255,0.03);" *ngIf="state.context.jobStatus && (state.context.jobStatus.transfer_state === null || state.context.jobStatus.transfer_state === 'pending' || state.context.jobStatus.transfer_state === undefined || state.context.jobStatus.transfer_state === 'failed')">
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <span class="text-xs text-white/50">File names based on current metadata</span>
+            <button
+              *ngIf="!renameLoading"
+              type="button"
+              class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded text-xs font-medium text-white/70 border border-white/15 cursor-pointer hover:text-white transition-all"
+              style="background: rgba(255,255,255,0.08);"
+              (click)="previewRenameOnTransfer(); $event.stopPropagation()"
+              title="Preview file renames based on current metadata">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/></svg>
+              Rename Files
+            </button>
+            <span *ngIf="renameLoading" class="text-xs text-white/50">Loading…</span>
+          </div>
+          <div *ngIf="renameError" class="text-xs text-red-400 mt-1">{{ renameError }}</div>
+          <div *ngIf="renamePreview && renamePreview.length > 0" class="mt-2">
+            <!-- #325: summary header. Pre-apply = "N/M files will change";
+                 post-apply = "N/M renamed, K failed" with red failure count. -->
+            <div class="text-xs font-semibold text-white/80 mb-1">
+              <span *ngIf="!renameExecuted && renameSummary.changed > 0">
+                {{ renameSummary.changed }}/{{ renameSummary.total }} file{{ renameSummary.changed > 1 ? 's' : '' }} will change
+              </span>
+              <span *ngIf="!renameExecuted && renameSummary.changed === 0" class="text-white/40">
+                No changes needed
+              </span>
+              <span *ngIf="renameExecuted">
+                {{ renameSummary.succeeded }}/{{ renameSummary.changed }} renamed<span *ngIf="renameSummary.failed > 0" class="text-red-400">, {{ renameSummary.failed }} failed</span>
+              </span>
+            </div>
+            <div *ngFor="let r of renamePreview" class="text-xs py-1 border-b border-white/5 last:border-0" [style.color]="r.status === 'missing' ? '#f87171' : r.status === 'collision' ? '#fbbf24' : r.status === 'error' ? '#f87171' : r.status === 'renamed' ? '#4ade80' : r.changed ? '#4ade80' : 'rgba(255,255,255,0.4)'">
+              <span *ngIf="r.changed">{{ renameBasename(r.old_path) }} → {{ renameBasename(r.new_path) }}</span>
+              <span *ngIf="!r.changed">{{ renameBasename(r.old_path) }} (unchanged)</span>
+              <span *ngIf="r.status === 'collision'" class="ml-1">(collision)</span>
+              <span *ngIf="r.status === 'missing'" class="ml-1">(source missing)</span>
+              <span *ngIf="r.status === 'error' && r.error" class="ml-1">({{ r.error }})</span>
+            </div>
+            <button
+              *ngIf="!renameExecuted && renameChangedCount > 0"
+              type="button"
+              class="inline-flex items-center gap-1 h-7 px-2.5 rounded text-xs font-medium bg-green-600/20 text-green-400 border border-green-500/30 cursor-pointer hover:bg-green-600/30 mt-2"
+              (click)="executeRenameOnTransfer(); $event.stopPropagation()">
+              Apply {{ renameChangedCount }} rename(s)
+            </button>
+            <span *ngIf="renameExecuted && renameSummary.failed === 0" class="text-xs text-green-400 mt-2 block">✓ Renames applied</span>
+            <span *ngIf="renameExecuted && renameSummary.failed > 0" class="text-xs text-red-400 mt-2 block">⚠ Some renames failed — review the rows above</span>
+          </div>
+          <div *ngIf="renamePreview && renamePreview.length === 0" class="text-xs text-white/40 mt-1">No files to rename</div>
+        </div>
+
+        <div class="step-content">
+          <div class="transfer-loading muted text-xs" *ngIf="!state.context.jobStatus && ((orderedReleaseDiscs$ | async) ?? []).length === 0">
+            No transfer information available
+          </div>
+
+          <!-- Card 1: Boxset/Release Progress (same structure as postprocess) -->
+          <div class="bg-white/5 border border-white/10 rounded-lg shadow-lg backdrop-blur-md p-4 mb-4" *ngIf="state.context.lastReleaseDetails || state.context.movieCover || state.context.jobStatus || (state.context.releaseDiscs && state.context.releaseDiscs.length > 0)">
+            <p class="text-sm text-white/60 m-0 mb-3">Boxset/Release Progress</p>
+            <div class="postprocess-release-summary" *ngIf="state.context.movieCover || state.context.lastReleaseDetails">
+              <img
+                *ngIf="state.context.movieCover"
+                class="postprocess-release-cover"
+                [src]="state.context.movieCover"
+                [alt]="state.context.movieName || 'Release cover'"
+              />
+              <div class="postprocess-summary-fields">
+                <div class="postprocess-summary-row" *ngIf="getMovieName(state.context) as name">
+                  <span class="postprocess-summary-label">Movie / Show</span>
+                  <span class="postprocess-summary-value">{{ name }}</span>
+                </div>
+                <div class="postprocess-summary-row" *ngIf="getProductionYear(state.context) as year">
+                  <span class="postprocess-summary-label">Year</span>
+                  <span class="postprocess-summary-value">{{ year }}</span>
+                </div>
+                <div class="postprocess-summary-row" *ngIf="state.context.lastReleaseDetails?.name">
+                  <span class="postprocess-summary-label">Release</span>
+                  <span class="postprocess-summary-value">{{ state.context.lastReleaseDetails.name }}</span>
+                </div>
+                <div class="postprocess-summary-row" *ngIf="state.context.lastReleaseDetails?.slug">
+                  <span class="postprocess-summary-label">Slug</span>
+                  <span class="postprocess-summary-value">{{ state.context.lastReleaseDetails.slug }}</span>
+                </div>
+              </div>
+            </div>
+            <!-- Overall transfer progress (multi-job or single-job) -->
+            <ng-container *ngIf="getTransferStats(state.context) as transferStats">
+              <div class="mt-4 pt-4 border-t border-white/10" *ngIf="transferStats.total > 0">
+                <div class="postprocess-progress-header">
+                  <div>
+                    <p class="text-sm text-white/60 m-0">Overall transfer progress</p>
+                    <p class="postprocess-progress-count">
+                      {{ transferStats.completed }} / {{ transferStats.total }} {{ transferStats.total === 1 ? 'job' : 'jobs' }}
+                    </p>
+                  </div>
+                  <div class="postprocess-pct-wrap">
+                    <span class="text-2xl md:text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">{{ getTransferOverallPercent(state.context) }}%</span>
+                  </div>
+                </div>
+                <div class="w-full h-3 md:h-2.5 rounded-full bg-white/20 overflow-hidden mb-4">
+                  <div class="h-full rounded-full bg-gradient-to-r from-blue-500 to-violet-500 transition-all duration-300" [style.width.%]="getTransferOverallPercent(state.context)"></div>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div class="bg-white/5 rounded-lg p-4 md:py-2 md:px-3">
+                    <div class="text-xs text-white/60 mb-1">Completed</div>
+                    <div class="font-bold text-white text-base md:text-sm text-success">{{ transferStats.completed }}</div>
+                  </div>
+                  <div class="bg-white/5 rounded-lg p-4 md:py-2 md:px-3">
+                    <div class="text-xs text-white/60 mb-1">Running</div>
+                    <div class="font-bold text-white text-base md:text-sm text-info">{{ transferStats.running }}</div>
+                  </div>
+                  <div class="bg-white/5 rounded-lg p-4 md:py-2 md:px-3">
+                    <div class="text-xs text-white/60 mb-1">Pending</div>
+                    <div class="font-bold text-white text-base md:text-sm">{{ transferStats.pending }}</div>
+                  </div>
+                  <div class="bg-white/5 rounded-lg p-4 md:py-2 md:px-3" *ngIf="transferStats.failed > 0">
+                    <div class="text-xs text-white/60 mb-1">Failed</div>
+                    <div class="font-bold text-white text-base md:text-sm text-danger">{{ transferStats.failed }}</div>
+                  </div>
+                </div>
+                <!-- Single-job live metrics when running -->
+                <ng-container *ngIf="state.context.jobStatus">
+                  <div class="flex flex-wrap gap-3 sm:gap-4 mt-2 text-xs text-white/70" *ngIf="state.context.jobStatus.transfer_state === 'running'">
+                    <span *ngIf="state.context.jobStatus.transfer_bytes_transferred != null && state.context.jobStatus.transfer_total_bytes != null">
+                      {{ formatBytes(state.context.jobStatus.transfer_bytes_transferred) }} / {{ formatBytes(state.context.jobStatus.transfer_total_bytes) }}
+                    </span>
+                    <span *ngIf="state.context.jobStatus.transfer_speed_mbps != null && state.context.jobStatus.transfer_speed_mbps > 0">
+                      {{ formatSpeed(state.context.jobStatus.transfer_speed_mbps) }}
+                    </span>
+                    <span *ngIf="state.context.jobStatus.transfer_speed_mbps != null && state.context.jobStatus.transfer_speed_mbps > 0 && state.context.jobStatus.transfer_bytes_transferred != null && state.context.jobStatus.transfer_total_bytes != null">
+                      ETA: {{ estimateTransferEta(state.context.jobStatus.transfer_bytes_transferred, state.context.jobStatus.transfer_total_bytes, state.context.jobStatus.transfer_speed_mbps) }}
+                    </span>
+                  </div>
+                </ng-container>
+              </div>
+            </ng-container>
+          </div>
+
+          <!-- Card 2: Transfer Jobs (template: TransferStep.tsx DiscItem) -->
+          <ng-container *ngIf="((orderedReleaseDiscs$ | async) ?? []).length > 0">
+            <div class="bg-white/5 border border-white/10 rounded-lg shadow-lg backdrop-blur-md mb-4">
+              <div class="p-4 border-b border-white/10 font-semibold text-sm md:text-xs text-white/90">Transfer Jobs</div>
+              <div class="postprocess-disc-list">
+                <ng-container *ngFor="let disc of (orderedReleaseDiscs$ | async) ?? []; trackBy: trackByDiscId">
+                  <div class="border-b border-white/10 last:border-b-0">
+                    <button
+                      type="button"
+                      class="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-none bg-transparent cursor-pointer"
+                      [ngClass]="{
+                        'bg-gradient-to-r from-blue-500/10 to-purple-500/10': isCurrentReleaseDisc(disc, state.context) && getReleaseDiscTransferState(disc) === 'running',
+                        'hover:bg-white/5': !(isCurrentReleaseDisc(disc, state.context) && getReleaseDiscTransferState(disc) === 'running')
+                      }"
+                      (click)="toggleTransferDisc(disc.disc_id, canExpandTransferDisc(disc) || isCurrentReleaseDisc(disc, state.context))">
+                      <span class="w-4 h-4 flex-shrink-0 flex items-center justify-center" aria-hidden="true">
+                        <span *ngIf="getReleaseDiscTransferState(disc) === 'completed'" class="text-green-500">✓</span>
+                        <span *ngIf="getReleaseDiscTransferState(disc) === 'running'" class="spinner mini text-blue-500"></span>
+                        <span *ngIf="getReleaseDiscTransferState(disc) === 'pending'" class="text-white/40">○</span>
+                        <span *ngIf="getReleaseDiscTransferState(disc) === 'failed'" class="text-red-500 font-bold">!</span>
+                      </span>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                          <span class="font-semibold text-white text-sm">Disc {{ disc.disc_number }}: {{ disc.disc_name || 'Untitled Disc' }}</span>
+                          <span *ngIf="getTransferRetryCount(disc, state.context) > 0" class="text-xs px-2 py-0.5 bg-yellow-500/20 text-yellow-300 rounded-full">Retry {{ getTransferRetryCount(disc, state.context) }}/{{ getTransferMaxRetries(disc, state.context) ?? 3 }}</span>
+                        </div>
+                        <ng-container *ngIf="isCurrentReleaseDisc(disc, state.context) && state.context.jobStatus as jobStatus">
+                          <ng-container *ngIf="jobStatus.transfer_state === 'running'">
+                            <div class="mt-2">
+                              <div class="flex justify-between text-xs mb-1">
+                                <span class="text-white/70">
+                                  <ng-container *ngIf="(jobStatus.transfer_progress ?? 0) < 50">Transferring files...</ng-container>
+                                  <ng-container *ngIf="(jobStatus.transfer_progress ?? 0) >= 50 && (jobStatus.transfer_progress ?? 0) < 100">Verifying integrity...</ng-container>
+                                  <ng-container *ngIf="(jobStatus.transfer_progress ?? 0) >= 100">Finalizing...</ng-container>
+                                </span>
+                                <span class="text-white/60">{{ jobStatus.transfer_progress }}%</span>
+                              </div>
+                              <div class="w-full bg-white/20 rounded-full h-1.5 overflow-hidden">
+                                <div class="bg-gradient-to-r from-blue-500 to-purple-500 h-1.5 rounded-full transition-all duration-300" [style.width.%]="jobStatus.transfer_progress"></div>
+                              </div>
+                              <div class="flex gap-4 mt-2 text-xs text-white/70 flex-wrap">
+                                <span *ngIf="jobStatus.transfer_bytes_transferred != null && jobStatus.transfer_total_bytes != null">{{ formatBytes(jobStatus.transfer_bytes_transferred) }} / {{ formatBytes(jobStatus.transfer_total_bytes) }}</span>
+                                <span *ngIf="jobStatus.transfer_speed_mbps != null && jobStatus.transfer_speed_mbps > 0" class="font-medium">{{ formatSpeed(jobStatus.transfer_speed_mbps) }}</span>
+                                <span *ngIf="jobStatus.transfer_speed_mbps != null && jobStatus.transfer_speed_mbps > 0 && jobStatus.transfer_bytes_transferred != null && jobStatus.transfer_total_bytes != null" class="text-white/50">ETA: {{ estimateTransferEta(jobStatus.transfer_bytes_transferred, jobStatus.transfer_total_bytes, jobStatus.transfer_speed_mbps) }}</span>
+                              </div>
+                            </div>
+                          </ng-container>
+                          <ng-container *ngIf="jobStatus.transfer_state === 'completed'">
+                            <div class="mt-1 flex gap-3 text-xs text-white/70">
+                              <span *ngIf="jobStatus.transfer_total_bytes != null">{{ formatBytes(jobStatus.transfer_total_bytes) }}</span>
+                              <span *ngIf="jobStatus.transfer_verification_status" class="capitalize">{{ jobStatus.transfer_verification_status }}</span>
+                            </div>
+                          </ng-container>
+                        </ng-container>
+                      </div>
+                      <span class="text-white/40 flex-shrink-0 w-4 h-4 transition-transform duration-200" [class.rotate-180]="isTransferDiscRowExpanded(state.context, disc)" aria-hidden="true">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                      </span>
+                    </button>
+                  <!-- Expanded: current job detail (template: TransferStep.tsx DiscItem expanded) -->
+                  <div class="px-4 py-3 bg-white/5 border-t border-white/10" *ngIf="isCurrentReleaseDisc(disc, state.context) && isTransferDiscRowExpanded(state.context, disc) && state.context.jobStatus as jobStatus">
+                    <div class="space-y-3">
+                      <div class="transfer-progress-header flex justify-between items-start">
+                        <div>
+                          <p class="text-sm text-white/70 m-0">
+                            <ng-container *ngIf="jobStatus.transfer_state === 'running'">
+                              <ng-container *ngIf="(jobStatus.transfer_progress ?? 0) < 50">Transferring files...</ng-container>
+                              <ng-container *ngIf="(jobStatus.transfer_progress ?? 0) >= 50 && (jobStatus.transfer_progress ?? 0) < 100">Verifying integrity...</ng-container>
+                              <ng-container *ngIf="(jobStatus.transfer_progress ?? 0) >= 100">Finalizing...</ng-container>
+                            </ng-container>
+                            <ng-container *ngIf="jobStatus.transfer_state !== 'running'">Transfer to destination</ng-container>
+                          </p>
+                          <p class="transfer-progress-count text-white/60 m-0">{{ jobStatus.transfer_progress }}%</p>
+                        </div>
+                        <span class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">{{ jobStatus.transfer_progress }}%</span>
+                      </div>
+                      <div class="w-full bg-white/20 rounded-full h-1.5 overflow-hidden">
+                        <div class="bg-gradient-to-r from-blue-500 to-purple-500 h-1.5 rounded-full transition-all duration-300" [style.width.%]="jobStatus.transfer_progress"></div>
+                      </div>
+                      <!-- Transfer Details (TransferStep.tsx) -->
+                      <div>
+                        <div class="text-xs font-medium text-white/80 mb-2 uppercase tracking-wide">Transfer Details:</div>
+                        <div class="bg-black/20 rounded-lg p-3 space-y-1.5 text-xs">
+                          <div class="flex justify-between" *ngIf="jobStatus.transfer_verification_status">
+                            <span class="text-white/60">Verification:</span>
+                            <span class="font-medium capitalize" [ngClass]="{'text-green-400': jobStatus.transfer_verification_status === 'verified', 'text-red-400': jobStatus.transfer_verification_status === 'failed', 'text-white/70': jobStatus.transfer_verification_status === 'pending'}">{{ jobStatus.transfer_verification_status }}</span>
+                          </div>
+                          <div class="flex justify-between" *ngIf="jobStatus.transfer_validation_status">
+                            <span class="text-white/60">Validation:</span>
+                            <span class="font-medium capitalize" [ngClass]="{'text-green-400': jobStatus.transfer_validation_status === 'passed', 'text-red-400': jobStatus.transfer_validation_status === 'failed', 'text-white/70': jobStatus.transfer_validation_status === 'pending'}">{{ jobStatus.transfer_validation_status }}</span>
+                          </div>
+                          <div class="flex justify-between" *ngIf="jobStatus.transfer_conflict_resolution">
+                            <span class="text-white/60">Conflict Resolution:</span>
+                            <span class="font-medium text-white capitalize">{{ jobStatus.transfer_conflict_resolution }}</span>
+                          </div>
+                          <div class="flex justify-between" *ngIf="jobStatus.transfer_source_cleaned != null">
+                            <span class="text-white/60">Source Cleaned:</span>
+                            <span class="font-medium text-white">{{ jobStatus.transfer_source_cleaned ? 'Yes' : 'No' }}</span>
+                          </div>
+                          <div class="flex justify-between" *ngIf="jobStatus.transfer_deduplicated != null">
+                            <span class="text-white/60">Deduplicated:</span>
+                            <span class="font-medium text-white">{{ jobStatus.transfer_deduplicated ? 'Yes' : 'No' }}</span>
+                          </div>
+                          <div class="flex justify-between" *ngIf="state.context.transferDestination">
+                            <span class="text-white/60">Destination</span>
+                            <span class="font-medium text-white break-all">{{ state.context.transferDestination.path || state.context.transferDestination.name }}</span>
+                          </div>
+                          <div class="flex justify-between" *ngIf="jobStatus.transfer_bytes_transferred != null && jobStatus.transfer_total_bytes != null">
+                            <span class="text-white/60">Transferred</span>
+                            <span class="font-medium text-white">{{ formatBytes(jobStatus.transfer_bytes_transferred) }} / {{ formatBytes(jobStatus.transfer_total_bytes) }}</span>
+                          </div>
+                          <div class="flex justify-between" *ngIf="jobStatus.transfer_speed_mbps != null">
+                            <span class="text-white/60">Speed</span>
+                            <span class="font-medium text-white">{{ formatSpeed(jobStatus.transfer_speed_mbps) }}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <!-- Destination Files (TransferStep.tsx) -->
+                      <div *ngIf="(jobStatus.transfer_paths ?? []).length">
+                        <div class="text-xs font-medium text-white/80 mb-2 uppercase tracking-wide">Destination Files ({{ (jobStatus.transfer_paths ?? []).length }}):</div>
+                        <div class="bg-black/20 rounded-lg p-3 font-mono text-xs max-h-64 overflow-y-auto space-y-1">
+                          <div *ngFor="let path of (jobStatus.transfer_paths ?? [])" class="text-white/80 break-all">{{ path }}</div>
+                        </div>
+                      </div>
+                      <!-- Error (TransferStep.tsx) -->
+                      <div *ngIf="jobStatus.transfer_error">
+                        <div class="text-xs font-medium text-red-400 mb-2 uppercase tracking-wide">Error:</div>
+                        <div class="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-300">{{ jobStatus.transfer_error }}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Expanded: other job (simple) -->
+                  <div class="px-4 py-3 bg-white/5 border-t border-white/10 text-sm text-white/80" *ngIf="!isCurrentReleaseDisc(disc, state.context) && isTransferDiscRowExpanded(state.context, disc)">
+                    <span class="capitalize">{{ getReleaseDiscTransferState(disc) }}</span>
+                  </div>
+                  </div>
+                </ng-container>
+              </div>
+            </div>
+          </ng-container>
+
+          <!-- Card 2 fallback: single-job only (no releaseDiscs list) -->
+          <div class="bg-white/5 border border-white/10 rounded-lg shadow-lg backdrop-blur-md p-4" *ngIf="((orderedReleaseDiscs$ | async) ?? []).length === 0 && state.context.jobStatus">
+            <div class="p-4 border-b border-white/10 font-semibold text-sm md:text-xs text-white/90 mb-4">Transfer Jobs</div>
+            <h4 class="text-lg md:text-base font-semibold text-white mb-2 m-0">Transferring to library</h4>
+            <p class="text-sm text-white/60 m-0 mb-4">Moving processed files to final destination</p>
+            <div class="transfer-details-wt flex flex-col gap-2">
+              <div class="flex justify-between gap-4 py-1 transfer-dest-wt" *ngIf="state.context.transferDestination">
+                <span class="text-xs text-white/60 mb-1 flex-shrink-0">Destination</span>
+                <span>{{ state.context.transferDestination.path || state.context.transferDestination.name }}</span>
+              </div>
+              <div class="flex justify-between gap-4 py-1 transfer-dest-wt" *ngIf="state.context.jobStatus.transfer_state">
+                <span class="text-xs text-white/60 mb-1 flex-shrink-0">Status</span>
+                <span>{{ state.context.jobStatus.transfer_state }}</span>
+              </div>
+              <div class="flex justify-between gap-4 py-1 transfer-dest-wt" *ngIf="state.context.jobStatus.transfer_bytes_transferred != null && state.context.jobStatus.transfer_total_bytes != null">
+                <span class="text-xs text-white/60 mb-1 flex-shrink-0">Transferred</span>
+                <span>{{ formatBytes(state.context.jobStatus.transfer_bytes_transferred) }} / {{ formatBytes(state.context.jobStatus.transfer_total_bytes) }}</span>
+              </div>
+              <div class="flex justify-between gap-4 py-1 transfer-dest-wt" *ngIf="state.context.jobStatus.transfer_speed_mbps != null">
+                <span class="text-xs text-white/60 mb-1 flex-shrink-0">Speed</span>
+                <span>{{ formatSpeed(state.context.jobStatus.transfer_speed_mbps) }}</span>
+              </div>
+              <div class="flex justify-between gap-4 py-1 transfer-dest-wt" *ngIf="state.context.jobStatus.transfer_verification_status">
+                <span class="text-xs text-white/60 mb-1 flex-shrink-0">Verification</span>
+                <span class="capitalize">{{ state.context.jobStatus.transfer_verification_status }}</span>
+              </div>
+              <div class="flex justify-between gap-4 py-1 transfer-dest-wt" *ngIf="state.context.jobStatus.transfer_retry_count != null && state.context.jobStatus.transfer_retry_count > 0">
+                <span class="text-xs text-white/60 mb-1 flex-shrink-0">Retry</span>
+                <span>{{ state.context.jobStatus.transfer_retry_count }}{{ state.context.jobStatus.transfer_max_retries != null ? '/' + state.context.jobStatus.transfer_max_retries : '' }}</span>
+              </div>
+            </div>
+            <div class="mt-3" *ngIf="(state.context.jobStatus.transfer_paths ?? []).length">
+              <p class="text-xs text-white/60 mb-1">Destination files ({{ (state.context.jobStatus.transfer_paths ?? []).length }})</p>
+              <div class="glass-card-light rounded-lg p-2 sm:p-3 font-mono text-xs overflow-x-auto space-y-1 max-h-40 overflow-y-auto">
+                <div *ngFor="let path of (state.context.jobStatus.transfer_paths ?? [])" class="text-white/80 break-all">{{ path }}</div>
+              </div>
+            </div>
+            <div class="mt-3" *ngIf="state.context.jobStatus.transfer_error">
+              <p class="text-xs text-red-400 mb-1">Error</p>
+              <div class="rounded-lg p-2 sm:p-3 text-xs text-red-300 bg-red-500/10 border border-red-500/20">{{ state.context.jobStatus.transfer_error }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</ng-container>
+
+<!-- Boxset Creation Modal - Mobile only, compact and centered -->
+<div class="modal-backdrop" *ngIf="showBoxsetCreateModal && isMobile">
+  <div class="modal boxset-create-modal">
+    <div class="modal-head">
+      <h3>Create New Boxset</h3>
+      <button class="icon-btn" (click)="closeBoxsetCreateModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Name <span class="required">*</span></label>
+        <input type="text" [(ngModel)]="newBoxset.name" placeholder="Boxset name">
+      </div>
+      <div class="field">
+        <label>Release Year <span class="required">*</span></label>
+        <input type="number" [(ngModel)]="newBoxset.year" placeholder="2020">
+      </div>
+      <div class="field">
+        <label>UPC</label>
+        <input type="text" [(ngModel)]="newBoxset.upc" placeholder="UPC">
+      </div>
+      <div class="field">
+        <label>ASIN</label>
+        <input type="text" [(ngModel)]="newBoxset.asin" placeholder="ASIN">
+      </div>
+      <div class="field">
+        <label>Front Cover URL</label>
+        <input type="text" [(ngModel)]="newBoxset.cover_front_url" placeholder="https://...">
+      </div>
+      <div class="field">
+        <label>Back Cover URL</label>
+        <input type="text" [(ngModel)]="newBoxset.cover_back_url" placeholder="https://...">
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button class="secondary" (click)="closeBoxsetCreateModal()">Cancel</button>
+        <button class="primary" (click)="createBoxset()" [disabled]="!newBoxset.name || !newBoxset.year">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Release Creation Modal - Mobile only, compact and centered -->
+<div class="modal-backdrop" *ngIf="showReleaseCreateModal && isMobile">
+  <div class="modal release-create-modal">
+    <div class="modal-head">
+      <h3>Create New Release</h3>
+      <button class="icon-btn" (click)="closeReleaseCreateModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field" [class.invalid]="isReleaseFieldInvalid('name')">
+        <label>Name</label>
+        <input type="text" [(ngModel)]="newRelease.name" placeholder="Release name" (blur)="validateReleaseField('name')" (input)="validateReleaseField('name')">
+      </div>
+      <div class="field" [class.invalid]="isReleaseFieldInvalid('release_year')">
+        <label>Release Year</label>
+        <input type="number" [(ngModel)]="newRelease.release_year" placeholder="2020" (blur)="validateReleaseField('release_year')" (input)="validateReleaseField('release_year')">
+      </div>
+      <div class="field" [class.invalid]="isReleaseFieldInvalid('upc')">
+        <label>UPC</label>
+        <input type="text" [(ngModel)]="newRelease.upc" placeholder="UPC" (blur)="validateReleaseField('upc')" (input)="validateReleaseField('upc')">
+      </div>
+      <div class="field">
+        <label>ASIN</label>
+        <input type="text" [(ngModel)]="newRelease.asin" placeholder="ASIN">
+      </div>
+      <div class="field" [class.invalid]="isReleaseFieldInvalid('cover_front_url')">
+        <label>Front Cover URL</label>
+        <input type="text" [(ngModel)]="newRelease.cover_front_url" placeholder="https://..." (blur)="validateReleaseField('cover_front_url')" (input)="validateReleaseField('cover_front_url')">
+      </div>
+      <div class="field">
+        <label>Back Cover URL</label>
+        <input type="text" [(ngModel)]="newRelease.cover_back_url" placeholder="https://...">
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button class="secondary" (click)="closeReleaseCreateModal()">Cancel</button>
+        <button class="primary" (click)="createRelease()" [disabled]="!isReleaseFormValid()">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<ng-template #loading>
+  <div class="loading-container">
+    <div class="spinner"></div>
+    <p>Loading workflow...</p>
+  </div>
+</ng-template>

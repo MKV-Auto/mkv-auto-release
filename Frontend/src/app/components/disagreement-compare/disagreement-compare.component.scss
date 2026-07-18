@@ -1,0 +1,123 @@
+// DisagreementCompare — re-skinned against the design system primitives.
+// Outer ui-card supplies the glass shell and border; per-candidate ui-cards
+// supply the inner tile styling. This file only carries layout + typography
+// that the primitives don't already provide.
+
+.dc {
+  padding: 16px;
+}
+
+.dc__header {
+  margin-bottom: 14px;
+
+  h3 {
+    margin: 6px 0 4px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  p {
+    margin: 0;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.6);
+    max-width: 720px;
+    line-height: 1.5;
+  }
+}
+
+.dc__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.dc__card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dc__id {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.02em;
+  font-family: var(--ui-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, monospace);
+}
+
+.dc__meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  row-gap: 6px;
+  font-size: 13px;
+
+  div {
+    display: contents;
+  }
+
+  dt {
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  dd {
+    color: #fff;
+    margin: 0;
+    text-align: right;
+  }
+}
+
+.dc__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.dc__suggest {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.10), rgba(34, 211, 238, 0.04));
+  border: 1px solid rgba(99, 102, 241, 0.30);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dc__suggest-icon {
+  color: #a5b4fc;
+  display: inline-flex;
+}
+
+.dc__suggest-text {
+  flex: 1;
+  min-width: 240px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.dc__decoys {
+  all: unset;
+  cursor: pointer;
+  margin-top: 16px;
+  padding: 10px 14px;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.85);
+  }
+}

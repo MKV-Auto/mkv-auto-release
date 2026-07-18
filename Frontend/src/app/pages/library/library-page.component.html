@@ -1,0 +1,109 @@
+<!--
+  Library page (Phase 2 skeleton — #500).
+  Sticky header (title + search + tabs) + flat card list.
+  Cards are placeholders; Phase 3 ports the ui-lab design and adds
+  inline-edit, overflow menus, and disc disclosure.
+-->
+<div class="library-page">
+  <header class="library-header">
+    <div class="library-header__title-row">
+      <h1 class="library-header__title">Library</h1>
+      <p class="library-header__subtitle">Browse your collection of completed rips</p>
+    </div>
+
+    <input
+      type="search"
+      class="library-search"
+      placeholder="Search releases and boxsets…"
+      [ngModel]="searchTerm"
+      (ngModelChange)="onSearchInput($event)"
+      aria-label="Search library" />
+
+    <nav class="library-tabs" aria-label="Library content type">
+      <button
+        type="button"
+        class="library-tab"
+        [class.is-active]="activeTab === 'all'"
+        (click)="selectTab('all')">
+        All ({{ tabCounts.all }})
+      </button>
+      <button
+        type="button"
+        class="library-tab"
+        [class.is-active]="activeTab === 'movies'"
+        (click)="selectTab('movies')">
+        Movies ({{ tabCounts.movies }})
+      </button>
+      <button
+        type="button"
+        class="library-tab"
+        [class.is-active]="activeTab === 'series'"
+        (click)="selectTab('series')">
+        Series ({{ tabCounts.series }})
+      </button>
+      <button
+        type="button"
+        class="library-tab"
+        [class.is-active]="activeTab === 'boxsets'"
+        (click)="selectTab('boxsets')">
+        Boxsets ({{ tabCounts.boxsets }})
+      </button>
+    </nav>
+  </header>
+
+  <section class="library-content">
+    <!-- Loading / error / empty states. -->
+    <div *ngIf="loading && releases.length === 0 && boxsets.length === 0"
+         class="library-status">Loading library…</div>
+    <div *ngIf="error" class="library-status library-status--error">{{ error }}</div>
+    <div *ngIf="!loading && !error && visibleReleases.length === 0 && visibleBoxsets.length === 0"
+         class="library-status">
+      <strong>Nothing here yet.</strong>
+      <p>Completed rips show up in the Library after the transfer step lands. Discs in-flight live on the Ripper carousel.</p>
+    </div>
+
+    <!-- Phase 3: cards now use library-boxset-card + library-release-card,
+         each supporting view / edit / expanded states. -->
+    <div class="library-card-list" *ngIf="visibleBoxsets.length > 0 || visibleReleases.length > 0">
+      <app-library-boxset-card
+        *ngFor="let bs of visibleBoxsets; trackBy: trackByBoxsetId"
+        [boxset]="bs"
+        [releases]="getReleasesForBoxset(bs.id)"
+        [releaseDiscs]="releaseDiscs"
+        (updated)="onBoxsetUpdated($event)"
+        (deleted)="onBoxsetDeleted($event)"
+        (releaseUpdated)="onReleaseUpdated($event)"
+        (releaseDeleted)="onReleaseDeleted($event)"
+        (discOpen)="onDiscOpen($event)">
+      </app-library-boxset-card>
+
+      <app-library-release-card
+        *ngFor="let rel of visibleReleases; trackBy: trackByReleaseId"
+        [release]="rel"
+        [discs]="getReleaseDiscs(rel)"
+        (updated)="onReleaseUpdated($event)"
+        (deleted)="onReleaseDeleted($event)"
+        (discOpen)="onDiscOpen($event)">
+      </app-library-release-card>
+    </div>
+
+    <div *ngIf="hasMore && !loading && releases.length > 0" class="library-load-more">
+      <button type="button" class="library-load-more__btn" (click)="loadMore()">
+        Load more
+      </button>
+    </div>
+    <div *ngIf="loading && releases.length > 0" class="library-status">Loading more…</div>
+  </section>
+</div>
+
+<!-- Phase 4: disc drawer overlay. Hosted at page root so it floats above
+     the card list (above boxset / release cards). Mounted only when
+     drawerDisc is non-null; the component's [disc] input drives load. -->
+<app-library-disc-drawer
+  *ngIf="drawerDisc"
+  [disc]="drawerDisc"
+  [release]="drawerRelease"
+  [releaseDisplayName]="drawerRelease ? getReleaseDisplayName(drawerRelease) : null"
+  (closed)="closeDrawer()"
+  (discUpdated)="onDrawerDiscUpdated($event)">
+</app-library-disc-drawer>

@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>MKV-Auto</Name>
+  <Repository>ghcr.io/mkv-auto/mkv-auto-release</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <Privileged>true</Privileged>
+  <Support>https://github.com/MKV-Auto/mkv-auto-release</Support>
+  <Project>https://github.com/MKV-Auto/mkv-auto-release</Project>
+  <Overview>
+    Automatic Blu-ray/DVD ripper with web interface. 
+    
+    Features:
+    - Automatic disc detection and ripping
+    - Web-based interface
+    - MakeMKV integration
+    - Metadata lookup via DiscDB
+    - Post-processing and file organization
+    - Transfer to network shares (SMB/NFS)
+    
+    Requires optical drive(s) connected to your server.
+  </Overview>
+  <Category>MediaApp:Video Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/MKV-Auto/mkv-auto-release/main/Unraid/mkv-auto.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/MKV-Auto/mkv-auto-release/main/Frontend/public/favicon.png</Icon>
+  <ExtraParams>--device=/dev/sr0:/dev/sr0</ExtraParams>
+  <PostArgs>
+    # Disable CD-ROM autoclose on host to prevent auto-reinsertion
+    echo 0 &gt; /proc/sys/dev/cdrom/autoclose 2&gt;/dev/null || true
+    
+    # Make permanent for Unraid
+    if [ ! -f /boot/config/modprobe.d/cdrom.conf ]; then
+      mkdir -p /boot/config/modprobe.d
+      echo "options sr_mod autoclose=0" &gt; /boot/config/modprobe.d/cdrom.conf
+    fi
+  </PostArgs>
+  <Config Name="WebUI Port" Target="80" Default="8080" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Data Volume" Target="/data" Default="/mnt/user/appdata/mkv-auto" Mode="rw" Description="Application data directory" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/mkv-auto</Config>
+  <Config Name="Output Directory" Target="/output" Default="/mnt/user/media/rips" Mode="rw" Description="Ripped files output directory" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/media/rips</Config>
+  <Config Name="Optical Drive" Target="/dev/sr0" Default="/dev/sr0" Mode="" Description="First optical drive (add more as needed)" Type="Device" Display="always" Required="true" Mask="false">/dev/sr0</Config>
+  <Config Name="Timezone" Target="TZ" Default="UTC" Mode="" Description="Container timezone" Type="Variable" Display="advanced" Required="false" Mask="false">UTC</Config>
+  <Config Name="Log Level" Target="MKVAUTO_DEBUG_LEVEL" Default="INFO" Mode="" Description="Logging level (DEBUG, INFO, WARNING, ERROR)" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+</Container>

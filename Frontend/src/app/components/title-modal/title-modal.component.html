@@ -1,0 +1,167 @@
+<div class="title-modal-backdrop" (click)="onClose()">
+  <div class="title-modal-content" (click)="$event.stopPropagation()">
+    <div class="title-modal-header">
+      <h3>{{ title?.title_name || title?.title || (title ? 'Edit Title' : '') }}</h3>
+      <button class="close-button" (click)="onClose()" aria-label="Close">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <div class="title-modal-body">
+      <!-- Status pill (template-aligned) -->
+      <div class="title-modal-status" *ngIf="title">
+        <ng-container [ngSwitch]="titleStatusFn(title.title_id)">
+          <div class="status-pill status-pill-complete" *ngSwitchCase="'completed'">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l3 3 7-7"></path></svg>
+            <span>Complete</span>
+          </div>
+          <div class="status-pill status-pill-running" *ngSwitchCase="'running'">
+            <span class="spinner mini"></span>
+            <span>{{ titleProgressValueFn(title.title_id) || 0 }}%</span>
+          </div>
+          <div class="status-pill status-pill-failed" *ngSwitchCase="'failed'">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+            <span>Failed</span>
+          </div>
+          <div class="status-pill status-pill-pending" *ngSwitchDefault>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <span>Pending</span>
+          </div>
+        </ng-container>
+      </div>
+
+      <!-- Preview first (template order) -->
+      <div class="preview-section">
+        <label class="form-label">Preview</label>
+        <div class="preview-controls">
+          <ng-container *ngIf="previewStateFn(title) as state">
+            <ng-container [ngSwitch]="state.status">
+              <div class="preview-status" *ngSwitchCase="'queued'">
+                <span class="spinner mini"></span>
+                <span>Queued for generation</span>
+              </div>
+              <div class="preview-status" *ngSwitchCase="'running'">
+                <span class="spinner mini"></span>
+                <span>Generating preview...</span>
+              </div>
+              <div class="preview-status" *ngSwitchCase="'failed'">
+                <span>Preview failed</span>
+              </div>
+              <button type="button" class="preview-button play" *ngSwitchCase="'completed'" (click)="openPreview()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                Play Preview
+              </button>
+              <div class="preview-status" *ngSwitchDefault>No preview available</div>
+            </ng-container>
+          </ng-container>
+          <ng-container *ngIf="!previewStateFn(title)">
+            <button type="button" class="preview-button play" *ngIf="previewUrlFn(title)" (click)="openPreview()">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              Play Preview
+            </button>
+            <div class="preview-status" *ngIf="!previewUrlFn(title)">No preview available</div>
+          </ng-container>
+        </div>
+      </div>
+
+      <!-- Title Name -->
+      <div class="form-group">
+        <label class="form-label">{{ isSeries ? 'Episode Title' : 'Title Name' }}</label>
+        <input type="text" class="form-input" [(ngModel)]="title.title" [placeholder]="isSeries ? 'Episode title' : 'Enter title name...'" (ngModelChange)="onTitleNameChange($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()">
+      </div>
+
+      <!-- Type -->
+      <div class="form-group">
+        <label class="form-label">Type</label>
+        <select class="form-input form-select" [(ngModel)]="title.type" (ngModelChange)="onTypeChange($event)" (blur)="titleBlur.emit()">
+          <option *ngFor="let opt of titleTypeOptions" [value]="opt.value" [disabled]="opt.value === ''">{{ opt.label }}</option>
+        </select>
+        <button type="button" class="ignore-toggle" (click)="markAsIgnore()" [class.ignored]="(title?.type || '').toLowerCase() === 'ignore'">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="7"></circle><path d="M5.5 5.5l5 5m0-5l-5 5"></path></svg>
+          {{ (title?.type || '').toLowerCase() === 'ignore' ? 'Ignored' : 'Ignore' }}
+        </button>
+      </div>
+
+      <!-- Edition (non-series) -->
+      <div class="form-group" *ngIf="!isSeries && !isIgnored()">
+        <label class="form-label">Edition (Optional)</label>
+        <input type="text" class="form-input" [(ngModel)]="title.edition" placeholder="e.g., Extended, Director's Cut..." (ngModelChange)="onEditionChange($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()">
+      </div>
+
+      <!-- Season/Episode (Series only) -->
+      <div class="form-row" *ngIf="isSeries && !isIgnored()">
+        <div class="form-group">
+          <label class="form-label">Season</label>
+          <input type="number" class="form-input" [(ngModel)]="title.season" placeholder="Season #" min="1" (ngModelChange)="onSeasonChange($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Episode</label>
+          <input type="number" class="form-input" [(ngModel)]="title.episode" placeholder="Episode #" min="1" (ngModelChange)="onEpisodeChange($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()">
+        </div>
+      </div>
+
+      <!-- Description -->
+      <div class="form-group" *ngIf="!isIgnored()">
+        <label class="form-label">Description (Optional)</label>
+        <textarea class="form-input form-textarea" [(ngModel)]="title.description" [placeholder]="title?.note || 'Add description...'" rows="3" (ngModelChange)="updateDescription($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()"></textarea>
+      </div>
+
+      <!-- Metadata -->
+      <div class="metadata-section" *ngIf="title">
+        <div class="metadata-inline">
+          <ng-container *ngIf="title?.metadata_summary && getMetadataSummaryLines(title).length">
+            <span class="metadata-info" [attr.title]="getMetadataSummaryLines(title).join('\n')" aria-label="Metadata summary">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" class="icon-info"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/></svg>
+            </span>
+          </ng-container>
+          <span class="metadata-text">
+            <ng-container *ngIf="title?.duration">{{ formatDuration(title.duration) }}</ng-container>
+            <ng-container *ngIf="title?.size"> · {{ formatSize(title.size) }}</ng-container>
+            <ng-container *ngIf="getChapterCount() as chapterCount"> · {{ chapterCount }} chapters</ng-container>
+            <ng-container *ngIf="devMode && (title?.source_file || title?.track_id || title?.title_id)"> · {{ title.source_file || title.track_id || title.title_id }}</ng-container>
+          </span>
+        </div>
+      </div>
+
+      <!-- Saving Indicator -->
+      <div class="saving-indicator" *ngIf="showSpinner || lastAutosaveOk">
+        <ng-container *ngIf="showSpinner; else saved">
+          <span class="spinner mini"></span>
+          <span>Saving...</span>
+        </ng-container>
+        <ng-template #saved>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-success"><path d="M3 9l3 3 7-7"></path></svg>
+          <span>Saved</span>
+        </ng-template>
+      </div>
+    </div>
+
+    <div class="title-modal-footer">
+      <button type="button" class="btn-primary" (click)="onClose()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Preview Modal -->
+<div class="preview-modal-backdrop" *ngIf="previewUrl" (click)="closePreview()">
+  <div class="preview-modal" (click)="$event.stopPropagation()">
+    <div class="modal-head">
+      <h4 class="m-0">Title preview {{ previewTitle?.title_id || '' }}</h4>
+      <button class="icon-btn" (click)="closePreview()">✕</button>
+    </div>
+    <app-preview-viewer [src]="previewUrl"></app-preview-viewer>
+    <div class="modal-foot">
+      <div class="muted text-xs">
+        {{ previewTitle?.title || previewTitle?.note || previewTitle?.output_file || '' }}
+      </div>
+      <button class="primary ghost" (click)="closePreview()">Close</button>
+    </div>
+    <div class="muted text-xs path-row" *ngIf="titlePathFn(previewTitle) || previewTitle?.output_file">
+      Path: {{ titlePathFn(previewTitle) || previewTitle?.output_file }}
+    </div>
+  </div>
+</div>
+

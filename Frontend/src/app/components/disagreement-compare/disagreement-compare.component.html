@@ -1,0 +1,68 @@
+<ui-card>
+  <section class="dc" role="region" aria-label="Main feature heuristic disagreement">
+    <header class="dc__header">
+      <ui-pill tone="amber">Heuristic mismatch</ui-pill>
+      <h3>Main feature — sources disagree</h3>
+      <p>
+        These two playlists share segments and runtime. One is the real movie;
+        the other plays scenes out of order. Pick which to keep, or run Path A
+        to find the canonical deterministically.
+      </p>
+    </header>
+
+    <div class="dc__cards">
+      <ui-card *ngIf="discdbCandidate">
+        <article class="dc__card">
+          <ui-pill tone="blue">TheDiscDB pick</ui-pill>
+          <div class="dc__id">
+            {{ discdbCandidate.source_file || ('title-' + discdbCandidate.index) }}
+          </div>
+          <dl class="dc__meta">
+            <div><dt>Duration</dt><dd>{{ formatDuration(discdbCandidate.duration_raw || discdbCandidate.duration) }}</dd></div>
+            <div><dt>Size</dt><dd>{{ formatSize(discdbCandidate.size) }}</dd></div>
+            <div><dt>Type</dt><dd>{{ discdbCandidate.type || '—' }}</dd></div>
+          </dl>
+          <p class="dc__note">Sourced from community-curated TheDiscDB.</p>
+          <ui-btn variant="primary" [fullWidth]="true" (click)="onPickDiscdb()">Pick this one</ui-btn>
+        </article>
+      </ui-card>
+
+      <ui-card *ngIf="makemkvCandidate">
+        <article class="dc__card">
+          <ui-pill tone="cyan">MakeMKV pick</ui-pill>
+          <div class="dc__id">
+            {{ makemkvCandidate.source_file || ('title-' + makemkvCandidate.index) }}
+          </div>
+          <dl class="dc__meta">
+            <div><dt>Duration</dt><dd>{{ formatDuration(makemkvCandidate.duration_raw || makemkvCandidate.duration) }}</dd></div>
+            <div><dt>Size</dt><dd>{{ formatSize(makemkvCandidate.size) }}</dd></div>
+            <div><dt>Type</dt><dd>{{ makemkvCandidate.type || '—' }}</dd></div>
+          </dl>
+          <p class="dc__note">Detected by MakeMKV obfuscation heuristic.</p>
+          <ui-btn variant="primary" [fullWidth]="true" (click)="onPickMakemkv()">Pick this one</ui-btn>
+        </article>
+      </ui-card>
+    </div>
+
+    <div class="dc__suggest">
+      <span class="dc__suggest-icon" aria-hidden="true">
+        <ui-icon name="info" [size]="14"></ui-icon>
+      </span>
+      <span class="dc__suggest-text">
+        If you're not sure, run Path A — segment-reorder gives a deterministic
+        answer in ~20 minutes.
+      </span>
+      <ui-btn variant="secondary" (click)="trySegmentReorder.emit()">
+        Try segment-reorder
+      </ui-btn>
+    </div>
+
+    <button type="button"
+            class="dc__decoys"
+            *ngIf="hiddenDecoyCount > 0"
+            (click)="showDecoys.emit()">
+      <ui-pill tone="slate">Likely decoy</ui-pill>
+      Show {{ hiddenDecoyCount }} hidden grouped duplicates
+    </button>
+  </section>
+</ui-card>

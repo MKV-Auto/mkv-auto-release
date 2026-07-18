@@ -1,0 +1,286 @@
+// Library reattach modal (#449). Shell mirrors history-page.component.ts
+// .hist-modal-* classes so the visual language matches the other
+// History-page modals (label, release-label, duplicate-compare).
+
+.reattach-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: grid;
+  place-items: center;
+  z-index: 2000;
+  padding: 1rem;
+  animation: reattach-modal-fade 0.18s ease-out;
+}
+
+@keyframes reattach-modal-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.reattach-modal {
+  width: 100%;
+  max-width: 56rem;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.reattach-modal ::ng-deep .ui-card {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  padding: 0;
+  overflow: hidden;
+}
+
+.reattach-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.reattach-modal-title {
+  margin: 0;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.reattach-modal-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.5rem;
+  background: rgba(99, 102, 241, 0.18);
+  color: #a5b4fc;
+}
+
+.reattach-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.5rem;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  padding: 0;
+}
+
+.reattach-modal-close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.reattach-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem;
+}
+
+.reattach-modal-body::-webkit-scrollbar { width: 8px; }
+.reattach-modal-body::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.04); }
+.reattach-modal-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 4px; }
+.reattach-modal-body::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.28); }
+
+.reattach-modal-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 3rem 1rem;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.875rem;
+}
+
+.reattach-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Body content
+// ─────────────────────────────────────────────────────────────────────
+
+.reattach-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  color: #fca5a5;
+}
+
+.reattach-error-title {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+  color: #f87171;
+}
+
+.reattach-error-body {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.reattach-summary {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.reattach-summary-line {
+  margin: 0 0 0.25rem;
+  color: #fff;
+  font-size: 0.9rem;
+}
+
+.reattach-summary-line strong {
+  color: #a5b4fc;
+  font-weight: 600;
+}
+
+.reattach-summary-path {
+  margin: 0;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.reattach-summary-path code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.25rem;
+}
+
+// Per-section accordion
+.reattach-section {
+  margin-bottom: 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.reattach-section--good { border-color: rgba(74, 222, 128, 0.22); }
+.reattach-section--warn { border-color: rgba(251, 191, 36, 0.22); }
+.reattach-section--bad  { border-color: rgba(248, 113, 113, 0.22); }
+.reattach-section--muted { border-color: rgba(255, 255, 255, 0.08); }
+
+.reattach-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.reattach-section-head:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.reattach-section--good .reattach-section-head > ui-icon:first-child { color: #4ade80; }
+.reattach-section--warn .reattach-section-head > ui-icon:first-child { color: #fbbf24; }
+.reattach-section--bad  .reattach-section-head > ui-icon:first-child { color: #f87171; }
+.reattach-section--muted .reattach-section-head > ui-icon:first-child { color: rgba(255, 255, 255, 0.4); }
+
+.reattach-section-title {
+  flex: 1;
+  text-align: left;
+}
+
+.reattach-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.25rem;
+  padding: 0 0.4rem;
+  border-radius: 0.625rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.reattach-list {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  max-height: 18rem;
+  overflow-y: auto;
+  padding: 0.25rem 0;
+}
+
+.reattach-list::-webkit-scrollbar { width: 6px; }
+.reattach-list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 3px; }
+
+.reattach-row {
+  padding: 0.5rem 0.85rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.75);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.reattach-row:last-child { border-bottom: 0; }
+
+.reattach-row--single { padding: 0.4rem 0.85rem; }
+
+.reattach-row code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.25rem;
+}
+
+.reattach-row-tier {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.15rem;
+}
+
+.reattach-row-label {
+  color: rgba(255, 255, 255, 0.4);
+  margin-right: 0.25rem;
+}
+
+.reattach-empty {
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+  text-align: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}

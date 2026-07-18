@@ -1,0 +1,65 @@
+<div class="dcm-backdrop"
+     (click)="onBackdropClick($event)"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="dcm-title">
+  <div class="dcm-dialog">
+    <ui-card>
+      <header class="dcm-header">
+        <ui-pill tone="purple">
+          <ui-icon uiPillIcon name="copy" [size]="11"></ui-icon>
+          Compare duplicates
+        </ui-pill>
+        <h2 id="dcm-title">{{ members.length }} matching titles</h2>
+        <p class="dcm-summary">
+          Side-by-side metadata for every member of this duplicate group.
+          The primary is what gets ripped and saved — pick the variant
+          with the most chapters, the cleanest audio, or the largest file
+          size.
+        </p>
+      </header>
+
+      <section class="dcm-grid" [style.grid-template-columns]="'repeat(' + members.length + ', minmax(180px, 1fr))'">
+        <article
+          class="dcm-member"
+          *ngFor="let m of members; trackBy: trackByMemberId"
+          [class.dcm-member-primary]="isPrimary(m)"
+          [class.dcm-member-current]="isCurrent(m)">
+          <header class="dcm-member-head">
+            <span class="dcm-member-source">{{ sourceLabel(m) }}</span>
+            <ui-pill *ngIf="isPrimary(m)" tone="indigo">
+              <ui-icon uiPillIcon name="check" [size]="11"></ui-icon>
+              Primary
+            </ui-pill>
+            <ui-pill *ngIf="isCurrent(m)" tone="cyan">Editing</ui-pill>
+          </header>
+
+          <dl class="dcm-fields">
+            <dt>Size</dt>
+            <dd>{{ formatSize(m) }}</dd>
+            <dt>Duration</dt>
+            <dd>{{ formatDuration(m?.duration) }}</dd>
+            <dt>Chapters</dt>
+            <dd>{{ chaptersCount(m) }}</dd>
+            <dt>Audio</dt>
+            <dd>{{ audioSummary(m) }}</dd>
+            <dt>Video</dt>
+            <dd>{{ videoResolution(m) }}</dd>
+          </dl>
+
+          <ui-btn
+            *ngIf="!isPrimary(m)"
+            variant="primary"
+            [fullWidth]="true"
+            (click)="onSelect(m)">
+            Make primary
+          </ui-btn>
+        </article>
+      </section>
+
+      <footer class="dcm-footer">
+        <ui-btn variant="ghost" (click)="dismiss.emit()">Close</ui-btn>
+      </footer>
+    </ui-card>
+  </div>
+</div>

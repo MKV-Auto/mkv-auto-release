@@ -1,0 +1,119 @@
+<div style="display: flex; flex-direction: column; gap: 1.5rem;">
+  <!-- Header -->
+  <div style="display: flex; align-items: center; gap: 0.75rem;">
+    <div style="width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); box-shadow: 0 0 20px rgba(245, 158, 11, 0.3);">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: white;"><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></svg>
+    </div>
+    <div>
+      <h4 style="font-size: 1rem; font-weight: 700; color: white; margin: 0;">MakeMKV Management</h4>
+      <p style="font-size: 0.875rem; color: rgba(255, 255, 255, 0.6); margin: 0;">Update MakeMKV and manage registration</p>
+    </div>
+  </div>
+
+  <!-- Success Message -->
+  <div *ngIf="message" style="display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.875rem; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3);">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #4ade80; flex-shrink: 0; margin-top: 0.125rem;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+    <span style="color: #4ade80;">{{ message }}</span>
+  </div>
+
+  <!-- Error Message -->
+  <div *ngIf="error" style="display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.75rem; border-radius: 0.5rem; font-size: 0.875rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #f87171; flex-shrink: 0; margin-top: 0.125rem;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    <span style="color: #f87171;">{{ error }}</span>
+  </div>
+
+  <!-- Version Info -->
+  <div *ngIf="info" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+    <div style="padding: 1rem; border-radius: 0.75rem; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05);">
+      <div style="font-size: 0.75rem; color: rgba(255, 255, 255, 0.5); margin-bottom: 0.25rem;">Current Version</div>
+      <div style="font-size: 1.25rem; font-weight: 700; color: white;">{{ info.version || 'Unknown' }}</div>
+    </div>
+
+    <div 
+      [style.background]="hasUpdate ? 'rgba(245, 158, 11, 0.1)' : 'rgba(255, 255, 255, 0.02)'"
+      [style.border]="hasUpdate ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(255, 255, 255, 0.05)'"
+      style="padding: 1rem; border-radius: 0.75rem;">
+      <div style="font-size: 0.75rem; color: rgba(255, 255, 255, 0.5); margin-bottom: 0.25rem;">Latest Version</div>
+      <div style="font-size: 1.25rem; font-weight: 700; color: white; display: flex; align-items: center; gap: 0.5rem;">
+        {{ latestVersion || 'Fetching…' }}
+        <span *ngIf="hasUpdate" style="font-size: 0.75rem; font-weight: 500; color: #fbbf24;">Update Available</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Software Update Section -->
+  <div style="padding: 1.5rem; border-radius: 0.75rem; display: flex; flex-direction: column; gap: 1rem; background: rgba(245, 158, 11, 0.05); border: 1px solid rgba(245, 158, 11, 0.2);">
+    <h5 style="font-size: 0.875rem; font-weight: 700; color: white; margin: 0;">Software Update</h5>
+
+    <!-- FFmpeg Checkbox -->
+    <ui-checkbox
+      [(ngModel)]="includeFfmpeg"
+      [disabled]="updating"
+      ariaLabel="Include ffmpeg in MakeMKV update">Include ffmpeg (recommended for advanced features)</ui-checkbox>
+
+    <!-- Update Button -->
+    <button
+      type="button"
+      (click)="updateToLatest()"
+      [disabled]="updating || !hasUpdate"
+      [style.opacity]="(updating || !hasUpdate) ? '0.6' : '1'"
+      [style.cursor]="(updating || !hasUpdate) ? 'not-allowed' : 'pointer'"
+      style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 500; color: white; transition: all 0.2s; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); box-shadow: 0 0 20px rgba(245, 158, 11, 0.3); border: none;">
+      <svg *ngIf="updating" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 0.8s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+      <svg *ngIf="!updating && hasUpdate" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+      <svg *ngIf="!updating && !hasUpdate" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      <span *ngIf="updating">Updating...</span>
+      <span *ngIf="!updating && hasUpdate">Update to v{{ latestVersion }}</span>
+      <span *ngIf="!updating && !hasUpdate">Up to Date</span>
+    </button>
+
+    <!-- Logs -->
+    <div *ngIf="logs.length" style="padding: 0.75rem; border-radius: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; max-height: 10rem; overflow-y: auto; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.1);">
+      <div *ngFor="let log of logs" style="font-size: 0.75rem; font-family: monospace; color: #4ade80;">
+        {{ log }}
+      </div>
+    </div>
+  </div>
+
+  <!-- Registration Section -->
+  <div style="padding: 1.5rem; border-radius: 0.75rem; display: flex; flex-direction: column; gap: 1rem; background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.2);">
+    <h5 style="font-size: 0.875rem; font-weight: 700; color: white; margin: 0;">Registration Key</h5>
+
+    <!-- Registration Status -->
+    <div *ngIf="regStatus && regStatus.currentKey && !regStatus.expired" style="padding: 0.75rem; border-radius: 0.5rem; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3);">
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #4ade80;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span style="font-size: 0.875rem; font-weight: 500; color: #4ade80;">
+          Registered
+        </span>
+      </div>
+    </div>
+
+    <!-- Registration Input -->
+    <div>
+      <label style="display: block; font-size: 0.875rem; font-weight: 500; color: rgba(255, 255, 255, 0.8); margin-bottom: 0.5rem;">
+        Enter New Registration Key
+      </label>
+      <input
+        type="text"
+        [(ngModel)]="regKey"
+        placeholder="T-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        [disabled]="registering"
+        style="width: 100%; padding: 0.625rem 1rem; font-size: 0.875rem; font-family: monospace; color: white; border-radius: 0.5rem; transition: all 0.2s; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); outline: none;" />
+    </div>
+
+    <!-- Register Button -->
+    <button
+      type="button"
+      (click)="submitRegistration()"
+      [disabled]="registering || !regKey.trim()"
+      [style.opacity]="(registering || !regKey.trim()) ? '0.6' : '1'"
+      [style.cursor]="(registering || !regKey.trim()) ? 'not-allowed' : 'pointer'"
+      style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 500; color: white; transition: all 0.2s; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 0 20px rgba(59, 130, 246, 0.3); border: none;">
+      <svg *ngIf="registering" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 0.8s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+      <svg *ngIf="!registering" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></svg>
+      <span *ngIf="registering">Registering...</span>
+      <span *ngIf="!registering">Register Key</span>
+    </button>
+  </div>
+</div>

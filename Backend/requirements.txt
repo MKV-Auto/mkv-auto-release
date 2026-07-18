@@ -1,0 +1,18 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy
+alembic
+psycopg2-binary
+celery[redis]
+redis
+gql
+requests
+python-multipart
+requests_toolbelt
+tqdm
+pathvalidate
+filelock
+beautifulsoup4
+cryptography
+smbprotocol
+# libnfs-python is optional - NFS transfers will fall back to mount-based approach if not available

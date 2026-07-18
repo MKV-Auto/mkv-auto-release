@@ -1,0 +1,261 @@
+/* MakeMKV tab — template-aligned layout (MakeMKVUpdater.tsx) */
+.makemkv-updater.settings-makemkv-root {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.makemkv-updater .alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.makemkv-updater .alert.success {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #22c55e;
+}
+
+.makemkv-updater .alert.danger {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
+
+.makemkv-updater .alert .alert-icon {
+  flex-shrink: 0;
+  margin-top: 0.125rem;
+}
+
+.makemkv-version-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .makemkv-version-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.makemkv-version-card {
+  padding: 1rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.makemkv-version-card.has-update {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.makemkv-version-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 0.25rem;
+}
+
+.makemkv-version-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.makemkv-update-badge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #fbbf24;
+}
+
+.makemkv-update-block {
+  padding: 1.5rem;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.05);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.makemkv-block-title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.makemkv-ffmpeg-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.makemkv-checkbox {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #f59e0b;
+}
+
+.makemkv-checkbox-label {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+}
+
+.makemkv-btn-update {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+}
+
+.makemkv-btn-update:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: scale(1.02);
+}
+
+.makemkv-btn-update:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.makemkv-btn-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: makemkv-spin 0.8s linear infinite;
+}
+
+@keyframes makemkv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.makemkv-logs {
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  max-height: 10rem;
+  overflow-y: auto;
+}
+
+.makemkv-log-line {
+  font-size: 0.75rem;
+  font-family: ui-monospace, monospace;
+  color: #22c55e;
+  margin-bottom: 0.25rem;
+}
+
+.makemkv-log-line:last-child {
+  margin-bottom: 0;
+}
+
+.makemkv-reg-block {
+  padding: 1.5rem;
+  border-radius: 12px;
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.makemkv-reg-status {
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.makemkv-reg-status-text {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #22c55e;
+}
+
+.makemkv-reg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.makemkv-reg-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.makemkv-reg-input {
+  width: 100%;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-family: ui-monospace, monospace;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.makemkv-reg-input:focus {
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.makemkv-reg-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.makemkv-btn-register {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+}
+
+.makemkv-btn-register:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: scale(1.02);
+}
+
+.makemkv-btn-register:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

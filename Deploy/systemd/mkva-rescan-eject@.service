@@ -1,0 +1,15 @@
+[Unit]
+Description=MakeMKV-Auto Drive Rescan Trigger (Eject) - %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+Environment="MKVAUTO_ROOT=@MKVAUTO_ROOT@"
+Environment="MKVAUTO_LOG_DIR=@MKVAUTO_LOG_DIR@"
+Environment="MKVAUTO_BACKEND_URL=@MKVAUTO_BACKEND_URL@"
+ExecStart=/bin/bash @MKVAUTO_ROOT@/Backend/drive_manager/udev_rescan.sh %i 2
+

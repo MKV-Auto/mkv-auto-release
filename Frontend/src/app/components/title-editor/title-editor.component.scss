@@ -1,0 +1,478 @@
+// Title editor surface — the form half of the prototype's list+editor split.
+// Designed to be embedded inside a fixed side panel on desktop, or inside the
+// existing mobile drawer.
+
+.title-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--ui-card-border, rgba(255, 255, 255, 0.10));
+  border-radius: var(--ui-card-radius, 14px);
+  overflow: hidden;
+}
+
+.title-editor__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.title-editor__heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-editor__close {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.6);
+  transition: background 150ms ease, color 150ms ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+  }
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.45);
+  }
+}
+
+.title-editor__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.title-editor__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.title-editor__field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.title-editor__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.title-editor__input {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  color: #fff;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.4;
+  transition: border-color 150ms ease, background 150ms ease;
+
+  &::placeholder { color: rgba(255, 255, 255, 0.35); }
+  &:hover:not(:disabled) { border-color: rgba(255, 255, 255, 0.18); }
+  &:focus { border-color: rgba(99, 102, 241, 0.55); background: rgba(0, 0, 0, 0.35); }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+
+.title-editor__select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(255, 255, 255, 0.5) 50%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.5) 50%, transparent 50%);
+  background-position: calc(100% - 16px) center, calc(100% - 11px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 28px;
+}
+
+.title-editor__textarea {
+  resize: vertical;
+  min-height: 72px;
+  font-family: inherit;
+}
+
+.title-editor__type-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.title-editor__preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.title-editor__preview-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.title-editor__metadata {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.title-editor__metadata-info {
+  display: inline-flex;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: help;
+}
+
+.title-editor__metadata-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.title-editor__saving {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.title-editor__saving-ok {
+  color: #6ee7b7;
+}
+
+.title-editor__status-spin {
+  display: inline-flex;
+  animation: title-editor-spin 1s linear infinite;
+}
+
+@keyframes title-editor-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .title-editor__status-spin { animation: none; }
+}
+
+// Preview overlay
+.title-editor__preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(5, 8, 18, 0.65);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.title-editor__preview-panel {
+  width: min(720px, 100%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(19, 26, 44, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: var(--ui-card-radius, 14px);
+  overflow: hidden;
+}
+
+.title-editor__preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+
+  h4 { margin: 0; font-size: 14px; font-weight: 600; color: #fff; }
+}
+
+.title-editor__preview-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 12px;
+}
+
+.title-editor__preview-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-editor__preview-path {
+  padding: 8px 16px 12px;
+  font-size: 11px;
+  font-family: var(--ui-font-mono, ui-monospace, monospace);
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Duplicate Group Panel — purple-accented inline panel inside the editor for
+ * inspecting + jumping to siblings in the same Path B sorted-segment-set
+ * dedupe group. The active title appears at the top with an "Editing" pill;
+ * siblings below are clickable rows that emit (switchToSibling). */
+.title-editor__dupe {
+  margin-top: 14px;
+  border-radius: 10px;
+  background: rgba(168, 85, 247, 0.06);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  overflow: hidden;
+}
+
+.title-editor__dupe-head {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.20);
+  background: rgba(168, 85, 247, 0.08);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-editor__dupe-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+  flex: 1;
+  min-width: 0;
+}
+
+// Right-aligned action cluster in the panel header: Compare + Ungroup.
+.title-editor__dupe-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+// Per-row body wraps source + duration on the first line and dup-reason
+// (when present) on the second so the row stays scannable without
+// running into the right-side primary/Make-primary affordance.
+.title-editor__dupe-rowbody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title-editor__dupe-rowmain {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.title-editor__dupe-rowreason {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  font-style: italic;
+}
+
+.title-editor__dupe-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title-editor__dupe-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background 120ms, border-color 120ms;
+}
+
+.title-editor__dupe-row--current {
+  background: rgba(99, 102, 241, 0.10);
+  border-color: rgba(99, 102, 241, 0.25);
+}
+
+.title-editor__dupe-row--clickable {
+  cursor: pointer;
+}
+
+.title-editor__dupe-row--clickable:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.title-editor__dupe-row--clickable:focus-visible {
+  outline: none;
+  border-color: rgba(99, 102, 241, 0.45);
+  box-shadow: var(--ui-accent-ring, 0 0 0 2px rgba(99, 102, 241, 0.3));
+}
+
+.title-editor__dupe-thumb {
+  width: 32px;
+  height: 24px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.30), rgba(15, 23, 42, 0.7));
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.title-editor__dupe-source {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--ui-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-editor__dupe-duration {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  flex-shrink: 0;
+}
+
+/* 2-column form grid for title/type/edition/season+episode — matches the
+ * prototype's TitleEditor layout (research/MKV Auto UI/labeling.jsx:1583).
+ * .title-editor__field--full spans both columns for fields that need the
+ * full row (e.g. Edition on movies). */
+.title-editor__form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.title-editor__form-grid > .title-editor__field {
+  margin: 0; /* the grid's gap handles spacing */
+}
+
+.title-editor__field--full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 720px) {
+  .title-editor__form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* "Will be saved as" — indigo-tinted box at the bottom of the editor. */
+.title-editor__filename-preview {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+}
+
+.title-editor__filename-preview-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a5b4fc;
+  margin-bottom: 6px;
+}
+
+.title-editor__filename-preview-path {
+  font-family: var(--ui-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: #fff;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+// Auto-ignored review prompt — amber-tinted banner with inline CTA.
+// Shows when auto_type='ignore' AND user_type IS NULL so the user gets
+// a clear "we guessed this — confirm or change?" affordance.
+.title-editor__auto-ignore-prompt {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border-radius: 10px;
+  background: rgba(251, 191, 36, 0.10);
+  border: 1px solid rgba(251, 191, 36, 0.38);
+}
+
+.title-editor__auto-ignore-text {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.85);
+
+  strong {
+    color: #fde68a;
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.65);
+  }
+}

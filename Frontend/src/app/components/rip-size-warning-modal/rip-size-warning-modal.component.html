@@ -1,0 +1,90 @@
+<div class="rsw-backdrop" (click)="onBackdropClick($event)" role="dialog" aria-modal="true" aria-labelledby="rip-size-warning-title">
+  <div class="rsw-dialog">
+    <ui-card>
+      <header class="rsw-header">
+        <ui-pill tone="amber">Heads up</ui-pill>
+        <h2 id="rip-size-warning-title">This disc is large</h2>
+        <p class="rsw-summary" *ngIf="projectedGb !== null">
+          Ripping the whole disc would create about
+          <strong>{{ projectedGb }} GB</strong> of files.
+          <span *ngIf="availableGb !== null">
+            You have
+            <strong [class.rsw-disk-bad]="!fits">{{ availableGb }} GB</strong>
+            of free disk space.
+          </span>
+        </p>
+        <p class="rsw-summary" *ngIf="projectedGb === null">
+          This disc has duplicate playlists. We need your help picking the
+          right one before ripping.
+        </p>
+      </header>
+
+      <section class="rsw-actions">
+        <!-- Recommended action: Find canonical via segment-reorder. -->
+        <button class="rsw-action rsw-action-primary"
+                type="button"
+                (click)="onFindCanonical()"
+                [disabled]="isPending"
+                [attr.aria-busy]="pendingAction === 'findCanonical' ? 'true' : null">
+          <div class="rsw-action-head">
+            <span class="rsw-action-title">Find the main movie automatically</span>
+            <ui-pill tone="indigo">Recommended</ui-pill>
+            <span class="rsw-action-spin" *ngIf="pendingAction === 'findCanonical'" aria-hidden="true">
+              <ui-icon name="spinner" [size]="14"></ui-icon>
+            </span>
+          </div>
+          <p class="rsw-action-body">
+            <ng-container *ngIf="pendingAction !== 'findCanonical'; else findPending">
+              We'll do a quick rip and have you put a few short previews in order.
+              Takes about <strong>20 minutes</strong> total.
+            </ng-container>
+            <ng-template #findPending>
+              Starting the exploratory rip…
+            </ng-template>
+          </p>
+          <div class="rsw-action-foot">
+            <span>~20 min</span>
+            <span aria-hidden="true">·</span>
+            <span>Uses ~12 GB of disk</span>
+            <span aria-hidden="true" *ngIf="payload.duplicateGroupCount">·</span>
+            <span *ngIf="payload.duplicateGroupCount">
+              {{ payload.candidates.length }} similar playlists detected
+            </span>
+          </div>
+        </button>
+
+        <!-- Escape hatch: full rip. Disabled when disk can't fit. -->
+        <button class="rsw-action rsw-action-secondary"
+                type="button"
+                (click)="onRipWhole()"
+                [disabled]="!fits || isPending"
+                [attr.aria-busy]="pendingAction === 'ripWhole' ? 'true' : null"
+                [attr.title]="!fits ? 'Not enough disk space for a full rip' : null">
+          <div class="rsw-action-head">
+            <span class="rsw-action-title">Rip the whole disc anyway</span>
+            <ui-pill tone="red" *ngIf="!fits">Disk too small</ui-pill>
+            <span class="rsw-action-spin" *ngIf="pendingAction === 'ripWhole'" aria-hidden="true">
+              <ui-icon name="spinner" [size]="14"></ui-icon>
+            </span>
+          </div>
+          <p class="rsw-action-body">
+            <ng-container *ngIf="pendingAction !== 'ripWhole'; else ripWholePending">
+              Useful if you want every variant or know what you're doing.
+            </ng-container>
+            <ng-template #ripWholePending>
+              Starting the full-disc rip…
+            </ng-template>
+          </p>
+        </button>
+      </section>
+
+      <footer class="rsw-footer">
+        <ui-btn variant="ghost"
+                [disabled]="isPending"
+                (click)="dismiss.emit()">
+          Cancel
+        </ui-btn>
+      </footer>
+    </ui-card>
+  </div>
+</div>

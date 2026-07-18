@@ -1,0 +1,45 @@
+<!-- Template: workflow-action-bar > workflow-action-bar-inner -->
+<div class="workflow-action-bar">
+  <div class="workflow-action-bar-inner">
+    <div
+      class="col-span-2 min-w-0 w-full max-w-full box-border"
+      *ngIf="stageTimeline && stageTimeline.length > 0">
+      <app-stage-progress-bar
+        class="block w-full max-w-full"
+        [stageTimeline]="stageTimeline"
+        [stageProgress]="stageProgress"
+        [activeStage]="activeStage"
+        [isStageCompleted]="isStageCompleted">
+      </app-stage-progress-bar>
+    </div>
+
+    <div class="col-span-2 flex gap-3 justify-end items-center w-full min-w-0">
+      <ui-btn
+        variant="ghost"
+        class="flex-1 md:flex-initial"
+        [fullWidth]="true"
+        [disabled]="!canGoBack"
+        (click)="onBack()">
+        Back
+      </ui-btn>
+      <!-- Wrapper span carries the title attribute so the native tooltip
+           fires when the button is disabled (browsers don't dispatch
+           hover events on disabled <button>s, so a title on the button
+           itself wouldn't show). -->
+      <span
+        *ngIf="!hideContinue"
+        class="flex-1 md:flex-initial inline-flex"
+        [attr.title]="!canContinue && disabledReason ? disabledReason : null">
+        <ui-btn
+          [variant]="buttonText === 'Failed' ? 'danger' : 'primary'"
+          class="flex-1 md:flex-initial"
+          [fullWidth]="true"
+          [disabled]="!canContinue"
+          [loading]="buttonSpinner"
+          (click)="onContinue()">
+          {{ buttonText }}
+        </ui-btn>
+      </span>
+    </div>
+  </div>
+</div>

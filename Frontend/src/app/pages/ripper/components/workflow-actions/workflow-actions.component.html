@@ -1,0 +1,30 @@
+<div class="block w-full">
+<ng-container *ngIf="{
+  stageTimeline: stageTimeline$ | async,
+  activeStage: activeStage$ | async,
+  canContinue: canContinue$ | async,
+  disabledReason: disabledReason$ | async,
+  canGoBack: canGoBack$ | async,
+  buttonText: buttonText$ | async,
+  buttonSpinner: buttonSpinner$ | async,
+  hideContinue: hideContinue$ | async,
+  stageProgress: stageProgress$ | async,
+  isStageCompleted: isStageCompleted$ | async
+} as state">
+  <app-workflow-action-bar
+    *ngIf="state.stageTimeline && state.stageProgress && state.isStageCompleted"
+    [stageTimeline]="state.stageTimeline"
+    [stageProgress]="state.stageProgress"
+    [activeStage]="state.activeStage"
+    [isStageCompleted]="state.isStageCompleted"
+    [canContinue]="state.canContinue || false"
+    [disabledReason]="state.disabledReason"
+    [canGoBack]="state.canGoBack || false"
+    [buttonText]="state.buttonText || 'Continue'"
+    [buttonSpinner]="state.buttonSpinner || false"
+    [hideContinue]="state.hideContinue || false"
+    (continue)="onContinue()"
+    (back)="onBack()">
+  </app-workflow-action-bar>
+</ng-container>
+</div>

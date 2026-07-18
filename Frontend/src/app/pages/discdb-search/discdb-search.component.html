@@ -1,0 +1,268 @@
+<div class="discdb-search-page">
+  <!-- Hero Section -->
+  <div class="discdb-search-header">
+    <div class="max-w-5xl mx-auto px-6 pt-6 pb-0">
+      <div class="flex items-center gap-3 mb-4">
+        <div
+          class="w-12 h-12 rounded-xl flex items-center justify-center text-white"
+          style="background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%); box-shadow: 0 0 20px rgba(6, 182, 212, 0.4)">
+          <ui-icon name="globe" [size]="24"></ui-icon>
+        </div>
+        <div>
+          <h1 class="text-2xl font-bold text-white mb-0">TheDiscDB Search</h1>
+          <p class="text-sm text-white/60 mb-0">Search for movies and TV shows by title</p>
+        </div>
+      </div>
+
+      <!-- Search Form -->
+      <form (ngSubmit)="runSearch()" class="relative">
+        <div class="relative">
+          <span class="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none inline-flex">
+            <ui-icon name="search" [size]="20"></ui-icon>
+          </span>
+          <input
+            type="text"
+            [(ngModel)]="term"
+            name="term"
+            placeholder="Search for a title (e.g., Alien, The Matrix, Breaking Bad)…"
+            [disabled]="loading"
+            class="w-full pl-12 pr-32 py-4 text-base text-white rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-cyan-500/50 disabled:opacity-60 disabled:cursor-not-allowed"
+            style="background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); padding: 1rem 8rem 1rem 3rem;">
+          <div class="absolute right-2" style="top: 50%; transform: translateY(-50%);">
+            <ui-btn
+              variant="primary"
+              [disabled]="!term.trim()"
+              [loading]="loading">
+              <ui-icon uiBtnIcon name="search" [size]="13"></ui-icon>
+              {{ loading ? 'Searching…' : 'Search' }}
+            </ui-btn>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Content Area -->
+  <div class="max-w-5xl mx-auto px-6 pt-[18px] pb-8">
+    <!-- Error Message -->
+    <div
+      *ngIf="error"
+      class="flex items-start gap-3 p-4 rounded-xl mb-6"
+      style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3)">
+      <span class="text-red-400 flex-shrink-0 mt-0.5 inline-flex">
+        <ui-icon name="alert" [size]="20"></ui-icon>
+      </span>
+      <span class="text-red-400 text-sm">{{ error }}</span>
+    </div>
+
+    <!-- Loading State -->
+    <div *ngIf="loading" class="flex flex-col items-center justify-center py-16">
+      <span class="text-cyan-400 mb-4 inline-flex search-spin">
+        <ui-icon name="spinner" [size]="40"></ui-icon>
+      </span>
+      <p class="text-white/60 text-sm">Searching TheDiscDB…</p>
+    </div>
+
+    <!-- Empty State -->
+    <ui-empty-state
+      *ngIf="!loading && !error && results.length === 0 && !detail"
+      title="Start your search"
+      body="Try searching for a title to see matches from TheDiscDB. Search by movie or TV show name.">
+      <ui-icon uiEmptyIcon name="search" [size]="20"></ui-icon>
+    </ui-empty-state>
+
+    <!-- Results Grid -->
+    <div *ngIf="!loading && results.length > 0" class="mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold text-white">
+          Search Results ({{ results.length }})
+        </h2>
+        <button
+          *ngIf="detail"
+          (click)="clearDetail()"
+          class="text-sm text-cyan-400 hover:text-cyan-300 transition-colors">
+          Close detail
+        </button>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <button
+          *ngFor="let item of results"
+          (click)="loadDetail(item)"
+          class="group relative overflow-hidden rounded-xl transition-all hover:scale-[1.02] hover:shadow-2xl text-left"
+          [style.background]="'rgba(255, 255, 255, 0.02)'"
+          [style.border]="detail?.id === item.id ? '2px solid rgba(6, 182, 212, 0.5)' : '1px solid rgba(255, 255, 255, 0.05)'">
+          <!-- #590: passive "In Library" chip when this result matches
+               something the user has already ripped (movie-name match,
+               normalised case + leading-article). Rendered above the
+               poster so it's visible at a glance without hovering. -->
+          <span
+            *ngIf="isInLibrary(item)"
+            class="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide"
+            style="background: rgba(16, 185, 129, 0.18); border: 1px solid rgba(16, 185, 129, 0.45); color: #6ee7b7; backdrop-filter: blur(4px);"
+            title="This title is already in your Library">
+            <ui-icon name="check-circle" [size]="11"></ui-icon>
+            In Library
+          </span>
+
+          <!-- Image -->
+          <div
+            class="w-full aspect-[2/3] bg-cover bg-center relative"
+            [style.background-image]="item.image ? 'url(' + item.image + ')' : 'linear-gradient(135deg, rgba(6, 182, 212, 0.1) 0%, rgba(8, 145, 178, 0.1) 100%)'">
+            <div *ngIf="!item.image" class="absolute inset-0 flex items-center justify-center text-white/20">
+              <ui-icon name="disc" [size]="48"></ui-icon>
+            </div>
+            <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          </div>
+
+          <!-- Info -->
+          <div class="p-3">
+            <h3 class="text-sm font-bold text-white line-clamp-2 mb-2">
+              {{ item.title }}
+            </h3>
+            <div class="flex items-center gap-2 text-xs text-white/60">
+              <div class="flex items-center gap-1">
+                <ui-icon [name]="getTypeIcon(item.type)" [size]="14"></ui-icon>
+                <span>{{ item.type }}</span>
+              </div>
+              <ng-container *ngIf="item.year">
+                <span>•</span>
+                <span>{{ item.year }}</span>
+              </ng-container>
+            </div>
+          </div>
+        </button>
+      </div>
+    </div>
+
+    <!-- Detail Panel -->
+    <div
+      *ngIf="detail"
+      class="rounded-xl overflow-hidden"
+      style="background: rgba(255, 255, 255, 0.04); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.1); animation: fadeIn 0.3s ease-out">
+      <div *ngIf="detailLoading" class="flex items-center justify-center py-12">
+        <span class="text-cyan-400 inline-flex search-spin">
+          <ui-icon name="spinner" [size]="32"></ui-icon>
+        </span>
+      </div>
+
+      <ng-container *ngIf="!detailLoading">
+        <!-- Header with Image -->
+        <div class="relative h-64 overflow-hidden">
+          <div
+            class="absolute inset-0 bg-cover bg-center"
+            [style.background-image]="detail.image ? 'url(' + detail.image + ')' : 'linear-gradient(135deg, rgba(6, 182, 212, 0.2) 0%, rgba(8, 145, 178, 0.2) 100%)'"
+            style="filter: blur(20px) brightness(0.5); transform: scale(1.1)"></div>
+          <div class="absolute inset-0" style="background: linear-gradient(to top, #0f1419 0%, rgba(15, 20, 25, 0.8) 50%, transparent 100%)"></div>
+
+          <div class="absolute bottom-0 left-0 right-0 p-6 flex items-end gap-4">
+            <!-- Poster -->
+            <div
+              *ngIf="detail.image"
+              class="w-32 h-48 rounded-lg bg-cover bg-center flex-shrink-0 shadow-2xl"
+              [style.background-image]="'url(' + detail.image + ')'"
+              style="border: 2px solid rgba(255, 255, 255, 0.1)"></div>
+
+            <!-- Title & Meta -->
+            <div class="flex-1">
+              <h2 class="text-2xl font-bold text-white mb-2">{{ detail.title }}</h2>
+              <div class="flex items-center gap-3 text-sm text-white/70">
+                <div class="flex items-center gap-1.5">
+                  <ui-icon [name]="getTypeIcon(detail.type)" [size]="16"></ui-icon>
+                  <span>{{ detail.type }}</span>
+                </div>
+                <ng-container *ngIf="detail.year">
+                  <span>•</span>
+                  <span>{{ detail.year }}</span>
+                </ng-container>
+              </div>
+            </div>
+
+            <!-- Close Button -->
+            <button
+              (click)="clearDetail()"
+              class="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-all"
+              aria-label="Close detail">
+              <ui-icon name="close" [size]="20"></ui-icon>
+            </button>
+          </div>
+        </div>
+
+        <!-- Content -->
+        <div class="p-6 space-y-6">
+          <!-- Synopsis -->
+          <div *ngIf="detail.synopsis">
+            <h3 class="text-sm font-bold text-white/80 mb-2">Synopsis</h3>
+            <p class="text-sm text-white/70 leading-relaxed">{{ detail.synopsis }}</p>
+          </div>
+
+          <!-- Discs -->
+          <div *ngIf="detail.discs && detail.discs.length > 0">
+            <h3 class="text-sm font-bold text-white/80 mb-3">
+              Discs ({{ detail.discs.length }})
+            </h3>
+            <div class="space-y-2">
+              <div
+                *ngFor="let disc of detail.discs; let i = index"
+                class="p-4 rounded-lg"
+                style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05)">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="flex-1">
+                    <div class="text-sm font-medium text-white mb-1">
+                      {{ disc.name || 'Disc ' + (i + 1) }}
+                    </div>
+                    <div class="flex items-center gap-3 text-xs text-white/50">
+                      <span *ngIf="disc.format">{{ disc.format }}</span>
+                      <ng-container *ngIf="disc.year">
+                        <span>•</span>
+                        <span>{{ disc.year }}</span>
+                      </ng-container>
+                    </div>
+                  </div>
+                  <div *ngIf="disc.contentHash" class="text-xs text-white/40 font-mono">
+                    {{ disc.contentHash.substring(0, 8) }}…
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- No Discs Message -->
+          <div
+            *ngIf="!detail.discs || detail.discs.length === 0"
+            class="text-center py-8 rounded-lg"
+            style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05)">
+            <span class="text-white/20 inline-flex mb-2">
+              <ui-icon name="disc" [size]="32"></ui-icon>
+            </span>
+            <p class="text-sm text-white/40">No disc information available</p>
+          </div>
+        </div>
+      </ng-container>
+    </div>
+  </div>
+</div>
+
+<!-- Animation Styles -->
+<style>
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes search-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .search-spin {
+    animation: search-spin 1s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .search-spin { animation: none; }
+  }
+</style>

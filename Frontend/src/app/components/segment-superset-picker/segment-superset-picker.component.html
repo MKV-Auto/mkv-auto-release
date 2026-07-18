@@ -1,0 +1,84 @@
+<div class="ssp-backdrop"
+     (click)="onBackdropClick($event)"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="ssp-title">
+  <div class="ssp-dialog">
+    <ui-card>
+      <header class="ssp-header">
+        <ui-pill tone="indigo">Possible matches</ui-pill>
+        <h2 id="ssp-title">Your order is preserved inside these playlists</h2>
+        <p class="ssp-summary">
+          That order didn't match any playlist exactly, but we found
+          <strong>{{ clusters.length }}</strong>
+          playlist {{ clusters.length === 1 ? 'group' : 'groups' }} that
+          contain your segments plus extras — common when a disc uses
+          advanced obfuscation. Pick the one that looks like the real movie.
+        </p>
+      </header>
+
+      <section class="ssp-clusters">
+        <article class="ssp-cluster"
+                 *ngFor="let cluster of clusters; let ci = index; trackBy: trackByClusterKey"
+                 [class.ssp-cluster-expanded]="ci === expandedIndex">
+          <button class="ssp-cluster-head"
+                  type="button"
+                  [attr.aria-expanded]="ci === expandedIndex ? 'true' : 'false'"
+                  (click)="toggleCluster(ci)">
+            <div class="ssp-cluster-meta">
+              <ui-pill tone="amber" *ngIf="ci === 0">Most likely</ui-pill>
+              <span class="ssp-cluster-count">
+                {{ clusterSize(cluster) }} playlist{{ clusterSize(cluster) === 1 ? '' : 's' }}
+              </span>
+              <span class="ssp-cluster-extras">
+                {{ totalExtrasForCluster(cluster) }} extra segment{{ totalExtrasForCluster(cluster) === 1 ? '' : 's' }} total
+              </span>
+            </div>
+            <ui-icon [name]="ci === expandedIndex ? 'down' : 'chevron-right'" [size]="14"></ui-icon>
+          </button>
+
+          <ul class="ssp-candidates" *ngIf="ci === expandedIndex">
+            <li class="ssp-candidate"
+                *ngFor="let candidate of cluster; trackBy: trackByCandidate"
+                [class.ssp-candidate-pending]="candidate.title_index === pendingTitleIndex">
+              <div class="ssp-candidate-head">
+                <span class="ssp-candidate-file">
+                  {{ candidate.source_file || ('Title ' + candidate.title_index) }}
+                </span>
+                <span class="ssp-candidate-size">
+                  {{ formatSize(candidate.mpls_total_size_b) }}
+                </span>
+              </div>
+
+              <p class="ssp-candidate-body" *ngIf="candidate.extras_clips.length">
+                Adds:
+                <code class="ssp-extras">{{ candidate.extras_clips.join(', ') }}</code>
+              </p>
+
+              <button class="ssp-pick"
+                      type="button"
+                      (click)="onSelect(candidate)"
+                      [disabled]="isPending"
+                      [attr.aria-busy]="candidate.title_index === pendingTitleIndex ? 'true' : null">
+                <ui-icon name="spinner"
+                         [size]="14"
+                         *ngIf="candidate.title_index === pendingTitleIndex"
+                         aria-hidden="true"></ui-icon>
+                <span *ngIf="candidate.title_index !== pendingTitleIndex">Rip + verify this playlist</span>
+                <span *ngIf="candidate.title_index === pendingTitleIndex">Starting rip…</span>
+              </button>
+            </li>
+          </ul>
+        </article>
+      </section>
+
+      <footer class="ssp-footer">
+        <ui-btn variant="ghost"
+                [disabled]="isPending"
+                (click)="dismiss.emit()">
+          Cancel
+        </ui-btn>
+      </footer>
+    </ui-card>
+  </div>
+</div>

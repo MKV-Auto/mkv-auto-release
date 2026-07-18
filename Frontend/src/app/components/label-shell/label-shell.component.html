@@ -1,0 +1,61 @@
+<ng-container *ngIf="labelForm">
+  <app-release-label
+    *ngIf="isMovieComplete && !discdbHit"
+    [labelForm]="labelForm"
+    [labelSaving]="releaseSaving || labelSaving"
+    [lastAutosaveOk]="releaseAutosaveOk || lastAutosaveOk"
+    [hasLabelContent]="hasLabelContent"
+    [groupOptions]="groupOptions"
+    [lastReleaseDetails]="lastReleaseDetails"
+    [releaseNameHint]="releaseNameHint"
+    [releaseSlugHint]="releaseSlugHint"
+    [isLinkedToBoxset]="!!(labelForm?.boxset_id)"
+    (labelChanged)="labelChanged.emit(); releaseChanged.emit()"
+    (nameChanged)="nameChanged.emit(); releaseChanged.emit()"
+    (nameBlur)="nameBlur.emit(); releaseBlur.emit()"
+    (slugEdited)="slugEdited.emit(); releaseChanged.emit()"
+    (coverChange)="coverChange.emit(); releaseChanged.emit()"
+    (fieldBlur)="fieldBlur.emit(); releaseBlur.emit()"
+    (clearSelection)="clearSelection.emit(); releaseChanged.emit()"
+    (groupSelected)="groupSelected.emit($event); releaseChanged.emit()"
+    (groupDeleted)="groupDeleted.emit($event); releaseChanged.emit()"
+    (groupSearchChanged)="groupSearchChanged.emit($event)"
+    (groupOpenChanged)="groupOpenChanged.emit($event)"
+  ></app-release-label>
+
+  <app-disc-label
+    *ngIf="isReleaseComplete"
+    [labelForm]="labelForm"
+    [labelSaving]="discSaving || labelSaving"
+    [lastAutosaveOk]="discAutosaveOk || lastAutosaveOk"
+    (labelChanged)="labelChanged.emit(); discChanged.emit()"
+    (nameChanged)="nameChanged.emit(); discChanged.emit()"
+    (fieldBlur)="fieldBlur.emit(); discBlur.emit()"
+  ></app-disc-label>
+
+  <app-title-label
+    *ngIf="isDiscComplete"
+    [titles]="titles"
+    [isSeries]="isSeries"
+    [titleProgress]="titleProgress"
+    [titleStatusFn]="titleStatusFn"
+    [titleProgressValueFn]="titleProgressValueFn"
+    [titleActiveFn]="titleActiveFn"
+    [showTitleStatus]="showTitleStatus"
+    [previewUrlFn]="previewUrlFn"
+    [previewStateFn]="previewStateFn"
+    [titlePathFn]="titlePathFn"
+    [labelSaving]="titleSaving || labelSaving"
+    [lastAutosaveOk]="titleAutosaveOk || lastAutosaveOk"
+    [devMode]="devMode"
+    (labelChanged)="labelChanged.emit(); titleChanged.emit()"
+    (labelBlur)="fieldBlur.emit(); titleBlur.emit()"
+  ></app-title-label>
+
+  <div class="missing-list" *ngIf="devMode && missingFields.length">
+    <h4>Missing fields</h4>
+    <ul>
+      <li *ngFor="let item of missingFields">{{ item }}</li>
+    </ul>
+  </div>
+</ng-container>

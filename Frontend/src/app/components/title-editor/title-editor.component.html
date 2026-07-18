@@ -1,0 +1,412 @@
+<section class="title-editor" *ngIf="title">
+  <header class="title-editor__head">
+    <h3 class="title-editor__heading">{{ title?.title_name || title?.title || 'Edit Title' }}</h3>
+    <button
+      type="button"
+      class="title-editor__close"
+      *ngIf="showCloseButton"
+      aria-label="Close editor"
+      (click)="onClose()">
+      <ui-icon name="close" [size]="18"></ui-icon>
+    </button>
+  </header>
+
+  <div class="title-editor__body">
+    <!-- Per-title rip status pill — only renders for *actionable* states
+         (Running / Failed). Pending and Completed are intentionally hidden:
+         the global stage breadcrumb already conveys overall progress, and a
+         per-title "Pending" / "Complete" pill on every editor open adds
+         noise without telling the user anything they can act on. -->
+    <div class="title-editor__status" *ngIf="showStatusPill()">
+      <ui-pill
+        [tone]="statusPillTone()"
+        [attr.title]="statusPillTooltip()">
+        <ui-icon
+          uiPillIcon
+          [name]="titleStatusFn(title.title_id) === 'running' ? 'spinner'
+                : titleStatusFn(title.title_id) === 'failed' ? 'close'
+                : 'clock'"
+          [size]="11"
+          [class.title-editor__status-spin]="titleStatusFn(title.title_id) === 'running'">
+        </ui-icon>
+        {{ statusPillLabel() }}
+      </ui-pill>
+    </div>
+
+    <!-- Preview -->
+    <div class="title-editor__field">
+      <label class="title-editor__label">Preview</label>
+      <div class="title-editor__preview-controls">
+        <ng-container *ngIf="previewStateFn(title) as state">
+          <ng-container [ngSwitch]="state.status">
+            <div class="title-editor__preview-status" *ngSwitchCase="'queued'">
+              <ui-icon name="spinner" [size]="14" class="title-editor__status-spin"></ui-icon>
+              <span>Queued for generation</span>
+            </div>
+            <div class="title-editor__preview-status" *ngSwitchCase="'running'">
+              <ui-icon name="spinner" [size]="14" class="title-editor__status-spin"></ui-icon>
+              <span>Generating preview...</span>
+            </div>
+            <div class="title-editor__preview-status" *ngSwitchCase="'failed'">
+              <ui-icon name="alert" [size]="14"></ui-icon>
+              <span>Preview failed</span>
+            </div>
+            <ui-btn variant="secondary" *ngSwitchCase="'completed'" (click)="openPreview()">
+              <ui-icon uiBtnIcon name="play" [size]="13"></ui-icon>
+              Play preview
+            </ui-btn>
+            <div class="title-editor__preview-status" *ngSwitchDefault>
+              <ui-icon name="info" [size]="14"></ui-icon>
+              <span>No preview available</span>
+            </div>
+          </ng-container>
+        </ng-container>
+        <ng-container *ngIf="!previewStateFn(title)">
+          <ui-btn variant="secondary" *ngIf="previewUrlFn(title)" (click)="openPreview()">
+            <ui-icon uiBtnIcon name="play" [size]="13"></ui-icon>
+            Play preview
+          </ui-btn>
+          <div class="title-editor__preview-status" *ngIf="!previewUrlFn(title)">
+            <ui-icon name="info" [size]="14"></ui-icon>
+            <span>No preview available</span>
+          </div>
+        </ng-container>
+      </div>
+    </div>
+
+    <!-- Auto-ignored awaiting review banner: surfaces only when automated
+         detection (DiscDB / Path A sibling / subsumption / FFmpeg padding)
+         flagged this row as ignore and the user hasn't reviewed yet. The
+         row stays VISIBLE in the left rail (no chip) so the user can
+         either confirm the ignore (one click) or change the type via the
+         dropdown below to override. -->
+    <div class="title-editor__auto-ignore-prompt" *ngIf="isAutoIgnoredAwaitingReview">
+      <div class="title-editor__auto-ignore-text">
+        <strong>This title was auto-flagged as ignore.</strong>
+        <p>
+          Automated detection (DiscDB, dedupe heuristics, or padding-scan)
+          marked this row as not worth ripping. Review the preview if you
+          want to be sure, then confirm to hide it — or pick a different
+          type below to keep it.
+        </p>
+      </div>
+      <ui-btn variant="primary" (click)="confirmAutoIgnore()">
+        <ui-icon uiBtnIcon name="check" [size]="13"></ui-icon>
+        Confirm ignore
+      </ui-btn>
+    </div>
+
+    <!-- Form: 2-column grid for title/type/edition/season+episode (matches
+         the prototype's TitleEditor layout — research/MKV Auto UI/labeling.jsx:1583). -->
+    <!-- #602: single-subscription wrapper — exposes `t.tmdbReady` for
+         the conditional render of the manual title / season / episode
+         inputs below. When TMDB has the catalog the picker covers all
+         three; we hide the redundant manuals. -->
+    <ng-container *ngIf="{ tmdbReady: (tmdbCatalogReady$ | async) ?? false } as t">
+    <div class="title-editor__form-grid">
+      <!-- TMDB episode picker (#371). Renders for series titles when
+           the workflow context has a populated episode catalog for the
+           row's effective season. Selecting an episode auto-fills the
+           EPISODE TITLE, SEASON and EPISODE fields below; the user can
+           still override any of them by hand. -->
+      <ng-container *ngIf="isSeries && !isIgnored()">
+        <ng-container *ngIf="episodeOptions$ | async as opts">
+          <div class="title-editor__field title-editor__field--full" *ngIf="isEpisodeList(opts)">
+            <label class="title-editor__label">TMDB episode</label>
+            <select
+              class="title-editor__input title-editor__select"
+              [value]="findEpisodeIndex(opts)"
+              (change)="onEpisodePicked(opts, ($any($event.target)).value)"
+              aria-label="TMDB episode picker">
+              <option [value]="-1">Select episode…</option>
+              <option *ngFor="let ep of opts; let i = index" [value]="i">
+                E{{ ep.episode_number }} · {{ ep.name }}
+              </option>
+            </select>
+          </div>
+          <div class="title-editor__field title-editor__field--full title-editor__hint"
+               *ngIf="opts === 'loading'">
+            Loading TMDB episode list…
+          </div>
+          <div class="title-editor__field title-editor__field--full title-editor__hint"
+               *ngIf="opts === 'error'">
+            TMDB episode list unavailable — manual entry below still works.
+          </div>
+        </ng-container>
+      </ng-container>
+
+      <!-- Title name. #602: hide on Episode rows when TMDB returned the
+           catalog — the picker writes title.title via onEpisodePicked. -->
+      <div class="title-editor__field" *ngIf="!(isSeries && t.tmdbReady)">
+        <label class="title-editor__label">{{ isSeries ? 'Episode title' : 'Title name' }}</label>
+        <input
+          type="text"
+          class="title-editor__input"
+          [(ngModel)]="title.title"
+          [placeholder]="isSeries ? 'Episode title' : 'Enter title name…'"
+          (ngModelChange)="onTitleNameChange($event)"
+          (blur)="titleBlur.emit()"
+          [disabled]="isIgnored()">
+      </div>
+
+      <!-- Type + ignore toggle -->
+      <div class="title-editor__field">
+        <label class="title-editor__label">Type</label>
+        <div class="title-editor__type-row">
+          <select
+            class="title-editor__input title-editor__select"
+            [(ngModel)]="title.type"
+            (ngModelChange)="onTypeChange($event)"
+            (blur)="titleBlur.emit()">
+            <option *ngFor="let opt of titleTypeOptions" [value]="opt.value" [disabled]="opt.value === ''">{{ opt.label }}</option>
+          </select>
+          <ui-btn
+            [variant]="'ghost'"
+            (click)="markAsIgnore()"
+            [attr.title]="isIgnored() ? 'Click to un-ignore this title' : 'Ignore this title'">
+            <ui-icon uiBtnIcon [name]="'close'" [size]="13"></ui-icon>
+            {{ isIgnored() ? 'Un-ignore' : 'Ignore' }}
+          </ui-btn>
+        </div>
+      </div>
+
+      <!-- Season / Episode (series) — sit in the grid alongside Title + Type.
+           #602: same TMDB-catalog hide as the title input above. -->
+      <ng-container *ngIf="isSeries && !isIgnored() && !t.tmdbReady">
+        <div class="title-editor__field">
+          <label class="title-editor__label">Season</label>
+          <input
+            type="number"
+            class="title-editor__input"
+            [(ngModel)]="title.season"
+            placeholder="Season #"
+            min="1"
+            (ngModelChange)="onSeasonChange($event)"
+            (blur)="titleBlur.emit()"
+            [disabled]="isIgnored()">
+        </div>
+        <div class="title-editor__field">
+          <label class="title-editor__label">Episode</label>
+          <input
+            type="number"
+            class="title-editor__input"
+            [(ngModel)]="title.episode"
+            placeholder="Episode #"
+            min="1"
+            (ngModelChange)="onEpisodeChange($event)"
+            (blur)="titleBlur.emit()"
+            [disabled]="isIgnored()">
+        </div>
+      </ng-container>
+
+      <!-- Edition (movies) — full-width row in the grid -->
+      <div class="title-editor__field title-editor__field--full" *ngIf="!isSeries && !isIgnored()">
+        <label class="title-editor__label">Edition (Optional)</label>
+        <input
+          type="text"
+          class="title-editor__input"
+          [(ngModel)]="title.edition"
+          placeholder="e.g., Extended, Director's Cut…"
+          (ngModelChange)="onEditionChange($event)"
+          (blur)="titleBlur.emit()"
+          [disabled]="isIgnored()">
+      </div>
+    </div>
+    </ng-container>
+
+    <!-- Duplicate Group Panel (Path B sorted-segment-set dedupe) -->
+    <section class="title-editor__dupe" *ngIf="siblings.length">
+      <header class="title-editor__dupe-head">
+        <ui-pill tone="purple">
+          <ui-icon uiPillIcon name="copy" [size]="11"></ui-icon>
+          Duplicate group
+        </ui-pill>
+        <span class="title-editor__dupe-meta">
+          {{ siblings.length + 1 }} matching titles · the primary is what gets saved
+        </span>
+        <span class="title-editor__dupe-actions">
+          <ui-btn variant="ghost" (click)="openCompare()">
+            <ui-icon uiBtnIcon name="columns" [size]="12"></ui-icon>
+            Compare
+          </ui-btn>
+          <ui-btn variant="ghost"
+                  [attr.title]="isForceIndependent ? 'Re-attach this title to the dedupe group' : 'Split this title off into its own row'"
+                  (click)="onUngroupDuplicate()">
+            {{ isForceIndependent ? 'Re-group' : 'Ungroup' }}
+          </ui-btn>
+        </span>
+      </header>
+      <ul class="title-editor__dupe-list">
+        <li class="title-editor__dupe-row title-editor__dupe-row--current"
+            [attr.aria-label]="'Currently editing: ' + (siblingLabel(title) || '')">
+          <span class="title-editor__dupe-thumb" aria-hidden="true">
+            <ui-icon name="film" [size]="14"></ui-icon>
+          </span>
+          <div class="title-editor__dupe-rowbody">
+            <div class="title-editor__dupe-rowmain">
+              <span class="title-editor__dupe-source">{{ siblingLabel(title) }}</span>
+              <span class="title-editor__dupe-duration"
+                    *ngIf="siblingDuration(title) || siblingSize(title)">
+                {{ siblingDuration(title) }}<ng-container *ngIf="siblingDuration(title) && siblingSize(title)"> · </ng-container>{{ siblingSize(title) }}
+              </span>
+            </div>
+            <div class="title-editor__dupe-rowreason" *ngIf="siblingDupReason(title)">
+              {{ siblingDupReason(title) }}
+            </div>
+          </div>
+          <ui-pill *ngIf="isGroupRepresentative" tone="indigo">Primary</ui-pill>
+          <ui-pill tone="cyan">Editing</ui-pill>
+        </li>
+        <li class="title-editor__dupe-row title-editor__dupe-row--clickable"
+            *ngFor="let sib of siblings; trackBy: trackBySiblingId"
+            (click)="onSwitchToSibling(sib)"
+            (keydown.enter)="onSwitchToSibling(sib)"
+            tabindex="0"
+            role="button"
+            [attr.aria-label]="'Switch to ' + (siblingLabel(sib) || 'sibling')">
+          <span class="title-editor__dupe-thumb" aria-hidden="true">
+            <ui-icon name="film" [size]="14"></ui-icon>
+          </span>
+          <div class="title-editor__dupe-rowbody">
+            <div class="title-editor__dupe-rowmain">
+              <span class="title-editor__dupe-source">{{ siblingLabel(sib) }}</span>
+              <span class="title-editor__dupe-duration"
+                    *ngIf="siblingDuration(sib) || siblingSize(sib)">
+                {{ siblingDuration(sib) }}<ng-container *ngIf="siblingDuration(sib) && siblingSize(sib)"> · </ng-container>{{ siblingSize(sib) }}
+              </span>
+            </div>
+            <div class="title-editor__dupe-rowreason" *ngIf="siblingDupReason(sib)">
+              {{ siblingDupReason(sib) }}
+            </div>
+          </div>
+          <ui-pill *ngIf="isSiblingPrimary(sib)" tone="indigo">Primary</ui-pill>
+          <ui-btn *ngIf="!isSiblingPrimary(sib)"
+                  variant="ghost"
+                  (click)="onMakeSiblingPrimary(sib); $event.stopPropagation()">
+            Make primary
+          </ui-btn>
+        </li>
+      </ul>
+    </section>
+
+    <!-- Compare modal (opened from the Duplicate group panel header). -->
+    <app-duplicate-compare-modal
+      *ngIf="showCompareModal"
+      [members]="groupMembersForCompare"
+      [currentTitleId]="title?.title_id || null"
+      (select)="onMakeSiblingPrimary($event); closeCompare()"
+      (dismiss)="closeCompare()">
+    </app-duplicate-compare-modal>
+
+    <!-- #602: Component clips section moved below description + metadata
+         (was here, now after the metadata footer). They're reference
+         content, not part of the active edit, so they belong at the
+         bottom of the editor — the description + metadata are higher-
+         priority for the user. -->
+
+    <!-- Description -->
+    <div class="title-editor__field" *ngIf="!isIgnored()">
+      <label class="title-editor__label">Description (Optional)</label>
+      <textarea
+        class="title-editor__input title-editor__textarea"
+        [(ngModel)]="title.description"
+        [placeholder]="title?.note || 'Add description…'"
+        rows="3"
+        (ngModelChange)="updateDescription($event)"
+        (blur)="titleBlur.emit()"
+        [disabled]="isIgnored()"></textarea>
+    </div>
+
+    <!-- Metadata footer -->
+    <div class="title-editor__metadata" *ngIf="title">
+      <ng-container *ngIf="title?.metadata_summary && getMetadataSummaryLines(title).length">
+        <span
+          class="title-editor__metadata-info"
+          [attr.title]="getMetadataSummaryLines(title).join('\n')"
+          aria-label="Metadata summary">
+          <ui-icon name="info" [size]="14"></ui-icon>
+        </span>
+      </ng-container>
+      <span class="title-editor__metadata-text">
+        <ng-container *ngIf="title?.duration">{{ formatDuration(title.duration) }}</ng-container>
+        <ng-container *ngIf="title?.size"> · {{ formatSize(title.size) }}</ng-container>
+        <ng-container *ngIf="getChapterCount() as chapterCount"> · {{ chapterCount }} chapters</ng-container>
+        <ng-container *ngIf="devMode && (title?.source_file || title?.track_id || title?.title_id)"> · {{ title.source_file || title.track_id || title.title_id }}</ng-container>
+      </span>
+    </div>
+
+    <!-- #602: Component clips (m2ts wrapped by this mpls — Path B
+         subsumption). Surfaces the m2ts rows that were auto-hidden from
+         the left rail so the user can still inspect / promote / rename
+         them. Rendered AFTER description + metadata because they're
+         reference content, not part of the active edit. -->
+    <section class="title-editor__dupe" *ngIf="componentClips.length">
+      <header class="title-editor__dupe-head">
+        <ui-pill tone="indigo">
+          <ui-icon uiPillIcon name="copy" [size]="11"></ui-icon>
+          Component clips
+        </ui-pill>
+        <span class="title-editor__dupe-meta">
+          {{ componentClips.length }} underlying clip(s) wrapped by this playlist
+        </span>
+      </header>
+      <ul class="title-editor__dupe-list">
+        <li class="title-editor__dupe-row title-editor__dupe-row--clickable"
+            *ngFor="let clip of componentClips; trackBy: trackBySiblingId"
+            (click)="onSwitchToSibling(clip)"
+            (keydown.enter)="onSwitchToSibling(clip)"
+            tabindex="0"
+            role="button"
+            [attr.aria-label]="'Switch to ' + (siblingLabel(clip) || 'component clip')">
+          <span class="title-editor__dupe-thumb" aria-hidden="true">
+            <ui-icon name="film" [size]="14"></ui-icon>
+          </span>
+          <span class="title-editor__dupe-source">{{ siblingLabel(clip) }}</span>
+          <span class="title-editor__dupe-duration">{{ siblingDuration(clip) }}</span>
+        </li>
+      </ul>
+    </section>
+
+    <!-- Will be saved as — live preview of the post-process output filename
+         the user is about to commit to. Mirrors the prototype's indigo
+         "Will be saved as" box at the bottom of TitleEditor. -->
+    <div class="title-editor__filename-preview" *ngIf="getFilenamePreview() as preview">
+      <div class="title-editor__filename-preview-label">Will be saved as</div>
+      <div class="title-editor__filename-preview-path">{{ preview }}</div>
+    </div>
+
+    <!-- Saving indicator -->
+    <div class="title-editor__saving" *ngIf="showSpinner || lastAutosaveOk">
+      <ng-container *ngIf="showSpinner; else saved">
+        <ui-icon name="spinner" [size]="14" class="title-editor__status-spin"></ui-icon>
+        <span>Saving…</span>
+      </ng-container>
+      <ng-template #saved>
+        <ui-icon name="check" [size]="14" class="title-editor__saving-ok"></ui-icon>
+        <span>Saved</span>
+      </ng-template>
+    </div>
+  </div>
+</section>
+
+<!-- Preview overlay (shared with title-modal — backdrop dismissible). -->
+<div class="title-editor__preview-backdrop" *ngIf="previewUrl" (click)="closePreview()">
+  <div class="title-editor__preview-panel" (click)="$event.stopPropagation()">
+    <header class="title-editor__preview-head">
+      <h4>Title preview {{ previewTitle?.title_id || '' }}</h4>
+      <button type="button" class="title-editor__close" aria-label="Close preview" (click)="closePreview()">
+        <ui-icon name="close" [size]="18"></ui-icon>
+      </button>
+    </header>
+    <app-preview-viewer [src]="previewUrl"></app-preview-viewer>
+    <footer class="title-editor__preview-foot">
+      <div class="title-editor__preview-meta">
+        {{ previewTitle?.title || previewTitle?.note || previewTitle?.output_file || '' }}
+      </div>
+      <ui-btn variant="ghost" (click)="closePreview()">Close</ui-btn>
+    </footer>
+    <div class="title-editor__preview-path" *ngIf="titlePathFn(previewTitle) || previewTitle?.output_file">
+      Path: {{ titlePathFn(previewTitle) || previewTitle?.output_file }}
+    </div>
+  </div>
+</div>

@@ -1,0 +1,62 @@
+<div class="flex flex-col gap-4 md:gap-5 p-3 max-w-[1080px] mx-auto w-full">
+  <section class="rounded-2xl border border-white/10 p-5 md:p-6 shadow-[0_18px_40px_rgba(0,0,0,0.35)] bg-[radial-gradient(circle_at_18%_20%,rgba(99,102,241,0.18),transparent_35%),radial-gradient(circle_at_86%_0%,rgba(14,165,233,0.16),transparent_28%),linear-gradient(135deg,#0f172a,#0b1220)]">
+    <div>
+      <p class="uppercase tracking-widest text-indigo-300 m-0 mb-1.5 text-xs font-bold">Stream Debug</p>
+      <h1 class="m-0 mb-2 text-2xl md:text-[26px] tracking-tight text-slate-50">Preview live ffmpeg output</h1>
+      <p class="m-0 text-slate-300 max-w-[720px]">
+        Point the player at your HLS manifest to confirm playback from the ffmpeg server running on port 8090.
+      </p>
+      <div class="bg-white/10 border border-white/10 rounded-xl p-3 mt-3 text-slate-200 font-mono text-[13px] grid gap-1.5">
+        <div>Current test command</div>
+        <code class="bg-slate-900 p-2.5 rounded-lg block whitespace-pre-wrap break-all">ffmpeg -re -i Creed_t00.mkv -c copy -f hls -hls_time 4 -hls_list_size 0 -hls_segment_filename "hls_preview/segment_%03d.ts" hls_preview/preview.m3u8</code>
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-white/5 border border-white/10 rounded-xl p-4 md:p-5 grid gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div class="font-bold text-slate-50">Stream URL</div>
+        <div class="muted m-0">Defaults to localhost:8090/preview.mp4</div>
+      </div>
+      <div class="flex flex-wrap gap-2 items-center">
+        <button class="ghost" type="button" (click)="useDefault()">Use localhost</button>
+        <button class="primary" type="button" (click)="reload()">Load & Play</button>
+      </div>
+    </div>
+    <div>
+      <input
+        type="text"
+        name="url"
+        class="w-full p-3 rounded-lg border border-white/20 bg-slate-900/60 text-slate-200 text-sm focus:outline-2 focus:outline-indigo-500/60 focus:border-indigo-500/80"
+        [(ngModel)]="streamUrl"
+        placeholder="http://localhost:8090/preview.m3u8"
+        (keydown.enter)="reload()"
+      />
+    </div>
+    <div class="flex flex-wrap gap-2 items-center min-h-5">
+      <span *ngIf="status" class="px-2.5 py-1.5 rounded-lg font-semibold text-[13px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/35">{{ status }}</span>
+      <span *ngIf="error" class="px-2.5 py-1.5 rounded-lg font-semibold text-[13px] bg-red-500/20 text-red-300 border border-red-500/35">{{ error }}</span>
+    </div>
+  </section>
+
+  <section class="bg-white/[0.03] border border-white/10 rounded-[14px] p-3.5 md:p-4 grid gap-2.5">
+    <div class="relative bg-slate-900 rounded-xl overflow-hidden border border-white/10">
+      <div class="absolute top-2.5 left-2.5 z-[2] bg-indigo-500/20 text-indigo-200 py-1.5 px-2.5 rounded-lg text-xs font-bold tracking-wide border border-indigo-500/35 backdrop-blur-sm">
+        fMP4 preview
+      </div>
+      <app-preview-viewer
+        #viewer
+        class="viewer block"
+        [src]="streamUrl"
+        [autoLoad]="false"
+        (statusChange)="status=$event"
+        (errorChange)="error=$event">
+      </app-preview-viewer>
+    </div>
+    <p class="muted m-0">
+      If playback stalls, verify the ffmpeg process is bound to 0.0.0.0:8090 and that the stream is reachable from
+      this browser. Reload after updating the URL.
+    </p>
+  </section>
+</div>
