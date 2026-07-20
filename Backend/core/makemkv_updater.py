@@ -885,57 +885,154 @@ def get_registration_status(force_refresh: bool = False) -> tuple[bool, Optional
     return expired, output.strip() or None, key
 
 
-def set_registration_key(key: str) -> tuple[bool, str]:
+# MakeMKV key shape: "M-" (purchased/permanent) or "T-" (beta/temporary) followed by
+# a long base64ish payload. Charset per observed real keys; the strict match also
+# guarantees the value is safe to embed in a settings.conf quoted string.
+_MAKEMKV_KEY_RE = re.compile(r"^[MT]-[A-Za-z0-9_@%+=/-]{40,90}$")
+
+
+def _probe_key_in_sandbox(binary_path: str, key: Optional[str], *, timeout: int = 90) -> tuple[str, str]:
     """
-    Validate and register a MakeMKV key using makemkvcon reg.
-    Returns (success, message).
-    
-    Requires MakeMKV to be installed first.
-    
-    Uses makemkvcon reg which:
-    - Validates the key format
-    - Checks with MakeMKV servers
-    - Saves the key to ~/.MakeMKV/settings.conf if valid
-    - Returns deterministic output (not interactive)
+    Evaluate a candidate key in an ISOLATED $HOME so the user's real MakeMKV state
+    is never touched (#688: an invalid stored key is *worse* than no key — it
+    escalates a working trial into the MSG:5021 "too old" state, so write-then-
+    revert against the real settings.conf is unsafe).
+
+    Runs ``makemkvcon -r info disc:9999`` (exits right after the startup messages;
+    needs no disc/drive) with ``app_Key`` planted in a temp HOME and classifies by
+    makemkvcon's own verdict:
+
+    - ``MSG:5020`` ("stored activation key is invalid") → ``invalid`` — emitted
+      even while a trial is active, which makes it a definitive oracle.
+    - ``MSG:5021`` without 5020 → ``binary_expired`` — a valid key normally
+      rescues an expired beta, so 5021 persisting with the key applied means the
+      binary needs an update before the key can be confirmed.
+    - neither → ``valid``.
+
+    Returns (verdict, combined_output).
     """
-    if not key or not key.strip():
-        raise MakeMKVUpdateError("Registration key is empty")
-    
-    key = key.strip()
-    binary_path = get_makemkvcon_path()
-    
-    try:
+    with tempfile.TemporaryDirectory(prefix="mkv-key-probe-") as home:
+        conf_dir = Path(home) / ".MakeMKV"
+        conf_dir.mkdir(parents=True, exist_ok=True)
+        if key:
+            (conf_dir / "settings.conf").write_text(f'app_Key = "{key}"\n', encoding="utf-8")
+        env = os.environ.copy()
+        env["HOME"] = home
         result = subprocess.run(
-            [binary_path, "reg", key],
+            [binary_path, "-r", "info", "disc:9999"],
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=timeout,
+            env=env,
         )
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
+        if "error while loading shared libraries" in output or "cannot open shared object file" in output:
+            raise MakeMKVUpdateError(
+                "MakeMKV is not properly installed. Please install MakeMKV before registering a key."
+            )
+        if "MSG:5020" in output:
+            return "invalid", output
+        if "MSG:5021" in output:
+            return "binary_expired", output
+        return "valid", output
+
+
+def _write_app_key_preserving(key: str) -> Optional[str]:
+    """
+    Merge ``app_Key`` into the real ``~/.MakeMKV/settings.conf``, preserving every
+    other setting. Returns the file's prior text (None if it did not exist) so a
+    failed post-commit verification can restore it exactly.
+    """
+    settings_path = Path.home() / ".MakeMKV" / "settings.conf"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    prior_text: Optional[str] = None
+    lines: list[str] = []
+    if settings_path.exists():
+        prior_text = settings_path.read_text(encoding="utf-8", errors="ignore")
+        lines = [l for l in prior_text.splitlines() if not re.match(r"\s*app_Key\s*=", l)]
+    lines.append(f'app_Key = "{key}"')
+    settings_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return prior_text
+
+
+def _restore_settings_conf(prior_text: Optional[str]) -> None:
+    """Restore settings.conf to its pre-commit content (delete if it didn't exist)."""
+    settings_path = Path.home() / ".MakeMKV" / "settings.conf"
+    try:
+        if prior_text is None:
+            settings_path.unlink(missing_ok=True)
+        else:
+            settings_path.write_text(prior_text, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def set_registration_key(key: str) -> tuple[bool, str]:
+    """
+    Validate and register a MakeMKV key (purchased ``M-…`` or beta ``T-…``).
+    Returns (success, message).
+
+    #688: ``makemkvcon reg`` rejects valid beta keys that MakeMKV's runtime
+    accepts from settings.conf (the GUI and community tooling write the key
+    directly), so ``reg`` is not used at all. Instead the candidate is evaluated
+    in a sandboxed $HOME via makemkvcon's own startup verdict (MSG:5020 oracle —
+    see :func:`_probe_key_in_sandbox`), committed to the real settings.conf only
+    on a clean probe, and verified post-commit (restoring the prior file if the
+    committed state somehow regresses).
+    """
+    if not key or not key.strip():
+        raise MakeMKVUpdateError("Registration key is empty")
+
+    key = key.strip()
+    if not _MAKEMKV_KEY_RE.match(key):
+        raise MakeMKVUpdateError(
+            "That doesn't look like a MakeMKV key. Keys start with \"M-\" (purchased) "
+            "or \"T-\" (beta) followed by a long string of characters — paste the full key."
+        )
+
+    binary_path = get_makemkvcon_path()
+    key_type = "purchased" if key.startswith("M-") else "beta"
+
+    try:
+        verdict, _output = _probe_key_in_sandbox(binary_path, key)
     except FileNotFoundError:
         raise MakeMKVUpdateError("MakeMKV (makemkvcon) not found")
     except subprocess.TimeoutExpired:
         raise MakeMKVUpdateError("Key validation timed out")
-    
-    output = (result.stdout or "") + "\n" + (result.stderr or "")
-    
-    # Check if MakeMKV is not properly installed (missing libraries)
-    if "error while loading shared libraries" in output or "cannot open shared object file" in output:
-        raise MakeMKVUpdateError("MakeMKV is not properly installed. Please install MakeMKV before registering a key.")
-    
-    # Check for success
-    if "Found registration key" in output and "Registration key saved" in output:
-        # Invalidate registration status cache so next health check picks up the new key
-        with _reg_status_cache_lock:
-            _reg_status_cache["ts"] = 0.0
-        return True, "Registration key validated and saved"
-    
-    # Check for specific errors
-    if "Key not found or invalid" in output:
-        raise MakeMKVUpdateError("Invalid registration key")
-    
-    # Unknown error
-    raise MakeMKVUpdateError(f"Key validation failed: {output.strip()}")
+
+    if verdict == "invalid":
+        raise MakeMKVUpdateError(
+            "MakeMKV rejected this key as invalid. Double-check the full key was pasted"
+            + (
+                " — beta keys rotate roughly monthly, so make sure it's the current one from the MakeMKV forum."
+                if key_type == "beta"
+                else "."
+            )
+        )
+    if verdict == "binary_expired":
+        raise MakeMKVUpdateError(
+            "This MakeMKV version is too old, and the key could not be confirmed on it. "
+            "Update MakeMKV (Settings → MakeMKV → Update), then enter the key again."
+        )
+
+    # Clean probe: commit to the real settings.conf, then verify the committed state.
+    prior_text = _write_app_key_preserving(key)
+    try:
+        post_verdict, _post_output = _probe_key_in_sandbox(binary_path, _read_settings_key())
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        post_verdict = "valid"  # sandbox already proved the key; don't fail the commit on a flaky re-probe
+    if post_verdict == "invalid":
+        _restore_settings_conf(prior_text)
+        raise MakeMKVUpdateError(
+            "The key verified in isolation but not after saving — settings were restored. "
+            "Please retry; if this persists, check ~/.MakeMKV/settings.conf for conflicting entries."
+        )
+
+    # Invalidate registration status cache so next health check picks up the new key
+    with _reg_status_cache_lock:
+        _reg_status_cache["ts"] = 0.0
+    return True, f"Registration key verified and saved ({key_type} key)"
 
 
 def _normalize_version(version: Optional[str]) -> str:

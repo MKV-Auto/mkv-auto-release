@@ -1,5 +1,5 @@
 // src/app/components/release-selector/release-selector.component.ts
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ChangeDetectionStrategy, ChangeDetectorRef, HostListener, ElementRef } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, ChangeDetectorRef, HostListener, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subject, takeUntil, debounceTime, switchMap, of } from 'rxjs';
@@ -21,7 +21,7 @@ import {
   styleUrls: ['./release-selector.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class ReleaseSelectorComponent implements OnInit, OnDestroy {
+export class ReleaseSelectorComponent implements OnInit, OnChanges, OnDestroy {
   @Input() releaseOptions: ReleaseSummary[] = [];
   /** DiscDB proposal: show in list with needs-info until linked */
   @Input() pendingRelease: ReleaseSummary | null = null;
@@ -33,6 +33,14 @@ export class ReleaseSelectorComponent implements OnInit, OnDestroy {
   @Input() movieId: string | null = null;
   @Input() loading: boolean = false;
   @Input() error: string | null = null;
+  /**
+   * #685: outcome of the parent's create-release call. The selector no longer
+   * closes optimistically on submit — it waits for this to arrive: ok → close;
+   * error → keep the form open with the user's values intact and show the error
+   * inline. `token` must change on every result so repeated identical errors
+   * still trigger ngOnChanges.
+   */
+  @Input() createResult: { ok: boolean; error?: string; token: number } | null = null;
 
   @Output() releaseSelected = new EventEmitter<ReleaseSummary>();
   @Output() releaseCleared = new EventEmitter<void>();
@@ -54,6 +62,15 @@ export class ReleaseSelectorComponent implements OnInit, OnDestroy {
   pendingEditSaving = false;
   /** Bump when opening create or pending form so shared form reapplies prefill. */
   editionFormResetVersion = 0;
+  /** #685: create submitted, awaiting the parent's createResult. */
+  createSaving = false;
+  /** #685: inline errors for the create form (from a rejected create). */
+  createErrors: string[] = [];
+  /** #685: outside-click guards — where the interaction started, and when the
+   *  window last regained focus (a click that refocuses the window/tab must not
+   *  dismiss the panel). */
+  private lastPointerDownInside: boolean | null = null;
+  private windowFocusedAt = 0;
   /** Stable reference for create flow (avoid re-applying prefill every CD cycle). */
   readonly emptyEditionPrefill: Partial<EditionFormValue> = {};
   /**
@@ -123,6 +140,24 @@ export class ReleaseSelectorComponent implements OnInit, OnDestroy {
     private toastSvc: ToastService
   ) {}
 
+  ngOnChanges(changes: SimpleChanges): void {
+    // #685: react to the parent's create outcome. Success closes the panel;
+    // failure keeps the create form open (user input intact) with the error inline.
+    const cr = changes['createResult'];
+    if (cr && !cr.firstChange && this.createResult && this.createSaving) {
+      if (this.createResult.ok) {
+        this.createSaving = false;
+        this.createErrors = [];
+        this.showCreateForm = false;
+        this.isOpen = false;
+      } else {
+        this.createSaving = false;
+        this.createErrors = [this.createResult.error || 'Failed to create release'];
+      }
+      this.cdr.markForCheck();
+    }
+  }
+
   ngOnInit(): void {
     this.mobileService.isMobile$.pipe(takeUntil(this.destroy$)).subscribe(isMobile => {
       this.isMobile = isMobile;
@@ -185,6 +220,8 @@ export class ReleaseSelectorComponent implements OnInit, OnDestroy {
     this.pendingEditPurpose = null;
     this.pendingEditRelease = null;
     this.pendingReleaseEditionPrefill = {};
+    this.createSaving = false;
+    this.createErrors = [];
     this.editionFormResetVersion++;
     this.cdr.markForCheck();
   }
@@ -385,6 +422,12 @@ export class ReleaseSelectorComponent implements OnInit, OnDestroy {
   }
 
   onReleaseEditionCreate(v: EditionFormValue): void {
+    // #685: do NOT close here — the create is async and can fail (duplicate,
+    // backend-rejected UPC/URL, network). Stay open in a saving state; the
+    // parent reports the outcome via [createResult] (see ngOnChanges), which
+    // closes on success or surfaces the error with the user's input intact.
+    this.createSaving = true;
+    this.createErrors = [];
     this.releaseCreated.emit({
       name: v.name,
       release_year: v.year,
@@ -393,18 +436,34 @@ export class ReleaseSelectorComponent implements OnInit, OnDestroy {
       cover_front_url: v.cover_front_url,
       cover_back_url: v.cover_back_url || undefined,
     });
-    this.showCreateForm = false;
-    this.isOpen = false;
     this.cdr.markForCheck();
   }
 
   cancelCreateForm(): void {
     this.showCreateForm = false;
+    this.createSaving = false;
+    this.createErrors = [];
     this.cdr.markForCheck();
   }
 
   onReleaseCleared(): void {
     this.releaseCleared.emit();
+  }
+
+  /** #685: a click that merely refocuses the window/tab must not dismiss the
+   *  panel. Track when focus returned so the first click after it is ignored. */
+  @HostListener('window:focus')
+  onWindowFocus(): void {
+    this.windowFocusedAt = Date.now();
+  }
+
+  /** #685: record where the interaction STARTED — a dismiss requires the whole
+   *  gesture (mousedown AND click) to happen outside, so drags that start inside
+   *  and synthetic/refocus clicks with no in-page mousedown can't close it. */
+  @HostListener('document:mousedown', ['$event'])
+  onDocumentMouseDown(event: Event): void {
+    const target = event.target as HTMLElement;
+    this.lastPointerDownInside = this.elementRef.nativeElement.contains(target);
   }
 
   @HostListener('document:click', ['$event'])
@@ -417,7 +476,16 @@ export class ReleaseSelectorComponent implements OnInit, OnDestroy {
       target?.closest('.cdk-overlay-pane.mobile-drawer-overlay-panel') != null ||
       target?.closest('.drawer-content') != null;
     if (isClickInDrawer) return;
-    if (!isClickInside && this.isOpen && !this.isMobile) {
+    // Ignore the click that brought the window/tab back into focus (#685).
+    if (Date.now() - this.windowFocusedAt < 350) {
+      this.lastPointerDownInside = null;
+      return;
+    }
+    // Only dismiss when the gesture started outside too (null = no in-page
+    // mousedown seen, e.g. a synthetic or refocus click — not a dismiss).
+    const startedInside = this.lastPointerDownInside;
+    this.lastPointerDownInside = null;
+    if (!isClickInside && startedInside === false && this.isOpen && !this.isMobile) {
       this.closePanel();
     }
   }

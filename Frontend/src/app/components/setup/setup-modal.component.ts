@@ -239,6 +239,16 @@ export class SetupModalComponent implements OnInit {
       ...this.stepData,
       [key]: { ...(this.stepData[key] as object), ...data } as SetupStepData[keyof SetupStepData],
     };
+    // #689: the Library choice must reach the backend, not just wizard memory —
+    // media_server drives postprocess naming paths, and the only other writer is
+    // the Settings page. Persist on selection so Continue/Back/step-jumps/abandon
+    // all keep the backend in sync with what the user picked.
+    if (step === 'library') {
+      const type = (data as Partial<SetupStepData['library']>).type;
+      if (type === 'plex' || type === 'jellyfin') {
+        this.systemSvc.saveMediaServerConfig({ media_server: type }).subscribe({ error: () => {} });
+      }
+    }
   }
 
   onComplete(showGuide: boolean): void {

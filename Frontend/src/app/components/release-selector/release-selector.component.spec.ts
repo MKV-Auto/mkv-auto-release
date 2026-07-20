@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { SimpleChange } from '@angular/core';
 import { of } from 'rxjs';
 import { OverlayModule } from '@angular/cdk/overlay';
 import { ReleaseSelectorComponent } from './release-selector.component';
@@ -82,5 +83,75 @@ describe('ReleaseSelectorComponent', () => {
     );
     expect(component.releaseMetaLine({ resolution: '1080p' } as any)).toBe('1080p');
     expect(component.releaseMetaLine({} as any)).toBe('');
+  });
+
+  describe('#685: create form survives a rejected submit', () => {
+    function pushCreateResult(result: { ok: boolean; error?: string; token: number }) {
+      component.createResult = result;
+      component.ngOnChanges({
+        createResult: new SimpleChange(null, result, false),
+      });
+    }
+
+    it('submit keeps the panel open in a saving state (no optimistic close)', () => {
+      component.isOpen = true;
+      component.showCreateForm = true;
+      component.onReleaseEditionCreate({
+        name: 'The Matrix 4K', year: 2021, upc: '123456789012', asin: '', cover_front_url: 'https://x/f.jpg', cover_back_url: '',
+      } as any);
+      expect(component.isOpen).toBe(true);
+      expect(component.showCreateForm).toBe(true);
+      expect(component.createSaving).toBe(true);
+    });
+
+    it('a failed create surfaces the error inline and keeps the form (values intact)', () => {
+      component.isOpen = true;
+      component.showCreateForm = true;
+      component.createSaving = true;
+      pushCreateResult({ ok: false, error: 'Release already exists', token: 1 });
+      expect(component.isOpen).toBe(true);
+      expect(component.showCreateForm).toBe(true);
+      expect(component.createErrors).toEqual(['Release already exists']);
+      expect(component.createSaving).toBe(false);
+    });
+
+    it('a successful create closes the panel and clears errors', () => {
+      component.isOpen = true;
+      component.showCreateForm = true;
+      component.createSaving = true;
+      pushCreateResult({ ok: true, token: 2 });
+      expect(component.isOpen).toBe(false);
+      expect(component.showCreateForm).toBe(false);
+      expect(component.createErrors).toEqual([]);
+    });
+  });
+
+  describe('#685: panel survives window/tab refocus', () => {
+    const outside = () => document.body;
+
+    it('the click that refocuses the window does not dismiss the panel', () => {
+      component.isOpen = true;
+      (component as any).isMobile = false;
+      component.onWindowFocus();
+      component.onDocumentClick({ target: outside() } as unknown as Event);
+      expect(component.isOpen).toBe(true);
+    });
+
+    it('a click with no in-page mousedown (synthetic/refocus) does not dismiss', () => {
+      component.isOpen = true;
+      (component as any).isMobile = false;
+      (component as any).windowFocusedAt = 0;
+      component.onDocumentClick({ target: outside() } as unknown as Event);
+      expect(component.isOpen).toBe(true);
+    });
+
+    it('a genuine outside gesture (mousedown + click outside) still dismisses', () => {
+      component.isOpen = true;
+      (component as any).isMobile = false;
+      (component as any).windowFocusedAt = 0;
+      component.onDocumentMouseDown({ target: outside() } as unknown as Event);
+      component.onDocumentClick({ target: outside() } as unknown as Event);
+      expect(component.isOpen).toBe(false);
+    });
   });
 });

@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-20
+
+### Fixed
+
+- **Beta keys register again (#688).** MakeMKV's `reg` command rejects valid beta (`T-…`) keys that MakeMKV itself accepts, so entering the current forum beta key failed with "Invalid registration key" — and when MakeMKV reported registration as required, that hard-blocked first-run setup entirely. Keys are now validated by planting the candidate in an isolated sandbox and reading makemkvcon's own startup verdict (its `MSG:5020` invalid-key message is definitive, even mid-trial), then committed to the real settings only on a clean pass — an invalid stored key actually *degrades* a working trial, so the sandbox isn't just tidiness. Purchased (`M-…`) keys were never affected. The wizard now also relays the specific failure (invalid key vs "update MakeMKV" vs malformed) instead of blaming typos, and says plainly that the key is optional while MakeMKV's trial is active.
+- **The setup wizard's Plex/Jellyfin choice actually saves now (#689).** Selecting Jellyfin during setup only updated wizard memory; the backend stayed on Plex and postprocess used Plex naming. The choice persists the moment you make it.
+- **Creating a release no longer eats your input on failure (#685).** The create form closed itself before the server answered, so a rejected create (duplicate, bad UPC, network) threw away everything you typed. It now stays open with your values and shows the error inline, closing only on success. The release picker also no longer collapses when you switch browser tabs and come back.
+
+
 ## [1.0.0] - 2026-07-18
 
 ### TL;DR — first public release

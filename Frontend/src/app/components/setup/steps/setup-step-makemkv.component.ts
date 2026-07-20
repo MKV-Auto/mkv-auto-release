@@ -10,6 +10,7 @@ import {
   SystemService,
 } from '../../../services/system.service';
 import { WorkflowService } from '../../../services/workflow.service';
+import { formatHttpErrorDetail } from '../../../services/toast.service';
 import { Subscription } from 'rxjs';
 import { filter } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
@@ -133,7 +134,14 @@ export interface MakemkvStepData {
           <ui-icon name="info" [size]="16" style="flex-shrink: 0; margin-top: 0.125rem;"></ui-icon>
           <span>{{ discWorkflowBlockHint }}</span>
         </div>
-        <label class="setup-step-label">Registration Key <span class="text-red-400">*</span></label>
+        <div
+          *ngIf="!data.disc_workflow_blocked && !data.valid"
+          style="display: flex; align-items: start; gap: 0.5rem; margin-bottom: 0.75rem; color: rgba(255,255,255,0.6); font-size: 0.875rem;"
+        >
+          <ui-icon name="info" [size]="16" style="flex-shrink: 0; margin-top: 0.125rem;"></ui-icon>
+          <span>MakeMKV's built-in trial is currently active — you can continue setup without a key and add one later in Settings → MakeMKV.</span>
+        </div>
+        <label class="setup-step-label">Registration Key <span *ngIf="data.disc_workflow_blocked" class="text-red-400">*</span><span *ngIf="!data.disc_workflow_blocked" style="color: rgba(255,255,255,0.4); font-weight: 400;">(optional during trial)</span></label>
         <div class="setup-step-input-wrap">
           <input
             type="text"
@@ -561,12 +569,17 @@ export class SetupStepMakemkvComponent implements OnChanges, OnInit, OnDestroy {
             },
           });
         } else {
-          this.error = "MakeMKV didn't accept that key. Double-check for typos and paste the full key, then try again.";
+          this.error = 'The key saved but MakeMKV reports it as expired — beta keys rotate roughly monthly, so grab the current one from the MakeMKV forum.';
         }
       },
-      error: () => {
+      error: (err) => {
         this.validating = false;
-        this.error = "MakeMKV didn't accept that key. Double-check for typos and paste the full key, then try again.";
+        // Surface the backend's specific verdict (#688): invalid key vs
+        // binary-too-old vs malformed each get distinct, actionable copy.
+        const detail = formatHttpErrorDetail(err);
+        this.error = detail && detail !== 'Request failed'
+          ? detail
+          : "MakeMKV didn't accept that key. Double-check for typos and paste the full key, then try again.";
       },
     });
   }

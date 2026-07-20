@@ -76,4 +76,21 @@ describe('SetupModalComponent', () => {
     expect(component.stepData.makemkv.valid).toBe(true);
     expect(component.stepData.makemkv.installed).toBe(true);
   });
+
+  it('#689: selecting a library type persists media_server to the backend', () => {
+    // The wizard used to keep the Plex/Jellyfin choice in component memory only —
+    // the backend stayed on its default and the main UI showed Plex regardless.
+    const svc = (component as any).systemSvc;
+    const save = spyOn(svc, 'saveMediaServerConfig').and.returnValue({ subscribe: () => {} } as any);
+    component.onStepDataChange('library', { type: 'jellyfin' });
+    expect(save).toHaveBeenCalledWith({ media_server: 'jellyfin' });
+    expect(component.stepData.library.type).toBe('jellyfin');
+  });
+
+  it('#689: non-library step changes do not touch media-server config', () => {
+    const svc = (component as any).systemSvc;
+    const save = spyOn(svc, 'saveMediaServerConfig');
+    component.onStepDataChange('makemkv', { key: 'T-key' });
+    expect(save).not.toHaveBeenCalled();
+  });
 });

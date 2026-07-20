@@ -140,6 +140,10 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
   
   // Release creation modal state
   showReleaseCreateModal: boolean = false;
+  /** #685: outcome of the last create-release call, consumed by the selector so
+   *  the create form survives failures with the user's input intact. */
+  releaseCreateResult: { ok: boolean; error?: string; token: number } | null = null;
+  private releaseCreateToken = 0;
   newRelease: { name: string; release_year: number | null; upc?: string; asin?: string; cover_front_url?: string; cover_back_url?: string } = { name: '', release_year: null };
   releaseValidationErrors: { [key: string]: boolean } = {};
   
@@ -1750,6 +1754,7 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
     const currentContext = this.workflowService.getCurrentContext();
     if (!currentContext) {
       this.logger.error('No active workflow context');
+      this.releaseCreateResult = { ok: false, error: 'No active workflow context — reload and try again', token: ++this.releaseCreateToken };
       return;
     }
 
@@ -1763,6 +1768,7 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
         : null;
     if (releaseYear == null || releaseYear < 1000 || releaseYear > 9999) {
       this.toastService.show('Release year is required (1000–9999)', 'error', 3000);
+      this.releaseCreateResult = { ok: false, error: 'Release year is required (1000–9999)', token: ++this.releaseCreateToken };
       return;
     }
     const payload: Record<string, unknown> = {
@@ -1780,6 +1786,7 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
 
     this.metadataService.createReleaseForDisc(discId, mountPoint, payload).subscribe({
       next: (result) => {
+        this.releaseCreateResult = { ok: true, token: ++this.releaseCreateToken };
         this.refreshReleaseOptions$.next();
         this.toastService.show('Release created', 'success', 2000);
         const rel = result.release;
@@ -1794,6 +1801,7 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.logger.error('Failed to create release:', err);
+        this.releaseCreateResult = { ok: false, error: formatHttpErrorDetail(err), token: ++this.releaseCreateToken };
         this.toastService.show(formatHttpErrorDetail(err), 'error', 5000);
       },
     });

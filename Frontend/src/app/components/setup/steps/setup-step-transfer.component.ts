@@ -25,7 +25,7 @@ export interface TransferStepData {
         </div>
         <div class="setup-step-header-text">
           <h3 class="setup-step-title">Transfer Destination</h3>
-          <p class="setup-step-desc">Configure where your processed media files will be transferred. This can be a local folder, network share (SMB), or NFS mount where your media server (Plex/Jellyfin) can access them.</p>
+          <p class="setup-step-desc">Configure where your processed media files will be transferred. This can be a local folder or an SMB share your media server (Plex/Jellyfin) can access — other network storage works too if you mount it into the container and use local mode.</p>
         </div>
       </div>
 

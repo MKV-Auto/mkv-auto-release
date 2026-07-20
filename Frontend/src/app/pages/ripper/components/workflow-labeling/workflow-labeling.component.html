@@ -223,6 +223,7 @@
             [loading]="metadataSaving"
             (releaseSelected)="onReleaseSelected($event)"
             (releaseCleared)="onReleaseCleared()"
+            [createResult]="releaseCreateResult"
             (releaseCreated)="onReleaseCreated($event)"
             (releaseMetadataPatched)="onReleaseMetadataPatched($event)"
             (releaseDeleted)="onReleaseDeleted($event)">
