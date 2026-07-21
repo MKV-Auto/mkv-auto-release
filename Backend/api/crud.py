@@ -990,8 +990,10 @@ def get_or_create_release(db: Session, payload: dict, disc_hash: str | None = No
     
     rel = models.Release(
         slug=final_slug,
+        # #711 backstop: never persist a nameless boxset-member release (it
+        # silently stalls the label workflow). Fall back to the boxset name.
         type=payload.get("group_type") or payload.get("title_type") or "movie",
-        name=payload.get("release_name") or None,
+        name=(payload.get("release_name") or (boxset.name or boxset.title if boxset else None) or None),
         movie_id=movie_id,
         upc=payload.get("upc"),
         asin=payload.get("asin"),

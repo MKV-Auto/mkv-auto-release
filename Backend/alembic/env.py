@@ -17,8 +17,16 @@ config = context.config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
+#
+# disable_existing_loggers=False: the default (True) sets `.disabled = True` on
+# every logger NOT declared in alembic.ini — which includes the whole app
+# (core.*, api.*). In production that's harmless (migrations run in their own
+# process), but any IN-PROCESS alembic call (the migration data-safety test,
+# #709) would otherwise silently kill every app logger for the rest of the
+# session, breaking downstream caplog-based tests. Alembic has no business
+# disabling the application's loggers.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # add your model's MetaData object here
 # for 'autogenerate' support

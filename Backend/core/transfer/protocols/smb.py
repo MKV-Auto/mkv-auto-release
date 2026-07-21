@@ -14,7 +14,40 @@ import re
 import subprocess
 import shutil
 import os
+import math
 log = logging.getLogger(__name__)
+
+
+# #712: the smbclient put ran under a blunt hardcoded 1-hour cap, which killed
+# large UHD transfers mid-flight ("Transfer timeout") — a ~60-90 GB main title
+# over SMB can take well over an hour. Scale the per-file timeout by size,
+# assuming a conservative minimum throughput, with a 1-hour floor and an
+# absolute env override. This fails only genuinely-stuck transfers, not
+# slow-but-progressing large files.
+#   MKVAUTO_SMB_PUT_TIMEOUT          absolute per-put timeout (seconds) — wins if set
+#   MKVAUTO_SMB_MIN_BYTES_PER_SEC    assumed floor throughput (default 2 MiB/s)
+#   MKVAUTO_SMB_PUT_TIMEOUT_FLOOR    minimum timeout (default 3600s)
+def _env_int(name: str, default: int) -> int:
+    try:
+        v = int(os.getenv(name, "") or default)
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _smb_put_timeout(total_size_bytes: int | None) -> int:
+    """Per-put subprocess timeout scaled by file size (see note above)."""
+    override = os.getenv("MKVAUTO_SMB_PUT_TIMEOUT")
+    if override:
+        try:
+            n = int(override)
+            if n > 0:
+                return n
+        except (TypeError, ValueError):
+            pass
+    floor = _env_int("MKVAUTO_SMB_PUT_TIMEOUT_FLOOR", 3600)
+    bps = _env_int("MKVAUTO_SMB_MIN_BYTES_PER_SEC", 2 * 1024 * 1024)
+    return max(floor, int(math.ceil((total_size_bytes or 0) / bps)))
 
 
 _BENIGN_MKDIR_MARKERS: tuple[str, ...] = (
@@ -406,7 +439,7 @@ def _transfer_smb_anonymous(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=3600  # 1 hour timeout
+                timeout=_smb_put_timeout(total_size)  # #712: scale by file size
             )
             
             if result.returncode != 0:
@@ -687,7 +720,7 @@ def _transfer_smb_directory_smbclient(
                 cwd=local_dir,
                 capture_output=True,
                 text=True,
-                timeout=3600,
+                timeout=_smb_put_timeout(local_file.stat().st_size),  # #712: scale by file size
             )
 
             put_stdout = file_result.stdout or ""
@@ -730,7 +763,7 @@ def _transfer_smb_directory_smbclient(
                             cwd=local_dir,
                             capture_output=True,
                             text=True,
-                            timeout=3600,
+                            timeout=_smb_put_timeout(local_file.stat().st_size),  # #712: scale by file size
                         )
                         put_stdout = file_result.stdout or ""
                         put_stderr = file_result.stderr or ""

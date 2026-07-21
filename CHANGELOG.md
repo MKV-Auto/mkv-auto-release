@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-07-21
+
+### Added
+
+- **Upgrades can't lose your library (#709).** Before applying any database change on startup, the container now takes an automatic backup and refuses to serve if a migration fails partway — so an update can never leave you with a half-changed, broken database. Backups are kept under `/data/backups` and can be restored with a bundled script.
+
+### Fixed
+
+- **Adding a disc to an existing boxset no longer stalls it (#711).** Choosing "add to existing boxset" could create the disc's release without a name, which silently blocked that disc from finishing labeling (no error, no progress). The release now always takes its name from the boxset, so the disc flows through to transfer like the rest of the set.
+- **Large 4K transfers no longer time out (#712).** Sending a big UHD title (50–90 GB) to an SMB share could fail with "Transfer timeout" and retry forever — the copy had a fixed one-hour limit a large movie can exceed, especially over a busy connection. The limit now scales with file size, so large transfers run to completion instead of being cut off mid-copy.
+
 ## [1.0.2] - 2026-07-21
 
 ### Added

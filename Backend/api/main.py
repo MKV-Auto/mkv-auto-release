@@ -925,6 +925,32 @@ _READINESS_CACHE_TTL_COLD_SECONDS = 2.0
 _READINESS_CACHE_TTL_WARM_SECONDS = 30.0
 _readiness_state: dict[str, Any] = {"checked_at": 0.0, "ready": False, "error": None}
 
+# #709: the guarded startup migration (Docker/scripts/db-migrate.sh) writes this
+# sentinel when `alembic upgrade head` fails, so the DB is left half-migrated.
+# While it exists the backend must refuse to serve real traffic — a half-migrated
+# schema silently corrupts reads/writes. The readiness check below treats its
+# presence as "not ready", which the readiness_gate middleware turns into a 503
+# for every non-allowlisted (mutating) route. Cleared by a later successful
+# migration run. Env-overridable so tests don't touch a real /data path.
+_MIGRATION_FAILED_SENTINEL = os.getenv(
+    "MKVAUTO_MIGRATION_SENTINEL", "/data/.mkvauto-migration-failed"
+)
+
+
+def _migration_failure_reason() -> Optional[str]:
+    """Return the migration-failure detail if the sentinel exists, else None.
+
+    A bare stat on the happy path (sentinel absent) is a cheap syscall; the file
+    is only read when it actually exists (a failed upgrade — rare)."""
+    try:
+        if not os.path.exists(_MIGRATION_FAILED_SENTINEL):
+            return None
+        with open(_MIGRATION_FAILED_SENTINEL, "r", encoding="utf-8") as fh:
+            detail = fh.read().strip()
+        return detail or "database migration failed"
+    except OSError:
+        return None
+
 # Coalesces concurrent cold-cache callers. Without this, a fresh page load
 # fires N concurrent middleware passes that each open their own
 # SessionLocal + SELECT 1 round-trip while the event loop is blocked,
@@ -966,6 +992,11 @@ def _check_db_ready() -> tuple[bool, Optional[str]]:
     middleware uses ``_check_db_ready_async`` which adds executor offload
     and coalescing — both irrelevant in a sync context.
     """
+    mig = _migration_failure_reason()
+    if mig is not None:
+        _readiness_state["ready"] = False
+        _readiness_state["error"] = mig
+        return False, f"migration_failed: {mig}"
     now = time.monotonic()
     state = _readiness_state
     if state["ready"] and (now - state["checked_at"]) < _readiness_ttl_for_current_state():
@@ -994,6 +1025,11 @@ async def _check_db_ready_async() -> tuple[bool, Optional[str]]:
     3. Each lock-holder re-checks the cache before pinging, in case
        another caller refreshed it while we were waiting on the lock.
     """
+    mig = _migration_failure_reason()
+    if mig is not None:
+        _readiness_state["ready"] = False
+        _readiness_state["error"] = mig
+        return False, f"migration_failed: {mig}"
     state = _readiness_state
     now = time.monotonic()
     if state["ready"] and (now - state["checked_at"]) < _readiness_ttl_for_current_state():

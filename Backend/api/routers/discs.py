@@ -3814,6 +3814,25 @@ def create_release_for_disc(
                     or ("series" if getattr(movie, "tmdb_type", None) == "tv" else "movie")
                 )
 
+    # #711: a boxset-member release must still get a name. The block above only
+    # defaults for standalone releases (not boxset_id), relying on the boxset
+    # name to flow in via _merge_boxset_into_release_payload during
+    # get_or_create_release. When that doesn't take effect the release is created
+    # nameless and the label workflow silently stalls (no finalize, no error).
+    # Set the name explicitly here — boxset name/title, else the movie name — so
+    # it is in the payload regardless of the internal merge.
+    if movie_id and release_data.get("boxset_id"):
+        rn = release_data.get("release_name")
+        if not rn or not str(rn).strip():
+            derived = None
+            bx = db.query(db_models.Boxset).filter(db_models.Boxset.id == release_data["boxset_id"]).first()
+            if bx:
+                derived = (bx.name or bx.title or "").strip() or None
+            if not derived:
+                mv = db.query(db_models.Movie).filter(db_models.Movie.id == movie_id).first()
+                derived = (mv.name or "").strip() if (mv and mv.name) else None
+            release_data["release_name"] = derived or "Unknown"
+
     # If no movie_id block ran but we still need group_type, set from label_draft or default
     if not release_data.get("group_type") and not release_data.get("type") and label_draft.get("group_type"):
         release_data["group_type"] = label_draft["group_type"]

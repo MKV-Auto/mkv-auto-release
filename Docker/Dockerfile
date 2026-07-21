@@ -103,6 +103,9 @@ COPY Docker/nginx.conf /etc/nginx/sites-available/mkvauto
 COPY Docker/supervisord.conf /etc/supervisor/conf.d/mkvauto.conf
 COPY Docker/entrypoint.sh /entrypoint.sh
 COPY Docker/healthcheck.sh /healthcheck.sh
+# #709: guarded migration (pre-migration backup + halt-on-failure) and restore
+COPY Docker/db-migrate.sh /app/db-migrate.sh
+COPY Docker/db-restore.sh /app/db-restore.sh
 
 # Generate udev rules from template with Docker-specific paths
 COPY Deploy/udev/99-mkva-disc.rules.template /tmp/udev-template.rules
@@ -116,7 +119,7 @@ RUN sed -e 's|__MKVAUTO_ROOT__|/data/mkvauto|g' \
 # Configure NGINX
 RUN rm -f /etc/nginx/sites-enabled/default && \
     ln -s /etc/nginx/sites-available/mkvauto /etc/nginx/sites-enabled/mkvauto && \
-    chmod +x /entrypoint.sh /healthcheck.sh
+    chmod +x /entrypoint.sh /healthcheck.sh /app/db-migrate.sh /app/db-restore.sh
 
 # Create supervisor log directory
 RUN mkdir -p /var/log/supervisor
