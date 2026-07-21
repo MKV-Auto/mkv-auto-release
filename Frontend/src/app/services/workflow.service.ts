@@ -4511,9 +4511,14 @@ export class WorkflowService implements OnDestroy {
       return of(currentContext);
     }
 
-    // Save current context to cache before switching
-    if (currentContext && selectedCard) {
-      const prevCacheKey = this.cacheKeyForCard(selectedCard);
+    // Save current context to cache before switching — keyed by the context's
+    // OWN identity, never by getSelectedCard(): callers (card-carousel, seamless
+    // switch) advance selectedCard to the NEW card before calling us, which used
+    // to store the previous card's context under the new card's cache key. The
+    // optimistic restore below then displayed the old card's state as the new
+    // one and the preserve-step graft made it durable (#693).
+    if (currentContext && currentContext.id) {
+      const prevCacheKey = this.cacheKeyForCard({ type: currentContext.type, id: currentContext.id });
       this.cacheContext(prevCacheKey, currentContext);
       
       if (currentContext.workflowStep && currentContext.saveCallback) {
@@ -4527,7 +4532,7 @@ export class WorkflowService implements OnDestroy {
           next: () => {
             this.logger.debug('[WorkflowService] Saved workflowStep before switching cards', {
               workflowStep: currentContext.workflowStep,
-              cardId: this.getSelectedCard()?.id
+              cardId: currentContext.id
             });
           },
           error: (err) => {
@@ -4628,9 +4633,12 @@ export class WorkflowService implements OnDestroy {
           };
         }
         
-        // When upgrading from cached → fresh, preserve user's navigation state
+        // When upgrading from cached → fresh, preserve user's navigation state —
+        // but only when the on-screen context IS this card (#693: a foreign
+        // context here must never donate its workflowStep to this card).
         const currentActive = this._activeContext$.value;
-        const preserveStep = cached && currentActive?.workflowStep;
+        const preserveStep = cached && currentActive?.workflowStep &&
+          currentActive.type === convertedContext.type && currentActive.id === convertedContext.id;
         
         const completeContext: WorkflowContext = {
           ...convertedContext,

@@ -1,7 +1,8 @@
 import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { NO_ERRORS_SCHEMA } from '@angular/core';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
-import { of } from 'rxjs';
+import { of, timer } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { WorkflowLabelingComponent } from './workflow-labeling.component';
 import { WorkflowService } from '../../../../services/workflow.service';
 import { WorkflowContext } from '../../../../services/workflow.service';
@@ -310,9 +311,9 @@ describe('WorkflowLabelingComponent', () => {
     expect(merged[0].detection_confidence).toBe(0.9);
   });
 
-  it('mergeLabelFormDiscFieldsWithBackend keeps backend slug when client slug is blank', () => {
+  it('mergeLabelFormWithBackend keeps backend slug when client slug is blank', () => {
     fixture.detectChanges();
-    const merged = (component as any).mergeLabelFormDiscFieldsWithBackend(
+    const merged = (component as any).mergeLabelFormWithBackend(
       { disc_name: 'My Disc', disc_slug: '' },
       { disc_name: 'My Disc', disc_slug: 'my-disc' }
     );
@@ -501,5 +502,99 @@ describe('WorkflowLabelingComponent', () => {
       } as any;
       expect(component.showTmdbSuggestionCard(ctx)).toBe(true);
     });
+  });
+
+  describe('#695: labeling saves are debounced, ordered, and echo-guarded', () => {
+    let store: { context: any };
+
+    /** Store-backed context fakes: updateContext writes through so tests observe final state. */
+    function seed(lf: any = {}): void {
+      store = {
+        context: {
+          id: 'job-1',
+          type: 'job',
+          labelForm: { workflow_step: 'film', disc_name: '', disc_slug: '', ...lf },
+          titles: [],
+        },
+      };
+      workflowSvc.getCurrentContext.and.callFake(() => store.context);
+      workflowSvc.updateContext.and.callFake((u: any) => {
+        store.context = { ...store.context, ...u };
+      });
+      (workflowSvc as any).contextMatchesSelection = jasmine
+        .createSpy('contextMatchesSelection')
+        .and.returnValue(true);
+      fixture.detectChanges(); // ngOnInit wires the debounced save queue
+    }
+
+    it('typing updates the context from the event value, not the bound object', () => {
+      // Pre-#695 the handler copied the (possibly stale) template-bound object,
+      // which could miss the newest keystroke entirely.
+      seed({ disc_name: 'Pre' });
+      component.onNameChange('Predator');
+      expect(store.context.labelForm.disc_name).toBe('Predator');
+    });
+
+    it('per-keystroke edits collapse into one trailing save with the final value', fakeAsync(() => {
+      seed();
+      workflowSvc.saveJobWorkflowContext.and.returnValue(of(null as any));
+      component.onLabelChange({ field: 'disc_slug', value: 'p' });
+      component.onLabelChange({ field: 'disc_slug', value: 'pr' });
+      component.onLabelChange({ field: 'disc_slug', value: 'pred' });
+      expect(workflowSvc.saveJobWorkflowContext).not.toHaveBeenCalled(); // debounced
+      tick(400);
+      expect(workflowSvc.saveJobWorkflowContext).toHaveBeenCalledTimes(1);
+      expect(workflowSvc.saveJobWorkflowContext.calls.mostRecent().args[1].disc_slug).toBe('pred');
+    }));
+
+    it('a stale echo cannot overwrite newer typing (switchMap supersession)', fakeAsync(() => {
+      seed({ disc_name: 'Old' });
+      // First save responds slowly with an echo that predates further typing.
+      const staleEcho = { id: 'job-1', type: 'job', labelForm: { disc_name: 'Old M', disc_slug: '' }, titles: [] };
+      workflowSvc.saveJobWorkflowContext.and.returnValue(timer(1000).pipe(map(() => staleEcho as any)));
+      component.onNameChange('Old M');
+      tick(400); // save 1 fires (slow)
+      workflowSvc.saveJobWorkflowContext.and.returnValue(
+        of({ id: 'job-1', type: 'job', labelForm: { disc_name: 'Old Movie', disc_slug: '' }, titles: [] } as any)
+      );
+      component.onNameChange('Old Movie');
+      tick(400);  // save 2 fires; switchMap cancels save 1's echo handling
+      tick(1000); // stale echo's timer elapses — must be ignored
+      expect(store.context.labelForm.disc_name).toBe('Old Movie');
+    }));
+
+    it('echo guard: user-typed fields survive, server-owned fields adopt', () => {
+      seed({ disc_name: 'Typed Name', release_name: 'Typed Release' });
+      (component as any).applyEchoGuarded({
+        id: 'job-1',
+        type: 'job',
+        labelForm: { disc_name: 'Stale', release_name: 'Stale R', disc_number: 3, movie_cover_path: '/covers/x.jpg' },
+        titles: [],
+      });
+      expect(store.context.labelForm.disc_name).toBe('Typed Name');
+      expect(store.context.labelForm.release_name).toBe('Typed Release');
+      expect(store.context.labelForm.disc_number).toBe(3);
+      expect(store.context.labelForm.movie_cover_path).toBe('/covers/x.jpg');
+    });
+
+    it('cleared slug still adopts the server-generated one', () => {
+      seed({ disc_slug: '' });
+      (component as any).applyEchoGuarded({
+        id: 'job-1',
+        type: 'job',
+        labelForm: { disc_slug: 'auto-generated' },
+        titles: [],
+      });
+      expect(store.context.labelForm.disc_slug).toBe('auto-generated');
+    });
+
+    it('name blur enqueues a real save (updateContext alone never persisted)', fakeAsync(() => {
+      seed({ disc_name: 'Persist Me' });
+      workflowSvc.saveJobWorkflowContext.and.returnValue(of(null as any));
+      component.onNameBlur();
+      tick(400);
+      expect(workflowSvc.saveJobWorkflowContext).toHaveBeenCalledTimes(1);
+      expect(workflowSvc.saveJobWorkflowContext.calls.mostRecent().args[1].disc_name).toBe('Persist Me');
+    }));
   });
 });

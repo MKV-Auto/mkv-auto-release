@@ -77,6 +77,24 @@
                   aria-label="Labeling complete">
                   <ui-icon name="check-circle" [size]="14"></ui-icon>
                 </span>
+                <!-- #701: quick-ignore toggle without opening the editor.
+                     role=button span (not <button>) because the whole row is
+                     already a button element — nesting would be invalid HTML. -->
+                <span
+                  class="title-label-row-ignore"
+                  role="button"
+                  tabindex="0"
+                  [class.is-unignore]="isIgnored(t)"
+                  [attr.title]="isIgnored(t) ? 'Un-ignore title' : 'Ignore title'"
+                  [attr.aria-label]="isIgnored(t) ? 'Un-ignore title' : 'Ignore title'"
+                  (click)="$event.stopPropagation(); markAsIgnore(t)"
+                  (keydown.enter)="$event.stopPropagation(); $event.preventDefault(); markAsIgnore(t)"
+                  (keydown.space)="$event.stopPropagation(); $event.preventDefault(); markAsIgnore(t)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </span>
               </span>
             </app-title-row>
           </ng-container>
@@ -298,6 +316,15 @@
           </div>
         </div>
 
+        <!-- #701: quick preview — disabled (dimmed) when no preview clip exists -->
+        <button class="title-card-preview-btn"
+                type="button"
+                [disabled]="!getQuickPreviewUrl(row.title)"
+                (click)="openQuickPreview(row.title); $event.stopPropagation()"
+                [title]="getQuickPreviewUrl(row.title) ? 'Play preview' : 'Preview not available'"
+                [attr.aria-label]="getQuickPreviewUrl(row.title) ? 'Play preview' : 'Preview not available'">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+        </button>
         <button class="title-card-ignore-btn" (click)="markAsIgnore(row.title); $event.stopPropagation()" [title]="(row.title.type || '').toLowerCase() === 'ignore' ? 'Un-ignore title' : 'Ignore title'">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 22 20-20"/></svg>
         </button>
@@ -505,4 +532,16 @@
       </div>
     </app-mobile-drawer>
   </ng-container>
+
+  <!-- #701: quick-preview overlay (mobile play button). Single ✕ close —
+       no redundant footer Close button by design. -->
+  <div class="quick-preview-backdrop" *ngIf="quickPreviewTitle" (click)="closeQuickPreview()">
+    <div class="quick-preview-modal" (click)="$event.stopPropagation()">
+      <div class="quick-preview-head">
+        <h4 class="m-0">{{ quickPreviewTitle.title || quickPreviewTitle.source_file || 'Title preview' }}</h4>
+        <button type="button" class="quick-preview-close" (click)="closeQuickPreview()" aria-label="Close preview">✕</button>
+      </div>
+      <app-preview-viewer [src]="getQuickPreviewUrl(quickPreviewTitle)"></app-preview-viewer>
+    </div>
+  </div>
 </div>

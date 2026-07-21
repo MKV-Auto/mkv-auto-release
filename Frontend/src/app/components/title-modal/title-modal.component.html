@@ -154,10 +154,10 @@
     </div>
     <app-preview-viewer [src]="previewUrl"></app-preview-viewer>
     <div class="modal-foot">
+      <!-- #701: footer Close removed — the header ✕ is the single close affordance -->
       <div class="muted text-xs">
         {{ previewTitle?.title || previewTitle?.note || previewTitle?.output_file || '' }}
       </div>
-      <button class="primary ghost" (click)="closePreview()">Close</button>
     </div>
     <div class="muted text-xs path-row" *ngIf="titlePathFn(previewTitle) || previewTitle?.output_file">
       Path: {{ titlePathFn(previewTitle) || previewTitle?.output_file }}

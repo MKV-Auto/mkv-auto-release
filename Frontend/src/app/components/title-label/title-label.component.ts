@@ -104,6 +104,8 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
   
   // Mobile state
   isMobile: boolean = false;
+  /** #701: title whose preview clip is open in the mobile quick-preview overlay. */
+  quickPreviewTitle: any | null = null;
   expandedTitleId: string | null = null;
   openDrawerTitleId: string | null = null;
   /** Desktop list+editor split: which title is loaded into the side-panel
@@ -654,6 +656,27 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
       this.emitPatch(title, { edition: normalizedEdition });
     }
     this.labelChanged.emit(this.titles);
+  }
+
+  /** #701: resolved preview URL for a title, or null when none is available
+   *  (drives the mobile play button's disabled state). */
+  getQuickPreviewUrl(title: any): string | null {
+    if (!title) return null;
+    try {
+      return this.previewUrlFn ? this.previewUrlFn(title) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** #701: open the mobile quick-preview overlay for a title (no-op without a clip). */
+  openQuickPreview(title: any): void {
+    if (!this.getQuickPreviewUrl(title)) return;
+    this.quickPreviewTitle = title;
+  }
+
+  closeQuickPreview(): void {
+    this.quickPreviewTitle = null;
   }
 
   markAsIgnore(title: any): void {

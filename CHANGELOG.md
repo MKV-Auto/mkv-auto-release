@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-21
+
+### Added
+
+- **The app now tells you when an update ships (#699).** A slim, dismissible banner appears under the header on every page when a newer release is published — with a link to the release notes. Dismissing it silences that version only; the banner returns for the next release. Privacy-conscious by design: the check runs only while you're actively using the UI (the backend never phones home on its own), it's answered from a 6-hour cache, and dev builds never check at all.
+- **Faster title labeling (#701).** Each title in the left rail now has a quick-ignore ✕ so you can drop a title without opening its editor. On mobile, title cards gain a play button that opens the title's preview clip inline (dimmed when no preview exists yet). The preview popup also lost its redundant second close button — the ✕ is all you need.
+
+### Fixed
+
+- **Labeling fields no longer eat your typing (#695).** Editing the disc name or slug could silently drop the last character — or a whole word — after clicking out of a field. Two causes: every keystroke fired its own save whose response was applied back over the form (so a slow response reverted anything typed in the meantime, and responses landing out of order made it feel random), and the name field's keystrokes could land in a stale copy of the form under change-detection churn. Saves are now debounced with strictly latest-wins ordering, save responses can never overwrite text you've typed since, and name edits actually persist on blur (they previously only saved as a side effect of other actions).
+- **Switching job cards no longer drags the previous card's step along (#693).** Clicking from a job on, say, the transfer step to one that should be on labeling could land the new card on transfer — with its action bar to match and no way back short of a page refresh. The previous card's state was being saved into the wrong slot of the context cache during the switch, and the new card then restored it as its own. Each card's state is now keyed strictly by the card it belongs to, and a card being viewed can never inherit another card's step.
+
 ## [1.0.1] - 2026-07-20
 
 ### Fixed

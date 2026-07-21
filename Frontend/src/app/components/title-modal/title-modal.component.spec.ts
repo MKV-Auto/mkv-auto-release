@@ -56,4 +56,15 @@ describe('TitleModalComponent', () => {
     expect(component.previewTitle).toBeNull();
     expect(component.previewUrl).toBeNull();
   });
+
+  it('#701: the preview modal footer no longer has a redundant Close button', () => {
+    component.title = { title_id: 't1', type: 'MainMovie' } as any;
+    component.previewTitle = { title_id: 't1' } as any;
+    component.previewUrl = 'http://preview/1.m3u8';
+    fixture.detectChanges();
+    const foot: HTMLElement | null = fixture.nativeElement.querySelector('.modal-foot');
+    expect(foot).toBeTruthy();
+    // The header ✕ remains the single close affordance; no button in the foot.
+    expect(foot!.querySelector('button')).toBeNull();
+  });
 });

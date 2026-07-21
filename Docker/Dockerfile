@@ -18,7 +18,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     TZ=UTC \
     LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8
+    LC_ALL=C.UTF-8 \
+    # #699: runtime-readable app version (OCI labels aren't visible from inside).
+    # "dev" (the ARG default) disables the update check entirely.
+    MKVAUTO_VERSION=${VERSION}
 
 WORKDIR /app
 

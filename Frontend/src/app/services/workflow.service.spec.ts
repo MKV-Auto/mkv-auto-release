@@ -2185,4 +2185,93 @@ describe('WorkflowService', () => {
       expect(pending.jobStatus.transfer_state).toBe('completed');
     });
   });
+
+  describe('#693: card switch must not bleed previous card state', () => {
+    /** Minimal job context for seeding active/cache state (no saveCallback on purpose). */
+    function mkCtx(id: string, workflowStep: string): WorkflowContext {
+      return {
+        id,
+        type: 'job',
+        workflowStep,
+        labelForm: {},
+        jobStatus: null,
+        discInfo: null,
+        titles: [],
+        titleOrder: [],
+        titlesComplete: false,
+        movieOptions: [],
+        boxsetOptions: [],
+        releaseOptions: [],
+        groupOptions: [],
+        labelDraftProcessed: false,
+        discNameLocked: false,
+        discSlugLocked: false,
+        isSeries: false,
+        discdbHit: false,
+        discMode: 'rip',
+        lastReleaseDetails: null,
+        releaseNameHint: '',
+        releaseSlugHint: '',
+        postProcessFiles: [],
+        transferDestination: null,
+        releaseDiscs: [],
+        boxsetMovies: [],
+        movieCover: null,
+        movieName: null,
+        productionYear: null,
+        labelSaving: false,
+        lastAutosaveOk: false,
+        hasLabelContent: false,
+        devMode: false,
+        showTitleStatus: false,
+      } as unknown as WorkflowContext;
+    }
+
+    it('carousel ordering (selectedCard advanced first) does not poison the new card cache', (done) => {
+      // Viewing job A on 'transfer'…
+      (service as any)._activeContext$.next(mkCtx('jobA', 'transfer'));
+      service.setSelectedCard({ type: 'job', id: 'jobA' });
+      // …then the carousel clicks job B: selectedCard is advanced BEFORE the switch.
+      service.setSelectedCard({ type: 'job', id: 'jobB' });
+      service.setContextByCard({ type: 'job', id: 'jobB' }).subscribe((ctx) => {
+        expect(ctx.id).toBe('jobB');
+        expect(ctx.workflowStep).toBe('film'); // B's own step, not A's 'transfer'
+        const recachedB = (service as any).getCachedContext('job:jobB');
+        expect(recachedB.workflowStep).toBe('film'); // re-cache holds fresh truth
+        done();
+      });
+      // Pre-flush: A saved under A's OWN key; B's key must not hold A's context.
+      expect((service as any).getCachedContext('job:jobA')?.id).toBe('jobA');
+      expect((service as any).getCachedContext('job:jobB')?.id === 'jobA').toBe(false);
+      const req = httpTestingController.expectOne((r) => r.url.includes('jobs/jobB/workflow-context'));
+      req.flush({ type: 'job', id: 'jobB', labelForm: { workflow_step: 'film' }, jobStatus: null });
+    });
+
+    it('a foreign on-screen context cannot donate its workflowStep to a fetched card', (done) => {
+      // B was legitimately viewed earlier (cached at 'titles').
+      (service as any).cacheContext('job:jobB', mkCtx('jobB', 'titles'));
+      service.setSelectedCard({ type: 'job', id: 'jobB' });
+      service.setContextByCard({ type: 'job', id: 'jobB' }).subscribe((ctx) => {
+        expect(ctx.workflowStep).toBe('film'); // fresh truth wins over the foreign 'transfer'
+        done();
+      });
+      // Race: another card's context lands on screen while B's fetch is in flight.
+      (service as any)._activeContext$.next(mkCtx('jobA', 'transfer'));
+      const req = httpTestingController.expectOne((r) => r.url.includes('jobs/jobB/workflow-context'));
+      req.flush({ type: 'job', id: 'jobB', labelForm: { workflow_step: 'film' }, jobStatus: null });
+    });
+
+    it('same-card navigation while fresh data loads is still preserved (#617 semantics)', (done) => {
+      (service as any).cacheContext('job:jobB', mkCtx('jobB', 'film'));
+      service.setSelectedCard({ type: 'job', id: 'jobB' });
+      service.setContextByCard({ type: 'job', id: 'jobB' }).subscribe((ctx) => {
+        expect(ctx.workflowStep).toBe('disc'); // the user's in-flight navigation survives
+        done();
+      });
+      // User navigates on the SAME card while the fetch is in flight.
+      (service as any)._activeContext$.next(mkCtx('jobB', 'disc'));
+      const req = httpTestingController.expectOne((r) => r.url.includes('jobs/jobB/workflow-context'));
+      req.flush({ type: 'job', id: 'jobB', labelForm: { workflow_step: 'film' }, jobStatus: null });
+    });
+  });
 });

@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { trigger, transition, style, animate } from '@angular/animations';
 import { combineLatest, Observable, Subscription, of, timer } from 'rxjs';
-import { map, switchMap, takeUntil, filter, distinctUntilChanged, withLatestFrom, take } from 'rxjs/operators';
+import { map, switchMap, takeUntil, filter, distinctUntilChanged, withLatestFrom, take, debounceTime, tap, catchError } from 'rxjs/operators';
 import { merge } from 'rxjs';
 import { Subject } from 'rxjs';
 import {
@@ -67,6 +67,9 @@ import {
 export class WorkflowLabelingComponent implements OnInit, OnDestroy {
   private subscriptions = new Subscription();
   private destroy$ = new Subject<void>();
+  /** #695: debounced latest-wins label-save channel (wired in ngOnInit). */
+  private labelSaveQueue$ = new Subject<void>();
+  private static readonly LABEL_SAVE_DEBOUNCE_MS = 400;
   /** Triggers refetch of release options after creating a release so the new release appears without refresh. */
   private refreshReleaseOptions$ = new Subject<void>();
   private titleLengthByKey = new Map<string, number>();
@@ -228,6 +231,18 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    // #695: single debounced label-save channel. debounceTime collapses
+    // per-keystroke edits into one trailing save; switchMap cancels any older
+    // in-flight save's echo handling, so a stale response can never land last
+    // and overwrite newer typing.
+    this.labelSaveQueue$
+      .pipe(
+        debounceTime(WorkflowLabelingComponent.LABEL_SAVE_DEBOUNCE_MS),
+        switchMap(() => this.performLabelSave$()),
+        takeUntil(this.destroy$)
+      )
+      .subscribe();
+
     // Subscribe to mobile service
     this.mobileService.isMobile$
       .pipe(takeUntil(this.destroy$))
@@ -441,15 +456,20 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
   }
 
   // Label form changes
-  onLabelChange(labelForm: any): void {
+  /**
+   * #695: value-carrying edit event from disc-label. Apply the value to the
+   * CURRENT context immutably (never trust the template-bound object — under
+   * change-detection churn it can be a stale detached copy), then enqueue the
+   * debounced save.
+   */
+  onLabelChange(evt?: { field: 'disc_slug' | 'disc_format'; value: string }): void {
     const currentContext = this.workflowService.getCurrentContext();
-    if (currentContext) {
-      // Save label form only (titles are patched via title endpoints)
-      this.saveLabelForm(labelForm, currentContext);
-    } else {
-      // No context - just update local state
-      this.workflowService.updateContext({ labelForm });
+    if (currentContext && evt && typeof evt === 'object' && 'field' in evt) {
+      this.workflowService.updateContext({
+        labelForm: { ...(currentContext.labelForm || {}), [evt.field]: evt.value },
+      });
     }
+    this.queueLabelSave();
   }
 
   onTitlesChanged(titles: any[]): void {
@@ -519,195 +539,82 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
   /**
    * Save labelForm with titles to backend
    */
-  private saveLabelForm(labelForm: any, context: any): void {
-    if (!context || !context.id || !context.type) return;
-    
-    // Build payload similar to saveLabelDraft in ripper-page.component.ts
-    const payload = { ...labelForm, tracks: labelForm?.tracks || [] };
-    
-    // Save to backend first (backend is source of truth)
-    // Then update context from response to ensure consistency
+  /** #695: enqueue a debounced, latest-wins label save (channel wired in ngOnInit). */
+  private queueLabelSave(): void {
+    this.labelSaveQueue$.next();
+  }
+
+  /**
+   * Perform one label save from a fresh snapshot of the current context.
+   * Runs inside the queue's switchMap: if another edit is enqueued while this
+   * request is in flight, this observable is unsubscribed and its echo is
+   * never applied (#695 — stale echoes were reverting newer keystrokes).
+   */
+  private performLabelSave$(): Observable<unknown> {
+    const context = this.workflowService.getCurrentContext();
+    if (!context || !context.id || !context.type || !context.labelForm) return of(null);
+    // Strip nothing here: payload mirrors the old saveLabelForm shape
+    const payload = { ...context.labelForm, tracks: context.labelForm?.tracks || [] };
+    let save$: Observable<WorkflowContext | null>;
     if (context.type === 'job') {
-      this.workflowService.saveJobWorkflowContext(context.id, payload, false).subscribe({
-        next: (updatedContext) => {
-          if (!updatedContext || !this.workflowService.contextMatchesSelection(updatedContext)) return;
-          // Get current context to preserve UI state (progress functions, etc.)
-          const currentContext = this.workflowService.getCurrentContext();
-          if (currentContext?.titles && updatedContext?.titles) {
-            const currentByKey = new Map<string, number>();
-            currentContext.titles.forEach((t: any) => {
-              const key = this.getTitleKey(t);
-              if (!key) return;
-              currentByKey.set(key, (t?.title ?? '').toString().length);
-            });
-            let reducedCount = 0;
-            let sampleKey: string | null = null;
-            let samplePrev: number | null = null;
-            let sampleNext: number | null = null;
-            updatedContext.titles.forEach((t: any) => {
-              const key = this.getTitleKey(t);
-              if (!key) return;
-              const prevLength = currentByKey.get(key);
-              const nextLength = (t?.title ?? '').toString().length;
-              if (prevLength !== undefined && nextLength < prevLength) {
-                reducedCount += 1;
-                if (!sampleKey) {
-                  sampleKey = key;
-                  samplePrev = prevLength;
-                  sampleNext = nextLength;
-                }
-              }
-            });
-          }
-          const sampleCurrentTitle = (currentContext?.titles || []).find((t: any) =>
-            !!(t?.title || '').toString()
-          );
-          const sampleBackendTitle = (updatedContext?.titles || []).find((t: any) =>
-            !!(t?.title || '').toString()
-          );
-          // Merge user's current edits with backend response to prevent overwriting active edits
-          // The backend response may omit scan metadata (chapters, streams), so preserve it
-          const mergedTitles = this.mergeTitlesWithBackend(
-            currentContext?.titles || [],
-            updatedContext.titles || []
-          );
-          if (currentContext?.titles && mergedTitles) {
-            const currentByKey = new Map<string, number>();
-            currentContext.titles.forEach((t: any) => {
-              const key = this.getTitleKey(t);
-              if (!key) return;
-              currentByKey.set(key, (t?.title ?? '').toString().length);
-            });
-            let reducedCount = 0;
-            let sampleKey: string | null = null;
-            let samplePrev: number | null = null;
-            let sampleNext: number | null = null;
-            mergedTitles.forEach((t: any) => {
-              const key = this.getTitleKey(t);
-              if (!key) return;
-              const prevLength = currentByKey.get(key);
-              const nextLength = (t?.title ?? '').toString().length;
-              if (prevLength !== undefined && nextLength < prevLength) {
-                reducedCount += 1;
-                if (!sampleKey) {
-                  sampleKey = key;
-                  samplePrev = prevLength;
-                  sampleNext = nextLength;
-                }
-              }
-            });
-          }
-          const mergedLabelForm = this.mergeLabelFormDiscFieldsWithBackend(
-            currentContext?.labelForm,
-            updatedContext.labelForm
-          );
-          // Merge backend response with current context to preserve function references and UI state
-          const mergedContext: any = {
-            ...currentContext,
-            ...updatedContext,
-            labelForm: mergedLabelForm,
-            // Use merged titles (preserves user edits)
-            titles: mergedTitles,
-            // Preserve workflow step navigation source to prevent step reset
-            workflowStep: currentContext?.workflowStep || updatedContext.workflowStep,
-            stepNavigationSource: currentContext?.stepNavigationSource || updatedContext.stepNavigationSource || 'user',
-            // Preserve function references and UI state that aren't in backend response
-            titleStatusFn: currentContext?.titleStatusFn || updatedContext.titleStatusFn,
-            titleProgressValueFn: currentContext?.titleProgressValueFn || updatedContext.titleProgressValueFn,
-            titleActiveFn: currentContext?.titleActiveFn || updatedContext.titleActiveFn,
-            previewUrlFn: currentContext?.previewUrlFn || updatedContext.previewUrlFn,
-            previewStateFn: currentContext?.previewStateFn || updatedContext.previewStateFn,
-            titlePathFn: currentContext?.titlePathFn || updatedContext.titlePathFn,
-            stageProgressFn: currentContext?.stageProgressFn || updatedContext.stageProgressFn,
-            isStageCompletedFn: currentContext?.isStageCompletedFn || updatedContext.isStageCompletedFn,
-            stageTimeline: currentContext?.stageTimeline || updatedContext.stageTimeline,
-            activeStage: currentContext?.activeStage || updatedContext.activeStage,
-            progressUpdateTrigger: currentContext?.progressUpdateTrigger || updatedContext.progressUpdateTrigger,
-          };
-          this.workflowService.updateContext(mergedContext);
-        },
-        error: (err) => {
-          this.logger.error('Failed to save labelForm with titles:', err);
-          // On error, could optionally rollback or show error to user
-        }
-      });
+      save$ = this.workflowService.saveJobWorkflowContext(context.id, payload, false);
     } else {
       // For drive context, need to determine if using discId or mount_point
       const discInfoState = this.workflowService.getDiscInfoState();
       const useDiscId = !!discInfoState.currentDiscId;
       const identifier = useDiscId ? discInfoState.currentDiscId! : context.id;
-      this.workflowService.saveDiscWorkflowContext(identifier, payload, false, useDiscId).subscribe({
-        next: (updatedContext) => {
-          if (!updatedContext || !this.workflowService.contextMatchesSelection(updatedContext)) return;
-          // Get current context to preserve UI state (progress functions, etc.)
-          const currentContext = this.workflowService.getCurrentContext();
-          // Merge user's current edits with backend response to prevent overwriting active edits
-          // The backend response may omit scan metadata (chapters, streams), so preserve it
-          const mergedTitles = this.mergeTitlesWithBackend(
-            currentContext?.titles || [],
-            updatedContext.titles || []
-          );
-          if (currentContext?.titles && mergedTitles) {
-            const currentByKey = new Map<string, number>();
-            currentContext.titles.forEach((t: any) => {
-              const key = this.getTitleKey(t);
-              if (!key) return;
-              currentByKey.set(key, (t?.title ?? '').toString().length);
-            });
-            let reducedCount = 0;
-            let sampleKey: string | null = null;
-            let samplePrev: number | null = null;
-            let sampleNext: number | null = null;
-            mergedTitles.forEach((t: any) => {
-              const key = this.getTitleKey(t);
-              if (!key) return;
-              const prevLength = currentByKey.get(key);
-              const nextLength = (t?.title ?? '').toString().length;
-              if (prevLength !== undefined && nextLength < prevLength) {
-                reducedCount += 1;
-                if (!sampleKey) {
-                  sampleKey = key;
-                  samplePrev = prevLength;
-                  sampleNext = nextLength;
-                }
-              }
-            });
-          }
-          const mergedLabelForm = this.mergeLabelFormDiscFieldsWithBackend(
-            currentContext?.labelForm,
-            updatedContext.labelForm
-          );
-          // Merge backend response with current context to preserve function references and UI state
-          const mergedContext: any = {
-            ...currentContext,
-            ...updatedContext,
-            labelForm: mergedLabelForm,
-            // Use merged titles (preserves user edits)
-            titles: mergedTitles,
-            // Preserve workflow step navigation source to prevent step reset
-            workflowStep: currentContext?.workflowStep || updatedContext.workflowStep,
-            stepNavigationSource: currentContext?.stepNavigationSource || updatedContext.stepNavigationSource || 'user',
-            // Preserve function references and UI state that aren't in backend response
-            titleStatusFn: currentContext?.titleStatusFn || updatedContext.titleStatusFn,
-            titleProgressValueFn: currentContext?.titleProgressValueFn || updatedContext.titleProgressValueFn,
-            titleActiveFn: currentContext?.titleActiveFn || updatedContext.titleActiveFn,
-            previewUrlFn: currentContext?.previewUrlFn || updatedContext.previewUrlFn,
-            previewStateFn: currentContext?.previewStateFn || updatedContext.previewStateFn,
-            titlePathFn: currentContext?.titlePathFn || updatedContext.titlePathFn,
-            stageProgressFn: currentContext?.stageProgressFn || updatedContext.stageProgressFn,
-            isStageCompletedFn: currentContext?.isStageCompletedFn || updatedContext.isStageCompletedFn,
-            stageTimeline: currentContext?.stageTimeline || updatedContext.stageTimeline,
-            activeStage: currentContext?.activeStage || updatedContext.activeStage,
-            progressUpdateTrigger: currentContext?.progressUpdateTrigger || updatedContext.progressUpdateTrigger,
-          };
-          this.workflowService.updateContext(mergedContext);
-        },
-        error: (err) => {
-          this.logger.error('Failed to save labelForm with titles:', err);
-          // On error, could optionally rollback or show error to user
-        }
-      });
+      save$ = this.workflowService.saveDiscWorkflowContext(identifier, payload, false, useDiscId);
     }
+    return save$.pipe(
+      tap((updatedContext) => this.applyEchoGuarded(updatedContext)),
+      catchError((err) => {
+        this.logger.error('Failed to save labelForm with titles:', err);
+        return of(null);
+      })
+    );
+  }
+
+  /**
+   * Apply a save-response echo without clobbering live edits (#695).
+   * The echo reflects the form as of save time — anything typed during the
+   * round-trip must win. Titles merge preserves user edits and scan metadata;
+   * labelForm merge is current-wins for user-editable scalars; function refs
+   * and UI state survive from the current context.
+   */
+  private applyEchoGuarded(updatedContext: WorkflowContext | null | undefined): void {
+    if (!updatedContext || !this.workflowService.contextMatchesSelection(updatedContext)) return;
+    const currentContext = this.workflowService.getCurrentContext();
+    const mergedTitles = this.mergeTitlesWithBackend(
+      currentContext?.titles || [],
+      updatedContext.titles || []
+    );
+    const mergedLabelForm = this.mergeLabelFormWithBackend(
+      currentContext?.labelForm,
+      updatedContext.labelForm
+    );
+    const mergedContext: any = {
+      ...currentContext,
+      ...updatedContext,
+      labelForm: mergedLabelForm,
+      // Use merged titles (preserves user edits)
+      titles: mergedTitles,
+      // Preserve workflow step navigation source to prevent step reset
+      workflowStep: currentContext?.workflowStep || updatedContext.workflowStep,
+      stepNavigationSource: currentContext?.stepNavigationSource || updatedContext.stepNavigationSource || 'user',
+      // Preserve function references and UI state that aren't in backend response
+      titleStatusFn: currentContext?.titleStatusFn || updatedContext.titleStatusFn,
+      titleProgressValueFn: currentContext?.titleProgressValueFn || updatedContext.titleProgressValueFn,
+      titleActiveFn: currentContext?.titleActiveFn || updatedContext.titleActiveFn,
+      previewUrlFn: currentContext?.previewUrlFn || updatedContext.previewUrlFn,
+      previewStateFn: currentContext?.previewStateFn || updatedContext.previewStateFn,
+      titlePathFn: currentContext?.titlePathFn || updatedContext.titlePathFn,
+      stageProgressFn: currentContext?.stageProgressFn || updatedContext.stageProgressFn,
+      isStageCompletedFn: currentContext?.isStageCompletedFn || updatedContext.isStageCompletedFn,
+      stageTimeline: currentContext?.stageTimeline || updatedContext.stageTimeline,
+      activeStage: currentContext?.activeStage || updatedContext.activeStage,
+      progressUpdateTrigger: currentContext?.progressUpdateTrigger || updatedContext.progressUpdateTrigger,
+    };
+    this.workflowService.updateContext(mergedContext);
   }
 
   private getTitleKey(title: any): string | null {
@@ -725,25 +632,44 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
    * After PATCH workflow-context: keep user-visible disc fields when they differ from the response
    * (stale/out-of-order saves); always take disc_number from backend when present.
    */
-  private mergeLabelFormDiscFieldsWithBackend(current: any | null | undefined, backend: any | null | undefined): any {
+  /**
+   * Fields the backend owns: a save echo may always update these, even when
+   * the local value differs (they are computed server-side, never typed).
+   */
+  private static readonly ECHO_AUTHORITATIVE_KEYS = new Set<string>([
+    'disc_number',
+    'movie_cover_path',
+    'workflow_step',
+  ]);
+
+  /**
+   * #695: current-wins merge for a save-response echo. The old version guarded
+   * only disc_name/disc_slug/disc_format — every other labelForm field took
+   * the echo wholesale, reverting anything typed during the round-trip. Now
+   * every user-editable scalar the current form holds survives when it
+   * differs from the echo; the echo contributes new keys and server-owned
+   * fields (ECHO_AUTHORITATIVE_KEYS).
+   */
+  private mergeLabelFormWithBackend(current: any | null | undefined, backend: any | null | undefined): any {
     if (!backend) return current || {};
     const merged = { ...backend };
     const cur = current || {};
-    if (this.discFieldNorm(cur.disc_name) !== this.discFieldNorm(backend.disc_name)) {
-      merged.disc_name = cur.disc_name;
+    for (const key of Object.keys(cur)) {
+      if (WorkflowLabelingComponent.ECHO_AUTHORITATIVE_KEYS.has(key)) continue;
+      const cv = cur[key];
+      // null/undefined locally = "unset here" — let the server value stand.
+      if (cv === null || cv === undefined) continue;
+      const t = typeof cv;
+      // Objects/arrays (tracks, nested structures) keep echo semantics.
+      if (t !== 'string' && t !== 'number' && t !== 'boolean') continue;
+      if (this.discFieldNorm(cv) !== this.discFieldNorm(merged[key])) {
+        merged[key] = cv;
+      }
     }
+    // User cleared the slug → adopt the server-generated one.
     const curSlug = this.discFieldNorm(cur.disc_slug);
-    const backendSlug = this.discFieldNorm(backend.disc_slug);
-    if (curSlug === '' && backendSlug !== '') {
+    if (curSlug === '' && this.discFieldNorm(backend.disc_slug) !== '') {
       merged.disc_slug = backend.disc_slug;
-    } else if (curSlug !== backendSlug) {
-      merged.disc_slug = cur.disc_slug;
-    }
-    if (this.discFieldNorm(cur.disc_format) !== this.discFieldNorm(backend.disc_format)) {
-      merged.disc_format = cur.disc_format;
-    }
-    if (Object.prototype.hasOwnProperty.call(backend, 'disc_number')) {
-      merged.disc_number = backend.disc_number;
     }
     return merged;
   }
@@ -846,28 +772,27 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
     });
   }
 
-  onNameChange(): void {
-    // The value is already updated in the context via ngModel binding
-    // Just trigger a context update to persist the changes
+  /**
+   * #695: disc-name keystrokes carry the typed value. Previously this copied
+   * the context's labelForm object — but ngModel writes into whatever object
+   * was bound last CD cycle, so the copy could miss the newest keystroke
+   * (the reported one-character loss). The value parameter is authoritative.
+   */
+  onNameChange(value?: string): void {
     const currentContext = this.workflowService.getCurrentContext();
-    if (currentContext && currentContext.labelForm) {
-      this.workflowService.updateContext({
-        labelForm: { ...currentContext.labelForm }
-      });
-    }
+    if (!currentContext?.labelForm) return;
+    this.workflowService.updateContext({
+      labelForm: typeof value === 'string'
+        ? { ...currentContext.labelForm, disc_name: value }
+        : { ...currentContext.labelForm },
+    });
+    this.queueLabelSave();
   }
 
   onNameBlur(): void {
-    // Context is auto-saved via updateContext, but we can trigger explicit save if needed
-    const currentContext = this.workflowService.getCurrentContext();
-    if (currentContext && currentContext.labelForm) {
-      // Save to backend via updateContext (which persists)
-      // Include titles to ensure title changes are saved
-      this.workflowService.updateContext({ 
-        labelForm: currentContext.labelForm,
-        titles: currentContext.titles ? [...currentContext.titles] : [] // Create new array reference to trigger update
-      });
-    }
+    // #695: updateContext never persisted (the old comment claiming it does was
+    // wrong) — blur now enqueues a real save so name edits reach the backend.
+    this.queueLabelSave();
   }
 
   onSlugEdited(): void {
@@ -1366,7 +1291,7 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
     if (currentContext.type === 'job' && currentContext.id) {
       this.workflowService.saveJobWorkflowContext(currentContext.id, updatedLabelForm, false).subscribe({
         next: (updatedContext) => {
-          if (updatedContext) this.workflowService.applyContextIfMatchesSelection(updatedContext);
+          this.applyEchoGuarded(updatedContext); // #695: echo must not clobber live edits
         },
         error: (err) => this.logger.error('[WorkflowLabelingComponent] Failed to save group_type', err),
       });
@@ -1377,7 +1302,7 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
       const identifier = useDiscId ? discInfoState.currentDiscId! : currentContext.id;
       this.workflowService.saveDiscWorkflowContext(identifier, updatedLabelForm, false, useDiscId).subscribe({
         next: (updatedContext) => {
-          if (updatedContext) this.workflowService.applyContextIfMatchesSelection(updatedContext);
+          this.applyEchoGuarded(updatedContext); // #695: echo must not clobber live edits
         },
         error: (err) => this.logger.error('[WorkflowLabelingComponent] Failed to save group_type', err),
       });
@@ -1717,7 +1642,7 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
     if (ctx.type === 'job' && ctx.id) {
       this.workflowService.saveJobWorkflowContext(ctx.id, lf, false).subscribe({
         next: (uc) => {
-          if (uc) this.workflowService.applyContextIfMatchesSelection(uc);
+          this.applyEchoGuarded(uc); // #695: echo must not clobber live edits
         },
         error: (e) => this.logger.error('[WorkflowLabeling] persist movie metadata', e),
       });
@@ -1729,7 +1654,7 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
       const identifier = useDiscId ? discInfoState.currentDiscId! : ctx.id;
       this.workflowService.saveDiscWorkflowContext(identifier, lf, false, useDiscId).subscribe({
         next: (uc) => {
-          if (uc) this.workflowService.applyContextIfMatchesSelection(uc);
+          this.applyEchoGuarded(uc); // #695: echo must not clobber live edits
         },
         error: (e) => this.logger.error('[WorkflowLabeling] persist movie metadata (drive)', e),
       });

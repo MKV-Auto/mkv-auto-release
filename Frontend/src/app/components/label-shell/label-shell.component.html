@@ -28,8 +28,8 @@
     [labelForm]="labelForm"
     [labelSaving]="discSaving || labelSaving"
     [lastAutosaveOk]="discAutosaveOk || lastAutosaveOk"
-    (labelChanged)="labelChanged.emit(); discChanged.emit()"
-    (nameChanged)="nameChanged.emit(); discChanged.emit()"
+    (labelChanged)="labelChanged.emit($event); discChanged.emit()"
+    (nameChanged)="nameChanged.emit($event); discChanged.emit()"
     (fieldBlur)="fieldBlur.emit(); discBlur.emit()"
   ></app-disc-label>
 

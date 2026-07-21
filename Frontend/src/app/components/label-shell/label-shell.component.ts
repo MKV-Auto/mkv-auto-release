@@ -41,8 +41,8 @@ export class LabelShellComponent {
   @Input() titleProgress: Record<string, number> = {};
   @Input() devMode = false;
   @Input() discdbHit = false; // Hide release metadata card for DiscDB hits
-  @Output() labelChanged = new EventEmitter<void>();
-  @Output() nameChanged = new EventEmitter<void>();
+  @Output() labelChanged = new EventEmitter<{ field: 'disc_slug' | 'disc_format'; value: string } | undefined>();
+  @Output() nameChanged = new EventEmitter<string>();
   @Output() nameBlur = new EventEmitter<void>();
   @Output() slugEdited = new EventEmitter<void>();
   @Output() coverChange = new EventEmitter<void>();

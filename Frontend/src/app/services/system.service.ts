@@ -3,6 +3,17 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable, shareReplay } from 'rxjs';
 import { environment } from '../environments/environment';
 
+/** #699: shape of GET /system/update-status. */
+export interface UpdateStatus {
+  current_version: string;
+  latest_version: string | null;
+  update_available: boolean;
+  release_url: string | null;
+  release_name: string | null;
+  published_at: string | null;
+  checked_at: string;
+}
+
 export interface MakeMKVInfo {
   version: string | null;
   binary_path: string;
@@ -425,6 +436,11 @@ export interface SystemHealth {
 @Injectable({ providedIn: 'root' })
 export class SystemService {
   private readonly apiUrl = environment.apiBase ?? 'http://localhost:8000';
+
+  /** #699: running version vs newest published release (backend caches 6h). */
+  getUpdateStatus(): Observable<UpdateStatus> {
+    return this.http.get<UpdateStatus>(`${this.apiUrl}/system/update-status`);
+  }
 
   constructor(private http: HttpClient) {}
 

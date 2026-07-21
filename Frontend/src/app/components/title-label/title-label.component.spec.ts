@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { SimpleChange } from '@angular/core';
-import { of } from 'rxjs';
+import { BehaviorSubject, of } from 'rxjs';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { TitleLabelComponent } from './title-label.component';
@@ -9,6 +9,9 @@ import { MobileService } from '../../services/mobile.service';
 describe('TitleLabelComponent', () => {
   let component: TitleLabelComponent;
   let fixture: ComponentFixture<TitleLabelComponent>;
+  /** Drives the component's isMobile state through the real subscription
+   *  (OnPush: a direct field poke won't re-render). Defaults to desktop. */
+  let isMobile$: BehaviorSubject<boolean>;
 
   /** Helper: set titles input and trigger ngOnChanges (Angular doesn't call ngOnChanges for direct property writes in tests). */
   function setTitles(titles: any[]): void {
@@ -20,7 +23,8 @@ describe('TitleLabelComponent', () => {
   }
 
   beforeEach(async () => {
-    const mobileStub = { isMobile$: of(false) };
+    isMobile$ = new BehaviorSubject<boolean>(false);
+    const mobileStub = { isMobile$ };
     await TestBed.configureTestingModule({
       imports: [TitleLabelComponent],
       providers: [
@@ -727,5 +731,57 @@ describe('TitleLabelComponent', () => {
     expect(component.getTitleRowStatus(t2)).toBe('ignored');
     const ignoredRows = fixture.nativeElement.querySelectorAll('app-title-row .title-row.is-ignored');
     expect(ignoredRows.length).toBe(2);
+  });
+
+  describe('#701: quick-ignore + mobile quick-preview', () => {
+    it('desktop rows expose a quick-ignore control that toggles ignore', () => {
+      const t = { title_id: 'a', title: 'Feature', type: 'MainMovie', index: 0 };
+      setTitles([t]);
+      const spy = spyOn(component, 'markAsIgnore').and.callThrough();
+      fixture.detectChanges();
+      const btn: HTMLElement | null = fixture.nativeElement.querySelector('.title-label-row-ignore');
+      expect(btn).toBeTruthy();
+      btn!.click();
+      expect(spy).toHaveBeenCalledWith(t);
+    });
+
+    it('getQuickPreviewUrl reflects previewUrlFn and is null-safe', () => {
+      component.previewUrlFn = (t: any) => (t?.title_id === 'has' ? 'http://p/1.m3u8' : null);
+      expect(component.getQuickPreviewUrl({ title_id: 'has' })).toBe('http://p/1.m3u8');
+      expect(component.getQuickPreviewUrl({ title_id: 'none' })).toBeNull();
+      expect(component.getQuickPreviewUrl(null)).toBeNull();
+    });
+
+    it('getQuickPreviewUrl swallows a throwing previewUrlFn', () => {
+      component.previewUrlFn = () => { throw new Error('boom'); };
+      expect(component.getQuickPreviewUrl({ title_id: 'x' })).toBeNull();
+    });
+
+    it('openQuickPreview opens only when a clip exists; close clears it', () => {
+      component.previewUrlFn = (t: any) => (t?.title_id === 'has' ? 'http://p/1.m3u8' : null);
+      component.openQuickPreview({ title_id: 'none' });
+      expect(component.quickPreviewTitle).toBeNull(); // disabled path is a no-op
+      const withClip = { title_id: 'has' };
+      component.openQuickPreview(withClip);
+      expect(component.quickPreviewTitle).toBe(withClip);
+      component.closeQuickPreview();
+      expect(component.quickPreviewTitle).toBeNull();
+    });
+
+    it('the mobile preview button is disabled when no clip is available', () => {
+      fixture.detectChanges();      // ngOnInit wires the isMobile$ subscription
+      isMobile$.next(true);         // drive mobile through the real stream (→ markForCheck)
+      component.previewUrlFn = (t: any) => (t?.title_id === 'has' ? 'http://p/1.m3u8' : null);
+      setTitles([
+        { title_id: 'has', title: 'A', type: 'MainMovie', index: 0 },
+        { title_id: 'none', title: 'B', type: 'MainMovie', index: 1 },
+      ]);
+      fixture.detectChanges();
+      const btns = fixture.nativeElement.querySelectorAll('.title-card-preview-btn') as NodeListOf<HTMLButtonElement>;
+      expect(btns.length).toBe(2);
+      const disabled = Array.from(btns).map((b) => b.disabled);
+      expect(disabled).toContain(true);   // the 'none' title
+      expect(disabled).toContain(false);  // the 'has' title
+    });
   });
 });

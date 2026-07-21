@@ -62,7 +62,7 @@
         [class.disc-step-input-error]="missingDiscName"
         [(ngModel)]="labelForm.disc_name"
         [placeholder]="'e.g., Feature Disc, Bonus Features, Disc 1'"
-        (ngModelChange)="nameChanged.emit()"
+        (ngModelChange)="nameChanged.emit($event)"
         (blur)="fieldBlur.emit()">
       <p class="disc-step-field-error" *ngIf="missingDiscName">
         <span class="disc-step-field-error-icon" aria-hidden="true"></span>
@@ -79,7 +79,7 @@
         class="disc-step-input"
         [(ngModel)]="labelForm.disc_slug"
         [placeholder]="(labelForm.disc_name ? autoSlug : '') || 'Auto-generated from name'"
-        (ngModelChange)="labelChanged.emit()"
+        (ngModelChange)="labelChanged.emit({ field: 'disc_slug', value: $event })"
         (blur)="fieldBlur.emit()">
       <p class="disc-step-field-help">URL-friendly identifier (auto-generated if empty)</p>
     </div>

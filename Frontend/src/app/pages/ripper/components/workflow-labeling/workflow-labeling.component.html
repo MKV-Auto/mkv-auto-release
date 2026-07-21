@@ -248,8 +248,8 @@
             [displayDiscNumber]="state.context.labelForm?.disc_number ?? state.context.discInfo?.disc_number ?? null"
             [labelSaving]="false"
             [lastAutosaveOk]="true"
-            (labelChanged)="onLabelChange(state.context.labelForm)"
-            (nameChanged)="onNameChange()"
+            (labelChanged)="onLabelChange($event)"
+            (nameChanged)="onNameChange($event)"
             (fieldBlur)="onNameBlur()">
           </app-disc-label>
         </div>

@@ -20,8 +20,15 @@ export class DiscLabelComponent {
   /** When false, hide title/icon/subtitle (e.g. when parent provides the step header). Status line still shown when compact. */
   @Input() showHeading = true;
 
-  @Output() labelChanged = new EventEmitter<void>();
-  @Output() nameChanged = new EventEmitter<void>();
+  /**
+   * #695: events carry the edited field + value. Handlers must apply the value
+   * to the CURRENT context (immutably) rather than trusting the template-bound
+   * labelForm object — ngModel writes into whatever object was bound last
+   * change-detection cycle, so under churn the bound object can be stale and
+   * identity-dependent reads drop keystrokes.
+   */
+  @Output() labelChanged = new EventEmitter<{ field: 'disc_slug' | 'disc_format'; value: string } | undefined>();
+  @Output() nameChanged = new EventEmitter<string>();
   @Output() fieldBlur = new EventEmitter<void>();
 
   private focusDepth = 0;
@@ -64,13 +71,13 @@ export class DiscLabelComponent {
   setDiscFormat(value: string): void {
     if (this.labelForm) {
       this.labelForm.disc_format = value;
-      this.labelChanged.emit();
+      this.labelChanged.emit({ field: 'disc_format', value });
       this.fieldBlur.emit();
     }
   }
 
   onDiscFormatChange(): void {
-    this.labelChanged.emit();
+    this.labelChanged.emit({ field: 'disc_format', value: this.labelForm?.disc_format ?? '' });
   }
 
   onFocusIn(): void {

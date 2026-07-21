@@ -203,6 +203,9 @@
     </div>
   </header>
 
+  <!-- #699: persistent update-available banner (between header and content, all pages) -->
+  <app-update-banner></app-update-banner>
+
   <!-- Mobile drawer backdrop: template uses bg-black/50, lg:hidden -->
   <div class="fixed inset-0 bg-black/50 z-[25] lg:hidden transition-opacity" *ngIf="navOpen" (click)="toggleNav()"></div>
 

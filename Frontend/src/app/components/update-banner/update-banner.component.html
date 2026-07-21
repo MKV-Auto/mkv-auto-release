@@ -1,0 +1,38 @@
+<div
+  *ngIf="visible && status"
+  class="border-b px-5 py-2"
+  style="background: rgba(16, 185, 129, 0.10); border-color: rgba(52, 211, 153, 0.25);"
+  role="status"
+  aria-live="polite">
+  <div class="max-w-[1400px] mx-auto flex items-center justify-between gap-3 text-sm">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <svg class="w-4 h-4 flex-shrink-0 text-emerald-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      <span class="text-emerald-100 truncate">
+        <strong class="font-semibold">MKV-Auto v{{ status.latest_version }}</strong> is available
+        <span class="text-emerald-200/70">(you're on v{{ status.current_version }})</span>
+      </span>
+      <a
+        *ngIf="status.release_url"
+        [href]="status.release_url"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="flex-shrink-0 text-emerald-300 underline underline-offset-2 hover:text-emerald-200">
+        See what's new
+      </a>
+    </div>
+    <button
+      type="button"
+      class="flex-shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md text-emerald-200/70 hover:text-white hover:bg-white/10 transition-colors"
+      (click)="dismiss()"
+      aria-label="Dismiss update notification">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+</div>

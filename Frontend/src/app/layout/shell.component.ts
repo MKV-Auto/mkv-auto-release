@@ -23,6 +23,7 @@ import { SetupModalComponent } from '../components/setup/setup-modal.component';
 import { PlatformGuideComponent } from '../components/setup/platform-guide.component';
 import { RipSizeWarningModalComponent } from '../components/rip-size-warning-modal/rip-size-warning-modal.component';
 import { NotificationHistoryService, StoredNotification } from '../services/notification-history.service';
+import { UpdateBannerComponent } from '../components/update-banner/update-banner.component';
 import { BrowserNotificationService } from '../services/browser-notification.service';
 import { formatBackendNotificationToastText } from '../utils/backend-notification-display.util';
 
@@ -38,6 +39,7 @@ import { formatBackendNotificationToastText } from '../utils/backend-notificatio
     PlatformGuideComponent,
     RipSizeWarningModalComponent,
     UsbSaturationWarningModalComponent,
+    UpdateBannerComponent,
   ],
   templateUrl: './shell.component.html',
 })

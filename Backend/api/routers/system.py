@@ -124,6 +124,21 @@ async def get_frontend_version() -> dict:
     return {"version": _frontend_version_hash()}
 
 
+@router.get("/update-status")
+def get_update_status() -> dict:
+    """Running version vs the newest published release (#699).
+
+    Consults the public mkv-auto-release GitHub Releases feed, cached
+    in-process for 6h, 5s timeout, fail-silent. Sync handler on purpose:
+    the outbound request is blocking, so FastAPI runs it in the
+    threadpool instead of stalling the event loop. Only ever invoked by
+    an active browser session — the backend never phones home on its own.
+    """
+    from core import update_checker
+
+    return update_checker.get_update_status()
+
+
 @router.get("/makemkv", response_model=MakeMKVInfo)
 async def makemkv_info() -> MakeMKVInfo:
     loop = asyncio.get_running_loop()
