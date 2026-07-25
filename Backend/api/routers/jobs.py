@@ -2645,13 +2645,46 @@ def start_rip(req: JobCreate, db: Session = Depends(get_db)):
                 getattr(disc_for_titles_check, "scan_state", None),
                 getattr(disc_for_titles_check, "format", None),
             )
+            # #720: report WHY the scan produced no titles. The old blanket
+            # "eject and reinsert" is wrong (and infuriating) when the scan
+            # actually ran and failed — e.g. makemkv couldn't decrypt the disc
+            # (copy-protection/key-exchange failure) or the disc is unreadable.
+            # Reseating can't fix those, so say what really happened.
+            scan_err = (getattr(disc_for_titles_check, "last_scan_error", None) or "").strip()
+            never_scanned = (
+                getattr(disc_for_titles_check, "disc_info", None) is None
+                and not (getattr(disc_for_titles_check, "scan_attempts", 0) or 0)
+            )
+            if scan_err:
+                low = scan_err.lower()
+                if "key" in low or "copy protection" in low or "css" in low or "aacs" in low:
+                    msg = (
+                        "The disc scan failed: MakeMKV could not decrypt this disc "
+                        f"({scan_err}). This is usually a dirty/scratched disc, or a disc "
+                        "this drive can't decrypt — reinserting won't help. Try cleaning the "
+                        "disc, or another drive."
+                    )
+                else:
+                    msg = f"The disc scan failed: {scan_err}"
+            elif never_scanned:
+                msg = (
+                    "This disc has not been scanned yet, so no titles are known. "
+                    "Rescan the disc (eject and reinsert, or trigger a rescan); if that "
+                    "doesn't help, check the MakeMKV log for read errors."
+                )
+            else:
+                msg = (
+                    "Disc scan completed but enumerated no titles. The disc may be "
+                    "unreadable, empty, or an unsupported format — check the MakeMKV log."
+                )
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": "disc_scan_incomplete",
-                    "error": "Disc scan incomplete — no tracks were enumerated. "
-                             "Please eject and reinsert the disc, then try again.",
+                    "error": msg,
                     "disc_id": str(disc_for_titles_check.id),
+                    "scan_error": scan_err or None,
+                    "never_scanned": never_scanned,
                 },
             )
 

@@ -2190,6 +2190,18 @@ def ensure_disc_record_from_scan(
         if size is not None:
             hydrated["disc_size_bytes"] = size
     disc = persist_disc_scan_with_discdb(db, disc_hash, hydrated)
+    # #720: a successful scan must clear the previous failure. Otherwise a disc
+    # that failed once and then scanned fine keeps a stale last_scan_error
+    # forever, which now drives the user-facing Start Copy message (and would
+    # report a decrypt/read failure on a disc that actually scanned).
+    if getattr(disc, "last_scan_error", None):
+        titles_now = (
+            db.query(models.DiscTitle).filter(models.DiscTitle.disc_id == disc.id).count()
+        )
+        if titles_now or disc.disc_info:
+            disc.last_scan_error = None
+            db.commit()
+            logger.info("Cleared stale last_scan_error after successful scan: disc=%s", disc.id)
     rel = disc.release
     logger.info(
         "Persisted scan: disc=%s release=%s slug=%s format=%s info_title=%s",

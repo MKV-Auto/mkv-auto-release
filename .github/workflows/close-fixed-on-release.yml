@@ -1,6 +1,12 @@
-# When a release is published in mkv-auto-release, close all issues with label
-# "fixed-pending-release" and post a comment pointing to the release.
-# Works with the private-repo workflow that labels issues when a fixing PR is merged.
+# When a release is published in mkv-auto-release, close all issues labeled
+# "fixed-pending-release" and comment pointing to the release. Pairs with the
+# private-repo workflow (mark-fixed-pending-release.yml) that applies the label
+# to mkv-auto-release#N issues when a fixing PR merges.
+#
+# Inlined with the gh CLI: the previous third-party action
+# (gcampbell/fixed-pending-release) was deleted from GitHub, so every run failed
+# with "Unable to resolve action ... repository not found". The built-in
+# GITHUB_TOKEN with issues:write can close/comment on this repo's own issues.
 name: Close fixed issues on release
 
 on:
@@ -13,8 +19,22 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: gcampbell/fixed-pending-release@v0.0.9
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          label: fixed-pending-release
-          message: ":tada: Fixed in release [${releaseTag}](${releaseUrl}). :tada:"
+      - name: Close fixed-pending-release issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+          URL: ${{ github.event.release.html_url }}
+        run: |
+          set -euo pipefail
+          nums=$(gh issue list -R "$REPO" --label fixed-pending-release --state open \
+                   --limit 200 --json number --jq '.[].number')
+          if [ -z "$nums" ]; then
+            echo "No open issues labeled fixed-pending-release; nothing to close."
+            exit 0
+          fi
+          for num in $nums; do
+            echo "Closing #$num (fixed in $TAG)"
+            gh issue comment "$num" -R "$REPO" --body ":tada: Fixed in release [$TAG]($URL). :tada:"
+            gh issue close "$num" -R "$REPO" --reason completed
+          done

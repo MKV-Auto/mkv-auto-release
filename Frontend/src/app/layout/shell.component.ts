@@ -44,6 +44,8 @@ import { formatBackendNotificationToastText } from '../utils/backend-notificatio
   templateUrl: './shell.component.html',
 })
 export class ShellComponent implements OnInit, OnDestroy {
+  /** #718: running app version shown by the header wordmark (e.g. "v1.0.3"; "dev" locally). */
+  appVersion: string | null = null;
   navOpen = false;
   devMode = false;
   devMenuOpen = false;
@@ -91,6 +93,18 @@ export class ShellComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     document.addEventListener('visibilitychange', this._onVisibilityChange);
     this.updateHistoryRoute(this.router.url);
+
+    // #718: show the running version by the header wordmark. Semver renders as
+    // "v1.0.3"; a dev build stays "dev". Failures leave it hidden (*ngIf).
+    this.subs.add(
+      this.systemSvc.getAppVersion().subscribe({
+        next: (v) => {
+          const s = (v || '').trim();
+          this.appVersion = s ? (/^\d+\.\d+\.\d+/.test(s) ? `v${s}` : s) : null;
+        },
+        error: () => {},
+      })
+    );
     this.subs.add(
       this.router.events.pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd)).subscribe(() => {
         this.updateHistoryRoute(this.router.url);

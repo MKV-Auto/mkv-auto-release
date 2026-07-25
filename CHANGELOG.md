@@ -12,10 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-07-25
+
+### Added
+
+- **The running version is shown in the header (#718).** A small version tag (e.g. `v1.0.4`) now sits under the MKV Auto wordmark on every page, so you can tell at a glance what you're running — and it pairs with the update banner when a newer version is available.
+
+### Fixed
+
+- **A disc that fails its first scan no longer gets stuck unreadable (#720).** If a disc's very first scan didn't finish, the app remembered the disc but never retried the scan — so it appeared in the UI, let you assign a movie, then refused to copy with "no tracks were enumerated", and ejecting and reinserting changed nothing. The app now retries the scan for any disc it hasn't successfully scanned, and a successful scan clears the earlier failure.
+- **Copy errors explain the real problem (#720).** When a disc can't be copied, the message now says what actually went wrong — for example that MakeMKV couldn't read or decrypt the disc — instead of always telling you to eject and reinsert, advice that can't help in most of those cases.
+- **Issues linked to a public bug report close automatically again on release (#717).** The release automation depended on a third-party action that was deleted from GitHub, so it failed on every release; it's now built in.
+
 ## [1.0.3] - 2026-07-21
 
 ### Added
 
+- **The running version is shown in the header (#718).** A small version tag (e.g. `v1.0.3`) now sits under the MKV Auto wordmark on every page, so you can tell at a glance what you're running — and it pairs with the update banner when a newer version is available.
 - **Upgrades can't lose your library (#709).** Before applying any database change on startup, the container now takes an automatic backup and refuses to serve if a migration fails partway — so an update can never leave you with a half-changed, broken database. Backups are kept under `/data/backups` and can be restored with a bundled script.
 
 ### Fixed

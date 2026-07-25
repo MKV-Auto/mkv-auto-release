@@ -107,4 +107,35 @@ describe('SystemService', () => {
       req.flush({ auto_rip_enabled: true });
     });
   });
+
+  describe('getAppVersion (#718)', () => {
+    it('GETs /system/version and unwraps the version string', (done) => {
+      service.getAppVersion().subscribe((v) => {
+        expect(v).toBe('1.0.3');
+        done();
+      });
+      const req = httpMock.expectOne(`${apiUrl}/system/version`);
+      expect(req.request.method).toBe('GET');
+      req.flush({ version: '1.0.3' });
+    });
+
+    it('caches — a second subscription shares the one HTTP call (shareReplay)', (done) => {
+      service.getAppVersion().subscribe();
+      const req = httpMock.expectOne(`${apiUrl}/system/version`);
+      req.flush({ version: '1.0.3' });
+      service.getAppVersion().subscribe((v) => {
+        expect(v).toBe('1.0.3');
+        httpMock.expectNone(`${apiUrl}/system/version`); // no second call
+        done();
+      });
+    });
+
+    it('falls back to "dev" when the response has no version', (done) => {
+      service.getAppVersion().subscribe((v) => {
+        expect(v).toBe('dev');
+        done();
+      });
+      httpMock.expectOne(`${apiUrl}/system/version`).flush({});
+    });
+  });
 });

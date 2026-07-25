@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable, shareReplay } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { environment } from '../environments/environment';
 
 /** #699: shape of GET /system/update-status. */
@@ -440,6 +441,18 @@ export class SystemService {
   /** #699: running version vs newest published release (backend caches 6h). */
   getUpdateStatus(): Observable<UpdateStatus> {
     return this.http.get<UpdateStatus>(`${this.apiUrl}/system/update-status`);
+  }
+
+  /** #718: running app version (MKVAUTO_VERSION; "dev" locally). Cached — it
+   *  can't change within a session. */
+  private appVersion$?: Observable<string>;
+  getAppVersion(): Observable<string> {
+    if (!this.appVersion$) {
+      this.appVersion$ = this.http
+        .get<{ version: string }>(`${this.apiUrl}/system/version`)
+        .pipe(map((r) => r?.version || 'dev'), shareReplay(1));
+    }
+    return this.appVersion$;
   }
 
   constructor(private http: HttpClient) {}

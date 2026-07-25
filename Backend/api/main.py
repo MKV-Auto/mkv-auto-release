@@ -449,7 +449,26 @@ def _handle_udev_event(action: str, device: str, disc_num: Optional[str] = None)
                                 hash_exc,
                             )
                         else:
-                            if new_hash == baseline:
+                            # #720: only skip when the cached disc was ACTUALLY
+                            # scanned. A disc whose hash landed in the cache but
+                            # whose scan never completed would otherwise be
+                            # skipped forever — every udev event says "known
+                            # disc, don't rescan" and it stays titleless, so the
+                            # UI offers it but Start Copy fails with "no tracks
+                            # enumerated". Cached-but-unscanned => fall through
+                            # and run the full insert (which scans).
+                            cached_scanned = bool(
+                                cached.get("disc_info")
+                                or cached.get("titles")
+                                or (cached.get("scan_state") == "completed")
+                            )
+                            if new_hash == baseline and not cached_scanned:
+                                logger.info(
+                                    "Weak udev change: hash matches cache for mount_point=%s "
+                                    "but the cached disc was never scanned — running full insert",
+                                    mount_point,
+                                )
+                            elif new_hash == baseline:
                                 logger.info(
                                     "Weak udev change: hash matches cache for mount_point=%s, skipping rescan",
                                     mount_point,

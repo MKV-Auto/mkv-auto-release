@@ -124,6 +124,19 @@ async def get_frontend_version() -> dict:
     return {"version": _frontend_version_hash()}
 
 
+@router.get("/version")
+def get_app_version() -> dict:
+    """Running application version (#718).
+
+    ``MKVAUTO_VERSION`` is baked into the image at build time; "dev" outside
+    Docker. Lightweight and instant — unlike /update-status this does no
+    network call, so the header can show it on every load.
+    """
+    from core import update_checker
+
+    return {"version": update_checker.get_current_version()}
+
+
 @router.get("/update-status")
 def get_update_status() -> dict:
     """Running version vs the newest published release (#699).
