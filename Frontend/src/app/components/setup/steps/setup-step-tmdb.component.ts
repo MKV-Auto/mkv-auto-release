@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { SystemService } from '../../../services/system.service';
 import { IconComponent } from '../../../ui/icon/icon.component';
 import { BtnComponent } from '../../../ui/btn/btn.component';
+import { EnvManagedNoteComponent } from './env-managed-note.component';
 
 /** #614: TMDB API key step in the first-boot setup assistant. Optional — the
  *  user can skip it and configure later via Settings → TMDB. */
@@ -21,7 +22,7 @@ type SaveResult = 'success' | 'error' | null;
 @Component({
   selector: 'app-setup-step-tmdb',
   standalone: true,
-  imports: [CommonModule, FormsModule, IconComponent, BtnComponent],
+  imports: [EnvManagedNoteComponent, CommonModule, FormsModule, IconComponent, BtnComponent],
   template: `
     <div class="setup-step">
       <!-- Header -->
@@ -48,7 +49,10 @@ type SaveResult = 'success' | 'error' | null;
           placeholder="e.g. 1a2b3c4d5e6f7g8h9i0j…"
           autocomplete="off"
           spellcheck="false"
+          [disabled]="isEnvManaged('tmdb_api_key')"
         />
+        <app-env-managed-note *ngIf="isEnvManaged('tmdb_api_key')"
+                              variable="MKVAUTO_TMDB_API_KEY"></app-env-managed-note>
 
         <div *ngIf="saveResult === 'success'" class="setup-step-message success">
           <ui-icon name="check-circle" [size]="16"></ui-icon>
@@ -121,6 +125,13 @@ type SaveResult = 'success' | 'error' | null;
   `],
 })
 export class SetupStepTmdbComponent implements OnChanges {
+  /** Dotted setting paths the container's environment pins (see the modal). */
+  @Input() envManaged: string[] = [];
+
+  isEnvManaged(settingPath: string): boolean {
+    return this.envManaged.includes(settingPath);
+  }
+
   @Input() data!: TmdbStepData;
   @Output() dataChange = new EventEmitter<Partial<TmdbStepData>>();
 

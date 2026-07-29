@@ -174,9 +174,9 @@ This survives Unraid reboots via boot config persistence.
 
 ### Unraid
 
-- Community Apps template includes post-install script
-- Boot config ensures persistence
-- Usually works automatically
+- Not in Community Apps yet; there is no post-install script
+- Set the boot config above so `autoclose=0` survives a reboot
+- Verify with `cat /proc/sys/dev/cdrom/autoclose` after rebooting
 
 ### Fedora/RHEL
 

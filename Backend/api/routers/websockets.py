@@ -345,6 +345,44 @@ def _build_initial_coordinator_state_sync() -> Dict[str, Any]:
                     "last_modified_at": None,
                 })
 
+        # #724: drives we know are not responding. The disc cache is emptied
+        # for a faulted drive (fail-closed, #723), so without this the card —
+        # and with it the error message and the power-cycle remedy — would
+        # vanish on every page refresh, leaving the user with no signal at all.
+        from core.drive_health import snapshot as drive_health_snapshot
+
+        represented_mounts_after_scanning_health = {
+            m.get("mount_point") for m in inserted_discs_metadata if m.get("mount_point")
+        }
+        for health in drive_health_snapshot():
+            if health.mount_point in represented_mounts_after_scanning_health:
+                continue
+            dn = None
+            sr_match = _re.search(r"sr(\d+)$", health.mount_point)
+            if sr_match:
+                dn = sr_match.group(1)
+            inserted_discs_metadata.append({
+                "disc_id": f"drive-error-{dn or health.mount_point}",
+                "disc_num": dn,
+                "mount_point": health.mount_point,
+                "disc_hash": None,
+                "disc_state": "in_drive",
+                "job_id": None,
+                "scan_state": "failed",
+                "scan_error": health.message,
+                "movie_name": None,
+                "release_name": None,
+                "info_title": None,
+                "disc_number": None,
+                "discdb_disc_num": None,
+                "release_image": None,
+                "disc_format": None,
+                "resolution": None,
+                "release_year": None,
+                "production_year": None,
+                "last_modified_at": None,
+            })
+
         # Active-rip fallback: if a job is running (pending/running/validating)
         # on a mount_point that isn't represented above, emit an in_drive card
         # for it. This handles the case where the drive-manager cache is empty

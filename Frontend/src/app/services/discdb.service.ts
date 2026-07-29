@@ -78,17 +78,44 @@ export class DiscDbService {
   /** #86 — TheDiscDB-shaped contribution bundle for a disc. The backend
    * stamps discdb_exported_at / status='exported' on success. */
   async getContributionBundle(discId: string): Promise<ContributionBundle> {
-    const url = `${this.apiBase}/discdb/contributions/${encodeURIComponent(discId)}/bundle`;
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      let detail = '';
-      try {
-        detail = (await resp.json())?.detail ?? '';
-      } catch {
-        detail = '';
-      }
-      throw new Error(detail || `Bundle export failed (${resp.status})`);
-    }
+    const resp = await fetch(this.bundleUrl(discId, 'json'));
+    if (!resp.ok) throw new Error(await this.bundleError(resp));
     return await resp.json();
+  }
+
+  /**
+   * #741 — the submission as a zip laid out like the upstream repository.
+   *
+   * Returns the blob and the server's filename: the name encodes the film and
+   * disc number, and reconstructing it here would mean duplicating the backend's
+   * sanitising rules in a second place.
+   */
+  async getContributionZip(discId: string): Promise<{ blob: Blob; filename: string }> {
+    const resp = await fetch(this.bundleUrl(discId, 'zip'));
+    if (!resp.ok) throw new Error(await this.bundleError(resp));
+    return {
+      blob: await resp.blob(),
+      filename: this.filenameFrom(resp.headers.get('Content-Disposition')) ?? 'thediscdb-submission.zip',
+    };
+  }
+
+  private bundleUrl(discId: string, format: 'zip' | 'json'): string {
+    return `${this.apiBase}/discdb/contributions/${encodeURIComponent(discId)}/bundle?format=${format}`;
+  }
+
+  /** The backend puts the actionable reason in `detail`; surface it, not the status code. */
+  private async bundleError(resp: Response): Promise<string> {
+    let detail = '';
+    try {
+      detail = (await resp.json())?.detail ?? '';
+    } catch {
+      detail = '';
+    }
+    return detail || `Bundle export failed (${resp.status})`;
+  }
+
+  private filenameFrom(header: string | null): string | null {
+    const m = header?.match(/filename="?([^"]+)"?/);
+    return m ? m[1] : null;
   }
 }

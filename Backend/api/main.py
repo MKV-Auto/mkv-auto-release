@@ -552,6 +552,36 @@ async def lifespan(app: FastAPI):
         logger = get_logger(__name__, "lifespan")
         logger.warning(f"Failed to store event loop: {exc}")
     
+    # Environment-provided settings are applied on EVERY boot, before anything
+    # reads them, so the container is declarative: the environment is the
+    # desired state and a restart converges to it. Deliberately not a
+    # first-boot-only seed — that would silently stop honouring compose edits
+    # once settings.json existed.
+    try:
+        from core.env_settings import apply_env_settings
+
+        applied = apply_env_settings()
+        # The MakeMKV key is not just a stored value: makemkvcon reads it from
+        # its own settings.conf, so an env-provided key has to be written there
+        # too or an unattended container starts with MakeMKV unregistered.
+        if "makemkv_registration_key" in applied:
+            try:
+                from core.makemkv_updater import _write_app_key_preserving
+
+                _write_app_key_preserving(applied["makemkv_registration_key"])
+                get_logger(__name__, "lifespan").info(
+                    "Applied MakeMKV registration key from the environment"
+                )
+            except Exception as exc:
+                # Never fatal: the UI can still register the key by hand.
+                get_logger(__name__, "lifespan").error(
+                    "Could not write the env-provided MakeMKV key to settings.conf: %s", exc
+                )
+    except Exception as exc:
+        get_logger(__name__, "lifespan").warning(
+            "Failed to apply environment settings: %s", exc
+        )
+
     # Wire up callbacks for proactive disc insertion flow
     try:
         from core import disc_manager

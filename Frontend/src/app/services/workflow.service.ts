@@ -3114,12 +3114,34 @@ export class WorkflowService implements OnDestroy {
           const matchesEmptyId = !matchesByMount && !message.mount_point && message.disc_num && d.disc_id === `empty-${message.disc_num}`;
           
           if (matchesByMount || matchesById || matchesByNum || matchesEmptyId) {
-            return {
+            const failed = {
               ...d,
               disc_id: message.disc_id || d.disc_id,  // Update ID from empty-* if needed
               scan_state: 'failed' as const,
               scan_error: message.scan_error || message.error || 'Scan failed',
             };
+            // #723: the drive stopped responding, so whatever identity this
+            // row still carries belongs to the PREVIOUS disc. Spreading `...d`
+            // alone would leave the card headlined with the wrong movie —
+            // exactly the reported fault. Drop the metadata so the card falls
+            // back to the drive error. Only set for drive-level faults; an
+            // empty-scan failure keeps its volume-label title.
+            if (message.clear_identity) {
+              return {
+                ...failed,
+                disc_hash: null,
+                movie_name: null,
+                release_name: null,
+                info_title: null,
+                disc_number: null,
+                release_image: null,
+                disc_format: null,
+                resolution: null,
+                release_year: null,
+                production_year: null,
+              };
+            }
+            return failed;
           }
           return d;
         });

@@ -1210,11 +1210,40 @@ class SetupStatusResponse(BaseModel):
     """First-time setup status and current wizard step."""
     first_time_setup_complete: bool
     setup_step: int
+    # Dotted setting paths supplied by the environment. The wizard uses this to
+    # treat those steps as already answered, and the settings screens use it to
+    # disable the matching fields — an edit there would be reverted on the next
+    # restart, so offering it would be a lie.
+    env_managed: List[str] = []
 
 
 class SetupProgressUpdate(BaseModel):
     """Request body to persist setup wizard step (1-6)."""
     setup_step: int
+
+
+def _env_managed_keys() -> List[str]:
+    """Never let this break a status call — the wizard just loses the hint."""
+    try:
+        from core.env_settings import env_managed_keys
+
+        return env_managed_keys()
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("Could not resolve env-managed settings: %s", exc)
+        return []
+
+
+@router.get("/settings/env-managed")
+async def get_env_managed_settings() -> dict:
+    """Which settings the environment supplies, and every variable available.
+
+    ``managed`` drives disabled fields in the UI. ``supported`` lists all
+    variables — set or not — so the settings screen can show what a deployment
+    *could* pin without the frontend hard-coding a list that would drift.
+    """
+    from core.env_settings import describe
+
+    return {"managed": _env_managed_keys(), "supported": describe()}
 
 
 @router.get("/setup/status", response_model=SetupStatusResponse)
@@ -1226,7 +1255,11 @@ async def get_setup_status() -> SetupStatusResponse:
     step = settings.get_setup_step()
     elapsed = time.perf_counter() - t0
     log.info("get_setup_status: complete=%s step=%s elapsed_sec=%.3f", complete, step, elapsed)
-    return SetupStatusResponse(first_time_setup_complete=complete, setup_step=step)
+    return SetupStatusResponse(
+        first_time_setup_complete=complete,
+        setup_step=step,
+        env_managed=_env_managed_keys(),
+    )
 
 
 @router.post("/setup/complete", response_model=SetupStatusResponse)
@@ -1236,6 +1269,7 @@ async def mark_setup_complete() -> SetupStatusResponse:
     return SetupStatusResponse(
         first_time_setup_complete=settings.get_first_time_setup_complete(),
         setup_step=settings.get_setup_step(),
+        env_managed=_env_managed_keys(),
     )
 
 
@@ -1249,6 +1283,7 @@ async def save_setup_progress(body: SetupProgressUpdate) -> SetupStatusResponse:
     return SetupStatusResponse(
         first_time_setup_complete=settings.get_first_time_setup_complete(),
         setup_step=settings.get_setup_step(),
+        env_managed=_env_managed_keys(),
     )
 
 

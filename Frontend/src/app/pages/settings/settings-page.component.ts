@@ -1,4 +1,6 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Subscription, interval } from 'rxjs';
+import { switchMap } from 'rxjs/operators';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -16,6 +18,7 @@ import {
   TransferConfigUpdate,
   StorageSummary,
   ImportSummary,
+  DiscDbExportJob,
 } from '../../services/system.service';
 import { ToastService, formatHttpErrorDetail } from '../../services/toast.service';
 import { WorkflowService } from '../../services/workflow.service';
@@ -259,15 +262,27 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
               </div>
 
               <ui-field label="Preview duration (seconds)" hint="Length of each HLS preview clip (30–300s).">
-                <input class="settings-input" type="number" min="10" max="600" [(ngModel)]="preview.duration_seconds">
+                <input class="settings-input" type="number" min="10" max="600" [(ngModel)]="preview.duration_seconds"
+                       [disabled]="isEnvManaged('preview_duration_seconds')"
+                       [title]="isEnvManaged('preview_duration_seconds') ? envManagedHint : null">
+                <div class="settings-env-note" *ngIf="isEnvManaged('preview_duration_seconds')">
+                  <ui-icon name="info" [size]="13"></ui-icon>
+                  <span>{{ envManagedHint }}</span>
+                </div>
               </ui-field>
 
               <ui-field label="Max parallel previews" hint="Concurrent preview generations (1–{{ preview.max_parallel_ceiling || 1 }}).">
-                <input class="settings-input" type="range" min="1" [max]="preview.max_parallel_ceiling || 1" [(ngModel)]="preview.max_parallel">
+                <input class="settings-input" type="range" min="1" [max]="preview.max_parallel_ceiling || 1" [(ngModel)]="preview.max_parallel"
+                       [disabled]="isEnvManaged('preview_max_parallel')"
+                       [title]="isEnvManaged('preview_max_parallel') ? envManagedHint : null">
                 <div class="settings-range-labels">
                   <span>1</span>
                   <span>{{ preview.max_parallel }} concurrent</span>
                   <span>{{ preview.max_parallel_ceiling || 1 }}</span>
+                </div>
+                <div class="settings-env-note" *ngIf="isEnvManaged('preview_max_parallel')">
+                  <ui-icon name="info" [size]="13"></ui-icon>
+                  <span>{{ envManagedHint }}</span>
                 </div>
               </ui-field>
 
@@ -424,6 +439,8 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                   class="settings-toggle"
                   [class.is-on]="discord.enabled"
                   [attr.aria-pressed]="discord.enabled ? 'true' : 'false'"
+                  [disabled]="isEnvManaged('discord.enabled')"
+                  [title]="isEnvManaged('discord.enabled') ? envManagedHint : null"
                   (click)="discord.enabled = !discord.enabled">
                   <span class="settings-toggle__knob" aria-hidden="true"></span>
                 </button>
@@ -437,7 +454,12 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                   class="settings-input settings-input--mono"
                   [(ngModel)]="discord.webhook_url"
                   placeholder="https://discord.com/api/webhooks/…"
-                  [disabled]="!discord.enabled">
+                  [disabled]="!discord.enabled || isEnvManaged('discord.webhook_url')"
+                  [title]="isEnvManaged('discord.webhook_url') ? envManagedHint : null">
+                <div class="settings-env-note" *ngIf="isEnvManaged('discord.webhook_url') || isEnvManaged('discord.enabled')">
+                  <ui-icon name="info" [size]="13"></ui-icon>
+                  <span>{{ envManagedHint }}</span>
+                </div>
               </ui-field>
 
               <div class="settings-help-callout">
@@ -499,6 +521,8 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                     type="button"
                     class="settings-platform-card"
                     [class.is-selected]="mediaServer.media_server === 'plex'"
+                    [disabled]="isEnvManaged('media_server')"
+                    [title]="isEnvManaged('media_server') ? envManagedHint : null"
                     (click)="mediaServer.media_server = 'plex'">
                     <div class="settings-platform-card__head">
                       <div class="settings-platform-card__logo settings-platform-card__logo--plex">P</div>
@@ -516,6 +540,8 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                     type="button"
                     class="settings-platform-card"
                     [class.is-selected]="mediaServer.media_server === 'jellyfin'"
+                    [disabled]="isEnvManaged('media_server')"
+                    [title]="isEnvManaged('media_server') ? envManagedHint : null"
                     (click)="mediaServer.media_server = 'jellyfin'">
                     <div class="settings-platform-card__head">
                       <div class="settings-platform-card__logo settings-platform-card__logo--jellyfin">J</div>
@@ -529,6 +555,10 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                     <div class="settings-platform-card__name">Jellyfin</div>
                     <p class="settings-platform-card__desc">Free and open-source media system with no tracking.</p>
                   </button>
+                </div>
+                <div class="settings-env-note" *ngIf="isEnvManaged('media_server')">
+                  <ui-icon name="info" [size]="13"></ui-icon>
+                  <span>{{ envManagedHint }}</span>
                 </div>
               </ui-field>
 
@@ -598,9 +628,15 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                   class="settings-toggle"
                   [class.is-on]="discDbLookup.eject_on_finish"
                   [attr.aria-pressed]="discDbLookup.eject_on_finish ? 'true' : 'false'"
+                  [disabled]="isEnvManaged('eject_on_finish')"
+                  [title]="isEnvManaged('eject_on_finish') ? envManagedHint : null"
                   (click)="discDbLookup.eject_on_finish = !discDbLookup.eject_on_finish">
                   <span class="settings-toggle__knob" aria-hidden="true"></span>
                 </button>
+                <div class="settings-env-note" *ngIf="isEnvManaged('eject_on_finish')">
+                  <ui-icon name="info" [size]="13"></ui-icon>
+                  <span>{{ envManagedHint }}</span>
+                </div>
               </ui-field>
 
               <ui-field
@@ -613,9 +649,15 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                   class="settings-toggle"
                   [class.is-on]="autoRip.auto_rip_enabled"
                   [attr.aria-pressed]="autoRip.auto_rip_enabled ? 'true' : 'false'"
+                  [disabled]="isEnvManaged('auto_rip_enabled')"
+                  [title]="isEnvManaged('auto_rip_enabled') ? envManagedHint : null"
                   (click)="autoRip.auto_rip_enabled = !autoRip.auto_rip_enabled">
                   <span class="settings-toggle__knob" aria-hidden="true"></span>
                 </button>
+                <div class="settings-env-note" *ngIf="isEnvManaged('auto_rip_enabled')">
+                  <ui-icon name="info" [size]="13"></ui-icon>
+                  <span>{{ envManagedHint }}</span>
+                </div>
               </ui-field>
 
               <div class="settings-actions">
@@ -697,7 +739,13 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                   [(ngModel)]="tmdbApiKey"
                   placeholder="e.g. 1a2b3c4d5e6f7g8h9i0j…"
                   autocomplete="off"
-                  spellcheck="false">
+                  spellcheck="false"
+                  [disabled]="isEnvManaged('tmdb_api_key')"
+                  [title]="isEnvManaged('tmdb_api_key') ? envManagedHint : null">
+                <div class="settings-env-note" *ngIf="isEnvManaged('tmdb_api_key')">
+                  <ui-icon name="info" [size]="13"></ui-icon>
+                  <span>{{ envManagedHint }}</span>
+                </div>
               </ui-field>
 
               <div class="settings-help-callout">
@@ -722,7 +770,7 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
               <div class="settings-actions">
                 <ui-btn variant="secondary"
                         (click)="clearTmdbKey()"
-                        [disabled]="tmdbSaving || !tmdbApiKeySet">
+                        [disabled]="tmdbSaving || !tmdbApiKeySet || isEnvManaged('tmdb_api_key')">
                   <ui-icon uiBtnIcon name="refresh" [size]="13"></ui-icon>
                   Clear key
                 </ui-btn>
@@ -730,7 +778,7 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                   variant="primary"
                   (click)="saveTmdbConfig()"
                   [loading]="tmdbSaving"
-                  [disabled]="!tmdbApiKey.trim() && !tmdbApiKeySet">
+                  [disabled]="(!tmdbApiKey.trim() && !tmdbApiKeySet) || isEnvManaged('tmdb_api_key')">
                   Save key
                 </ui-btn>
               </div>
@@ -770,6 +818,80 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                   <ui-icon uiBtnIcon name="download" [size]="13"></ui-icon>
                   Export all data
                 </ui-btn>
+              </div>
+
+              <!-- #741: bulk TheDiscDB submission. Distinct from the backup
+                   above — this one is for contributing upstream, not restoring. -->
+              <div class="settings-iox-block settings-iox-block--export">
+                <div class="settings-iox-block__head">
+                  <ui-icon name="download" [size]="20"></ui-icon>
+                  <div>
+                    <h5 class="settings-iox-block__title">Export DiscDB submissions</h5>
+                    <p class="settings-iox-block__body">
+                      Download every disc that isn't in TheDiscDB yet, laid out like the
+                      <a class="settings-help-callout__link"
+                         href="https://github.com/TheDiscDb/data"
+                         target="_blank" rel="noopener noreferrer">TheDiscDb/data</a>
+                      repository. Unzip it over a fork of that repo and open one pull request
+                      for the whole set. Needs a finished job and a labelled release per disc.
+                    </p>
+                  </div>
+                </div>
+                <div class="settings-alert settings-alert--error" *ngIf="discdbExportError">
+                  <ui-icon name="alert" [size]="14"></ui-icon>
+                  <span>{{ discdbExportError }}</span>
+                </div>
+                <div class="settings-alert settings-alert--success" *ngIf="discdbExportResult">
+                  <ui-icon name="check-circle" [size]="14"></ui-icon>
+                  <span>{{ discdbExportResult }}</span>
+                </div>
+                <!-- A finished archive nobody collected — offered rather than
+                     rebuilt, since these take a while and people navigate away. -->
+                <div class="settings-alert settings-alert--success"
+                     *ngIf="discdbExportReady && !discdbExporting">
+                  <ui-icon name="check-circle" [size]="14"></ui-icon>
+                  <span>
+                    An export finished while you were away —
+                    {{ discdbExportReady.included }} disc{{ discdbExportReady.included === 1 ? '' : 's' }}<span
+                      *ngIf="discdbExportReady.skipped">, {{ discdbExportReady.skipped }} skipped</span>.
+                    Download it instead of building it again.
+                  </span>
+                </div>
+                <div class="settings-actions" *ngIf="discdbExportReady && !discdbExporting">
+                  <ui-btn variant="primary" (click)="downloadReadyDiscDbExport()">
+                    <ui-icon uiBtnIcon name="download" [size]="13"></ui-icon>
+                    Download last export
+                  </ui-btn>
+                  <ui-btn variant="secondary" (click)="dismissReadyDiscDbExport()">
+                    Dismiss
+                  </ui-btn>
+                </div>
+
+                <div class="settings-export-progress" *ngIf="discdbExporting">
+                  <div class="settings-export-progress__bar">
+                    <div class="settings-export-progress__fill"
+                         [style.width.%]="discdbExportPercent"></div>
+                  </div>
+                  <p class="settings-export-progress__label">
+                    <ng-container *ngIf="discdbExportTotal">
+                      {{ discdbExportDone }} of {{ discdbExportTotal }}
+                    </ng-container>
+                    <ng-container *ngIf="!discdbExportTotal">Starting…</ng-container>
+                    <span *ngIf="discdbExportCurrent"> — {{ discdbExportCurrent }}</span>
+                  </p>
+                </div>
+                <div class="settings-actions">
+                  <ui-btn [variant]="discdbExportReady ? 'secondary' : 'primary'"
+                          (click)="exportDiscDbSubmissions()"
+                          [loading]="discdbExporting" [disabled]="discdbExporting">
+                    <ui-icon uiBtnIcon name="download" [size]="13"></ui-icon>
+                    {{ discdbExportReady ? 'Build a fresh export' : 'Export DiscDB submissions' }}
+                  </ui-btn>
+                  <ui-btn variant="secondary" *ngIf="discdbExporting"
+                          (click)="cancelDiscDbExport()">
+                    Cancel
+                  </ui-btn>
+                </div>
               </div>
 
               <!-- Import -->
@@ -1219,6 +1341,39 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
     .settings-help-callout ui-icon { color: #a5b4fc; margin-top: 2px; flex-shrink: 0; }
     .settings-help-callout p { margin: 0; }
     .settings-help-callout strong { color: #fff; }
+
+    /* Bulk-export progress. The count matters more than the bar — "3 of 40"
+       tells you whether to wait; a bar alone does not. */
+    .settings-export-progress { margin: 10px 0; }
+    .settings-export-progress__bar {
+      height: 6px;
+      border-radius: 3px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .settings-export-progress__fill {
+      height: 100%;
+      background: #6366f1;
+      transition: width 0.3s ease;
+    }
+    .settings-export-progress__label {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* Shown under a field the environment pins. Amber rather than the indigo
+       help colour: this is a constraint on what the user can do here, not a tip. */
+    .settings-env-note {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: rgba(251, 191, 36, 0.85);
+    }
+    .settings-env-note ui-icon { margin-top: 1px; flex-shrink: 0; }
 
     /* Inline alerts inside a settings card. Red for errors, emerald for
      * saves. Same shape as the help callout but tone-tinted. */
@@ -1730,7 +1885,7 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
     }
   `],
 })
-export class SettingsPageComponent implements OnInit {
+export class SettingsPageComponent implements OnInit, OnDestroy {
   // max_parallel_ceiling is server-derived; default to 1 until the backend
   // config is loaded (loadPreviewConfig populates it). The slider's [max]
   // binds to this field, not to navigator.hardwareConcurrency.
@@ -1786,6 +1941,31 @@ export class SettingsPageComponent implements OnInit {
   tmdbError: string | null = null;
   tmdbSaved: string | null = null;
 
+  // #741: bulk TheDiscDB submission export. Runs in the background, so the page
+  // holds the job id and polls rather than blocking on one request.
+  discdbExporting = false;
+  discdbExportError: string | null = null;
+  discdbExportResult: string | null = null;
+  discdbExportJobId: string | null = null;
+  discdbExportDone = 0;
+  discdbExportTotal = 0;
+  discdbExportCurrent = '';
+  /** A finished archive still on disk, offered rather than rebuilt. */
+  discdbExportReady: DiscDbExportJob | null = null;
+  private discdbPollSub?: Subscription;
+
+  get discdbExportPercent(): number {
+    if (!this.discdbExportTotal) return 0;
+    return Math.round((this.discdbExportDone / this.discdbExportTotal) * 100);
+  }
+
+  // Settings pinned by environment variables. The container re-applies the
+  // environment on every boot, so editing one of these here would look like it
+  // worked and then silently revert on the next restart. Disable instead.
+  envManaged: string[] = [];
+  readonly envManagedHint =
+    'Set by an environment variable on this container. Change it in your Docker/Compose configuration and restart.';
+
   // Storage
   storageSummary: StorageSummary | null = null;
   storageError: string | null = null;
@@ -1825,6 +2005,27 @@ export class SettingsPageComponent implements OnInit {
     this.loadTmdbConfig();
     this.loadTransferConfigs();
     this.loadStorage();
+    this.loadEnvManaged();
+    this.resumeDiscDbExport();
+  }
+
+  ngOnDestroy(): void {
+    // Leaving the page must not keep polling a job nobody is watching.
+    this.discdbPollSub?.unsubscribe();
+  }
+
+  private loadEnvManaged(): void {
+    // Failure just means no fields get disabled — the settings still work,
+    // so this must not block the page.
+    this.systemSvc.getEnvManagedSettings().subscribe({
+      next: (res) => (this.envManaged = res?.managed ?? []),
+      error: () => (this.envManaged = []),
+    });
+  }
+
+  /** True when this setting comes from the environment and cannot be edited here. */
+  isEnvManaged(settingPath: string): boolean {
+    return this.envManaged.includes(settingPath);
   }
 
   loadTmdbConfig(): void {
@@ -2215,6 +2416,149 @@ export class SettingsPageComponent implements OnInit {
         this.toastSvc.show(err.error?.detail || err.message || 'Export failed', 'error');
       },
     });
+  }
+
+  /** #741 — start the bulk export and follow it to completion. */
+  exportDiscDbSubmissions(): void {
+    this.discdbExporting = true;
+    this.discdbExportError = null;
+    this.discdbExportResult = null;
+    this.discdbExportDone = 0;
+    this.discdbExportTotal = 0;
+    this.systemSvc.startDiscDbExport().subscribe({
+      next: job => {
+        this.discdbExportJobId = job.job_id;
+        this.applyDiscDbExportStatus(job);
+        this.pollDiscDbExport(job.job_id);
+      },
+      error: err => this.failDiscDbExport(err),
+    });
+  }
+
+  cancelDiscDbExport(): void {
+    if (!this.discdbExportJobId) return;
+    this.systemSvc.cancelDiscDbExport(this.discdbExportJobId).subscribe({
+      // The worker stops between discs, so the terminal state still arrives
+      // through the poll — nothing to do here but let it.
+      next: () => {},
+      error: () => {},
+    });
+  }
+
+  /**
+   * Reattach to whatever the server has, so leaving the page never costs work.
+   *
+   * Two distinct cases: an export still running (rejoin and keep polling), or
+   * one that finished while nobody was watching (offer the archive). The second
+   * is the common one — these take a while, which is why people navigate away —
+   * and without it the finished zip would sit out its retention window
+   * unreachable and have to be rebuilt from scratch.
+   */
+  private resumeDiscDbExport(): void {
+    this.systemSvc.getActiveDiscDbExport().subscribe({
+      next: job => {
+        if (!job || job.status === 'idle') return;
+        const active = job as DiscDbExportJob;
+        this.discdbExportJobId = active.job_id;
+        this.applyDiscDbExportStatus(active);
+
+        if (active.status === 'pending' || active.status === 'running') {
+          this.discdbExporting = true;
+          this.pollDiscDbExport(active.job_id);
+        } else if (active.download_ready) {
+          // Offered, not auto-downloaded: a file landing unprompted every time
+          // you open Settings would be obnoxious.
+          this.discdbExportReady = active;
+        }
+      },
+      error: () => {},
+    });
+  }
+
+  /** Collect a finished archive without rebuilding it. */
+  downloadReadyDiscDbExport(): void {
+    const job = this.discdbExportReady;
+    if (!job) return;
+    this.discdbExportError = null;
+    this.systemSvc.downloadDiscDbExport(job.job_id).subscribe({
+      next: file => this.saveDiscDbExport(file, job),
+      error: err => {
+        // 410: retention swept it, or the tmp volume was cleared.
+        this.discdbExportReady = null;
+        this.failDiscDbExport(err);
+      },
+    });
+  }
+
+  dismissReadyDiscDbExport(): void {
+    this.discdbExportReady = null;
+  }
+
+  private pollDiscDbExport(jobId: string): void {
+    this.discdbPollSub?.unsubscribe();
+    this.discdbPollSub = interval(1000)
+      .pipe(switchMap(() => this.systemSvc.getDiscDbExportStatus(jobId)))
+      .subscribe({
+        next: job => {
+          this.applyDiscDbExportStatus(job);
+          if (job.status === 'completed') {
+            this.discdbPollSub?.unsubscribe();
+            this.downloadDiscDbExport(jobId, job);
+          } else if (job.status === 'failed') {
+            this.discdbPollSub?.unsubscribe();
+            this.discdbExporting = false;
+            this.discdbExportError = job.error || 'DiscDB submission export failed';
+          }
+        },
+        error: err => {
+          this.discdbPollSub?.unsubscribe();
+          this.failDiscDbExport(err);
+        },
+      });
+  }
+
+  private applyDiscDbExportStatus(job: DiscDbExportJob): void {
+    this.discdbExportDone = job.done;
+    this.discdbExportTotal = job.total;
+    this.discdbExportCurrent = job.current;
+  }
+
+  private downloadDiscDbExport(jobId: string, job: DiscDbExportJob): void {
+    this.systemSvc.downloadDiscDbExport(jobId).subscribe({
+      next: file => this.saveDiscDbExport(file, job),
+      error: err => {
+        // The archive exists even though this attempt failed, so keep offering
+        // it rather than making the user rebuild over a transient hiccup.
+        this.discdbExportReady = job.download_ready ? job : null;
+        this.failDiscDbExport(err);
+      },
+    });
+  }
+
+  private saveDiscDbExport(file: { blob: Blob; filename: string }, job: DiscDbExportJob): void {
+    const url = window.URL.createObjectURL(file.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    this.discdbExporting = false;
+    this.discdbExportReady = null;
+    // Say what was left out as well as what went in — a silent partial export
+    // reads as "everything", and the user would submit thinking so.
+    this.discdbExportResult =
+      `${job.included} disc${job.included === 1 ? '' : 's'} exported` +
+      (job.skipped ? ` — ${job.skipped} skipped, see README.txt in the zip` : '') +
+      (job.cancelled ? ' (cancelled early)' : '') +
+      '. Unzip it over your fork of TheDiscDb/data and open a pull request.';
+  }
+
+  private failDiscDbExport(err: any): void {
+    this.discdbExporting = false;
+    this.discdbExportError =
+      err?.error?.detail || err?.message || 'DiscDB submission export failed';
   }
 
   onFileSelected(event: Event): void {

@@ -44,7 +44,7 @@ def test_smb_directory_put_uses_full_remote_path_not_cd_chain(transient_with_mov
         result = _transfer_smb_directory_smbclient(
             job_id="job-1",
             src_path=transient_with_movie,
-            host="10.0.0.5",
+            host="192.0.2.5",
             share="Media",
             path="PLEX Media",
             port=445,
@@ -99,7 +99,7 @@ def test_smb_directory_transfer_fails_when_mkdir_not_benign(transient_with_movie
         result = _transfer_smb_directory_smbclient(
             job_id="job-2",
             src_path=transient_with_movie,
-            host="10.0.0.5",
+            host="192.0.2.5",
             share="Media",
             path="PLEX Media",
             port=445,
@@ -251,7 +251,7 @@ def test_smb_directory_silent_mkdir_failure_aborts_before_put(transient_with_mov
         result = _transfer_smb_directory_smbclient(
             job_id="job-silent-mkdir",
             src_path=transient_with_movie,
-            host="10.0.0.5",
+            host="192.0.2.5",
             share="Media",
             path="",  # transient → root, so per-file mkdir handles Movies/...
             port=445,

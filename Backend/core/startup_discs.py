@@ -212,7 +212,10 @@ def run_startup_drive_warmup_if_makemkv_ready() -> list:
             # once at startup so they can re-cable before kicking off a
             # multi-rip workflow.
             try:
-                from core.notifications import emit_notification_sync
+                from core.notifications import (
+                    NOTIFICATION_DEDUP_TTL_STARTUP_SECONDS,
+                    emit_notification_sync,
+                )
                 from core.usb_topology import detect_contention_warnings, detect_optical_drives
 
                 warnings = detect_contention_warnings(detect_optical_drives())
@@ -227,6 +230,11 @@ def run_startup_drive_warmup_if_makemkv_ready() -> list:
                         "action_required",
                         title="USB bandwidth contention",
                         id_key=f"usb_bus_contention:{w.bus}",
+                        # Per-bus id_key dedupes the warning, but this fires only
+                        # at startup: on the default 24h window a user who
+                        # re-cabled and restarted would get silence either way.
+                        # A short window still swallows crash-loop repeats.
+                        dedupe_ttl=NOTIFICATION_DEDUP_TTL_STARTUP_SECONDS,
                     )
             except Exception as exc:
                 logger.debug("USB topology check failed (non-fatal): %s", exc)

@@ -101,7 +101,7 @@ def test_smb_mode_uri_dest_root(disc_with_titles):
         t1: "Movies/Goonies (1985)/extras/Trailer.mkv",
         t2: "Movies/Goonies (1985)/extras/Featurette.mkv",
     }
-    transfer_paths = ["smb://10.0.6.11/PLEX Media/"]
+    transfer_paths = ["smb://192.0.2.10/PLEX Media/"]
     job = _attach_job(
         session, disc_id, post_paths=post_paths, transfer_paths=transfer_paths
     )
@@ -112,7 +112,7 @@ def test_smb_mode_uri_dest_root(disc_with_titles):
     for tid, rel in post_paths.items():
         t = session.query(models.DiscTitle).filter_by(id=tid).first()
         assert t.file_path_stage == "transfer"
-        assert t.file_path == f"smb://10.0.6.11/PLEX Media/{rel}"
+        assert t.file_path == f"smb://192.0.2.10/PLEX Media/{rel}"
 
 
 def test_rsync_mode_user_at_host_dest_root(disc_with_titles):
@@ -123,7 +123,7 @@ def test_rsync_mode_user_at_host_dest_root(disc_with_titles):
         t0: "Movies/Wednesday (2022) S01E01.mkv",
         t1: "Movies/Wednesday (2022) S01E02.mkv",
     }
-    transfer_paths = ["plex@10.0.6.50:/mnt/library"]
+    transfer_paths = ["plex@192.0.2.20:/mnt/library"]
     job = _attach_job(
         session, disc_id, post_paths=post_paths, transfer_paths=transfer_paths
     )
@@ -134,14 +134,14 @@ def test_rsync_mode_user_at_host_dest_root(disc_with_titles):
     for tid, rel in post_paths.items():
         t = session.query(models.DiscTitle).filter_by(id=tid).first()
         assert t.file_path_stage == "transfer"
-        assert t.file_path == f"plex@10.0.6.50:/mnt/library/{rel}"
+        assert t.file_path == f"plex@192.0.2.20:/mnt/library/{rel}"
 
 
 def test_nfs_mode_uri_dest_root(disc_with_titles):
     """NFS uses an ``nfs://`` URI form for completeness."""
     session, disc_id, [t0, *_] = disc_with_titles
     post_paths = {t0: "Movies/Test Movie/Test Movie.mkv"}
-    transfer_paths = ["nfs://10.0.6.30/exports/library"]
+    transfer_paths = ["nfs://192.0.2.30/exports/library"]
     job = _attach_job(
         session, disc_id, post_paths=post_paths, transfer_paths=transfer_paths
     )
@@ -151,7 +151,7 @@ def test_nfs_mode_uri_dest_root(disc_with_titles):
 
     t = session.query(models.DiscTitle).filter_by(id=t0).first()
     assert t.file_path_stage == "transfer"
-    assert t.file_path == "nfs://10.0.6.30/exports/library/Movies/Test Movie/Test Movie.mkv"
+    assert t.file_path == "nfs://192.0.2.30/exports/library/Movies/Test Movie/Test Movie.mkv"
 
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -100,6 +100,11 @@ class Disc(Base):
 
     id = Column(String, primary_key=True, default=_uuid_str)
     content_hash = Column(String, nullable=False, unique=True)
+    # TheDiscDB's GlobalDiscId: SHA1 of the disc's AACS/Unit_Key_RO.inf, uppercase
+    # hex. Identifies a pressing globally where content_hash identifies it by file
+    # layout. Only obtainable from the physical disc, and absent on DVDs (no AACS
+    # directory), so it stays nullable and is filled opportunistically at scan.
+    global_disc_id = Column(String, nullable=True)
     release_id = Column(String, ForeignKey("releases.id"), nullable=True)
     disc_number = Column(Integer, nullable=True)
     discdb_disc_num = Column(Integer, nullable=True)  # TheDiscDB matched disc index (reference only)

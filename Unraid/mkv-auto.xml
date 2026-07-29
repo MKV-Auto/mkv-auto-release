@@ -41,4 +41,19 @@
   <Config Name="Optical Drive" Target="/dev/sr0" Default="/dev/sr0" Mode="" Description="First optical drive (add more as needed)" Type="Device" Display="always" Required="true" Mask="false">/dev/sr0</Config>
   <Config Name="Timezone" Target="TZ" Default="UTC" Mode="" Description="Container timezone" Type="Variable" Display="advanced" Required="false" Mask="false">UTC</Config>
   <Config Name="Log Level" Target="MKVAUTO_DEBUG_LEVEL" Default="INFO" Mode="" Description="Logging level (DEBUG, INFO, WARNING, ERROR)" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+  <!-- Application settings. Anything set here is re-applied on every start and
+       shown read-only in the web UI, because a change made there would be
+       reverted on the next restart. Leave a field blank to manage it in the UI. -->
+  <Config Name="MakeMKV Registration Key" Target="MKVAUTO_MAKEMKV_KEY" Default="" Mode="" Description="Optional. Applies your MakeMKV key on every start and writes it to MakeMKV's own settings.conf. Leave blank to set it in the web UI instead." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="TMDB API Key" Target="MKVAUTO_TMDB_API_KEY" Default="" Mode="" Description="Optional. TMDB v3 API key for title auto-suggestions. Leave blank to set it in the web UI instead." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Media Server" Target="MKVAUTO_MEDIA_SERVER" Default="" Mode="" Description="Optional. Output naming format: plex or jellyfin." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Discord Webhook URL" Target="MKVAUTO_DISCORD_WEBHOOK_URL" Default="" Mode="" Description="Optional. Discord webhook for notifications." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Discord Enabled" Target="MKVAUTO_DISCORD_ENABLED" Default="" Mode="" Description="Optional. Turn Discord notifications on: true or false." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Auto-rip on Insert" Target="MKVAUTO_AUTO_RIP" Default="" Mode="" Description="Optional. Start copying automatically once a disc finishes scanning: true or false." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Eject on Finish" Target="MKVAUTO_EJECT_ON_FINISH" Default="" Mode="" Description="Optional. Eject the disc when a job finishes: true or false." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Eject on Restart" Target="MKVAUTO_EJECT_ON_RESTART" Default="" Mode="" Description="Optional. Eject the disc when the container restarts: true or false." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Movie Path Template" Target="MKVAUTO_PATH_TEMPLATE_MOVIE" Default="" Mode="" Description="Optional. Output path template for movies." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Series Path Template" Target="MKVAUTO_PATH_TEMPLATE_SERIES" Default="" Mode="" Description="Optional. Output path template for series." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Preview Duration (seconds)" Target="MKVAUTO_PREVIEW_DURATION_SECONDS" Default="" Mode="" Description="Optional. Length of each preview clip in seconds." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Max Parallel Previews" Target="MKVAUTO_PREVIEW_MAX_PARALLEL" Default="" Mode="" Description="Optional. How many previews to generate at once." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 </Container>

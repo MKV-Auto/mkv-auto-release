@@ -39,6 +39,7 @@ ERROR_LEVELS: Set[str] = {
     "transfer_failed",
     "error_disk_space",
     "error_disc_read",
+    "error_drive_unresponsive",
     "error_transfer",
     "error_generic",
 }

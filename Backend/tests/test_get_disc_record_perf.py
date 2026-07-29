@@ -276,8 +276,8 @@ def test_get_disc_record_returns_file_path_and_stage(client, test_db):
             ("Rip stage",       "/jobs/J/raw/00001.mkv",                                              "rip"),
             ("Postprocess stage","/jobs/J/transient/Movies/Stage Movie (2024)/Stage Movie.mkv",        "postprocess"),
             ("Transfer local",  "/mnt/library/Movies/Stage Movie (2024)/Stage Movie.mkv",             "transfer"),
-            ("Transfer smb",    "smb://10.0.6.11/PLEX Media/Movies/Stage Movie (2024)/Stage Movie.mkv","transfer"),
-            ("Transfer rsync",  "plex@10.0.6.50:/mnt/library/Movies/Stage Movie/Stage Movie.mkv",     "transfer"),
+            ("Transfer smb",    "smb://192.0.2.10/PLEX Media/Movies/Stage Movie (2024)/Stage Movie.mkv","transfer"),
+            ("Transfer rsync",  "plex@192.0.2.20:/mnt/library/Movies/Stage Movie/Stage Movie.mkv",     "transfer"),
             ("No path yet",     None,                                                                  None),
         ]
         title_ids: list[str] = []

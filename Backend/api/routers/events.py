@@ -169,10 +169,103 @@ def _notify_disc_inserted(disc_num: str, mount_point: str) -> None:
         logger.warning("Could not schedule disc inserted notification: no app reference")
 
 
+def _schedule_on_app_loop(coro, description: str) -> bool:
+    """Run *coro* on the FastAPI event loop from a sync (worker-thread) caller.
+
+    Returns True when the coroutine was scheduled. Mirrors the bridging that
+    :func:`_notify_disc_inserted` does inline, but reusable and safe to call
+    from the drive-manager thread.
+    """
+    loop = getattr(getattr(_app_ref, "state", None), "event_loop", None)
+    if loop is not None and loop.is_running():
+        asyncio.run_coroutine_threadsafe(coro, loop)
+        return True
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        coro.close()
+        logger.warning("Could not schedule %s: no running event loop", description)
+        return False
+    asyncio.ensure_future(coro)
+    return True
+
+
+def _notify_drive_unresponsive(
+    mount_point: str,
+    disc_num: str | None,
+    message: str,
+    code: str = "drive_unresponsive",
+    *,
+    notify: bool = True,
+) -> None:
+    """Surface a drive-level fault to the UI and the error notification channel.
+
+    Called from the fail-closed path in ``core._drive_operations`` when a drive
+    stops answering (#723 / #724). Two things happen, both best-effort:
+
+    1. ``disc_scan_failed`` on the coordinator socket so the drive card shows
+       the error instead of "Drive 0" or the previous disc's title.
+    2. An ``errors``-bucket notification (in-app bell + Discord) so the user is
+       told at the moment of detection rather than discovering it hours later.
+    """
+    disc_num_str = str(disc_num) if disc_num is not None else None
+
+    async def _broadcast_failed() -> None:
+        try:
+            from api.routers.websockets import _emit_to_coordinator
+
+            await _emit_to_coordinator("disc_scan_failed", {
+                "disc_id": f"drive-error-{disc_num_str or mount_point}",
+                "disc_num": disc_num_str,
+                "mount_point": mount_point,
+                "disc_hash": None,
+                "disc_state": "in_drive",
+                "scan_state": "failed",
+                "scan_error": message,
+                "drive_error_code": code,
+                # #723: the drive card may still be carrying the PREVIOUS
+                # disc's identity (that is the whole bug — a wedged drive
+                # showing "Thor" while a different disc sits in the tray).
+                # A plain disc_scan_failed only patches scan_state/scan_error,
+                # so tell the client to drop the metadata outright. Empty-scan
+                # failures deliberately omit this flag: their volume-label
+                # info_title *is* read from the current disc and must survive.
+                "clear_identity": True,
+            })
+            logger.info(
+                "Emitted disc_scan_failed for unresponsive drive mount_point=%s code=%s",
+                mount_point, code,
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit disc_scan_failed for %s: %s", mount_point, exc)
+
+    _schedule_on_app_loop(_broadcast_failed(), f"drive error broadcast for {mount_point}")
+
+    if not notify:
+        return
+    try:
+        from core.drive_health import FAULT_NOTIFICATION_LEVEL, fault_notification_id_key
+        from core.notifications import emit_notification_sync
+
+        emit_notification_sync(
+            message=f"{mount_point}: {message}",
+            kind="error",
+            level=FAULT_NOTIFICATION_LEVEL,
+            title="Drive is not responding",
+            # Device-scoped so a wedged drive alerts once per fault, not once
+            # per rescan attempt. clear_drive_health() drops this dedupe window
+            # on recovery, so a drive the user fixes and re-breaks alerts again
+            # rather than waiting out the TTL.
+            id_key=fault_notification_id_key(code, mount_point),
+        )
+    except Exception as exc:
+        logger.warning("Failed to emit drive-unresponsive notification for %s: %s", mount_point, exc)
+
+
 async def _notify_disc_scan_complete_async(disc_info: dict) -> None:
     """
     Async helper to handle disc scan completion notification.
-    
+
     Args:
         disc_info: Enriched disc information dict
     """
@@ -280,7 +373,29 @@ async def _notify_disc_scan_complete_async(disc_info: dict) -> None:
     # Emit disc_ready and disc_updated to coordinator (scan is complete)
     # Use enriched data which has the most complete information
     disc_id = enriched.get("disc_id") or disc_info.get("disc_id")
-    if disc_id:
+    # #723: never announce "ready" for a scan the persist layer just marked
+    # failed. The DB and the WebSocket must agree on the same verdict.
+    scan_failed = enriched.get("scan_state") == "failed"
+    scan_failure_reason = enriched.get("scan_error") or "Disc scan failed"
+    if disc_id and scan_failed:
+        try:
+            from api.routers.websockets import _emit_to_coordinator
+
+            asyncio.create_task(_emit_to_coordinator("disc_scan_failed", {
+                "disc_id": disc_id,
+                "disc_num": actual_disc_num,
+                "mount_point": mount_point,
+                "disc_hash": disc_hash,
+                "scan_state": "failed",
+                "scan_error": scan_failure_reason,
+            }))
+            logger.warning(
+                "Scan persisted as failed for disc %s (disc_num=%s hash=%s): %s",
+                disc_id, actual_disc_num, disc_hash, scan_failure_reason,
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to emit disc_scan_failed to websocket: {exc}")
+    elif disc_id:
         try:
             from api.routers.websockets import _emit_to_coordinator, _emit_disc_updated_from_info
             # Emit disc_ready message
@@ -292,7 +407,7 @@ async def _notify_disc_scan_complete_async(disc_info: dict) -> None:
                 "scan_state": "ready",
                 "scan_error": None,
             }))
-            
+
             # After enrichment, emit disc_updated with full metadata
             # This ensures cards update when metadata becomes available
             asyncio.create_task(_emit_disc_updated_from_info(enriched, actual_disc_num, mount_point))
@@ -310,7 +425,7 @@ async def _notify_disc_scan_complete_async(disc_info: dict) -> None:
         )
 
     # In-app toast / optional Discord: drive scan finished; user can start copy from Ripper (#scan_completed)
-    if disc_id and mount_point:
+    if disc_id and mount_point and not scan_failed:
         try:
             from core.job_state import _public_app_base_url
             from core.notifications import emit_notification
@@ -359,6 +474,14 @@ async def _notify_disc_scan_complete_async(disc_info: dict) -> None:
     # Auto-rip on insert (#331): best-effort, after set_cached() above so the
     # start_rip path sees this scan in the disc-manager cache. start_rip is
     # sync (gatekeeper + Celery dispatch) — run it off the event loop.
+    # #723: a failed scan must never auto-start a rip — the disc identity is
+    # unreliable, so the rip would be filed under the wrong title.
+    if scan_failed:
+        logger.info(
+            "Skipping auto-rip for mount_point=%s: scan is marked failed (%s)",
+            mount_point, scan_failure_reason,
+        )
+        return
     try:
         from core.auto_rip import maybe_auto_start_rip
 
@@ -409,6 +532,13 @@ def _enrich_payload_with_disc_record(payload: dict, disc_num: str, mount_point: 
         db = database.SessionLocal()
         disc_rec = crud.ensure_disc_record_from_scan(db, str(disc_num), str(mount_point), payload)
         if disc_rec:
+            # #723: the persist layer can downgrade this scan to
+            # scan_state='failed' (e.g. empty scan output). Carry that verdict
+            # on the payload so the caller emits disc_scan_failed instead of
+            # announcing disc_ready with scan_state='ready' — the DB and the
+            # WebSocket used to disagree about the very same scan.
+            payload["scan_state"] = getattr(disc_rec, "scan_state", None)
+            payload["scan_error"] = getattr(disc_rec, "last_scan_error", None)
             payload.setdefault("disc_id", disc_rec.id)
             payload.setdefault("disc_number", disc_rec.disc_number)
             payload.setdefault("discdb_disc_num", getattr(disc_rec, "discdb_disc_num", None))

@@ -29,11 +29,24 @@ export class NotificationHistoryService {
     this._loadFromStorage();
   }
 
-  /** Add a new notification from the WebSocket stream. Deduplicates by id. */
+  /**
+   * Add a new notification from the WebSocket stream.
+   *
+   * Deduplicates on id **and** timestamp, so the same payload delivered twice
+   * collapses while a genuine re-occurrence still lands. System-scoped ids
+   * (`sys:{level}:{id_key}` — a drive fault, say) are stable by design so the
+   * backend can dedupe them in Redis; matching on id alone would mean a drive
+   * the user fixed and re-broke never reappeared in the bell, because the
+   * original entry is still in this persisted list. The backend stamps a fresh
+   * timestamp per emit, and its own dedupe window is what stops a single
+   * ongoing fault from emitting repeatedly in the first place.
+   */
   add(notification: BackendNotification): void {
     const current = this._notifications$.value;
-    // Deduplicate by id
-    if (notification.id && current.some(n => n.id === notification.id)) {
+    if (
+      notification.id &&
+      current.some(n => n.id === notification.id && n.timestamp === notification.timestamp)
+    ) {
       return;
     }
     const stored: StoredNotification = {

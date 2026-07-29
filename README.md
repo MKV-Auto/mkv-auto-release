@@ -1,5 +1,9 @@
 # MKV Auto
 
+[![Image pulls](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMKV-Auto%2Fmkv-auto-release%2Fbadges%2Fghcr-pulls.json&style=flat-square&logo=docker&logoColor=white)](https://github.com/MKV-Auto/mkv-auto-release/pkgs/container/mkv-auto-release)
+[![Release](https://img.shields.io/github/v/release/MKV-Auto/mkv-auto-release?style=flat-square&color=06b6d4)](https://github.com/MKV-Auto/mkv-auto-release/releases/latest)
+[![License](https://img.shields.io/github/license/MKV-Auto/mkv-auto-release?style=flat-square&color=ec4899)](LICENSE)
+
 Self-hosted automated disc ripping and media management. Insert a Blu-ray, UHD, or DVD; get organized files on your Plex or Jellyfin share — with disc identification via [TheDiscDB](https://thediscdb.com), title/episode metadata via [TMDB](https://www.themoviedb.org/), and transfers over local or SMB (for NFS or other network storage, mount it into the container and use local).
 
 ## How it works
@@ -17,7 +21,7 @@ All processing runs on your machine. No cloud dependency.
 
 ### Run with Docker
 
-**Requirements:** Docker 20.10+, Linux host, x86_64, optical drive. Privileged mode is required for drive access.
+**Requirements:** Docker 20.10+ on a **Linux host**, x86_64 or arm64, and an optical drive. Privileged mode is required for drive access. Docker Desktop on Windows and macOS cannot pass an optical drive through — see [Requirements](#requirements).
 
 ```bash
 docker pull ghcr.io/mkv-auto/mkv-auto-release:latest
@@ -81,17 +85,49 @@ Note: the [Docker/docker-compose.yml](Docker/docker-compose.yml) checked into th
 | [Docker](docs/Guides/DOCKER.md) | Image details, Compose, and deployment |
 | [Quick start](docs/Guides/QUICKSTART.md) | Minimal steps to get running |
 | [Troubleshooting](docs/Guides/TROUBLESHOOTING.md) | Common fixes (drives, containers) before deeper guides |
+| [Windows / macOS setup](docs/Guides/VM_SETUP.md) | Why a Linux VM is needed, and how to set one up |
 | [Development & architecture](README.development.md) | Architecture overview, single-container and privileged-helper rationale, snapshot model, design principles |
 | [Changelog](CHANGELOG.md) | Version history and changes |
 
 ## Requirements
 
 - **Docker** 20.10+
-- **Architecture** x86_64/AMD64 (MakeMKV limitation; ARM not supported)
-- **Linux** host with optical drive support
-- **Privileged** container (for drive access and auto-configuration)
+- **Architecture** x86_64/AMD64 or **arm64/aarch64** — the image is multi-arch,
+  so Docker pulls the right one automatically (Raspberry Pi 5, ARM NAS, Apple
+  Silicon VMs)
+- **Linux host** — see below
+- **Privileged** container (raw SCSI access to the drive)
+- **Optical drive** DVD, Blu-ray, or UHD
 - **RAM** 4 GB minimum, 8 GB recommended
-- **Storage** 200 GB+ for ripped content, 1TB+ recommended for multiple drive systems
+- **Storage** 200 GB+ for ripped content, 1 TB+ for multiple drive systems
+
+### Why a Linux host
+
+The container reads your drive directly (`--device=/dev/sr0`), and MakeMKV
+issues raw SCSI commands to it for disc structure and decryption. That only
+works when the machine running Docker is the machine holding the drive.
+
+**Docker Desktop on Windows and macOS runs containers inside a VM that cannot
+see physical optical drives.** On macOS the `docker run` above fails outright
+with `error gathering device information while adding custom device
+"/dev/sr0": not a device node`, and pointing `--device` at the real macOS
+device fails too because the Linux VM cannot see it. This is not a
+configuration problem, and there is no flag that fixes it.
+
+On Windows or Mac hardware, run Linux as the host for the drive instead:
+
+- A **Linux VM with USB passthrough** — see the step-by-step guides for
+  [Windows](docs/Guides/VM_SETUP_WINDOWS.md) and
+  [macOS](docs/Guides/VM_SETUP_MACOS.md). **Not Hyper-V**: it has no
+  direct USB passthrough, and its alternatives (RDP redirection, Discrete Device
+  Assignment) either do not present a real optical device to the guest or are
+  Windows Server only.
+- **Unraid**, **TrueNAS**, or any Linux box or NAS
+- **Dual-boot** into Linux
+
+Attaching the drive to WSL2 with `usbipd-win` is not a supported path: the
+stock WSL2 kernel omits the CD-ROM module (`sr_mod`), and even after rebuilding
+it, MakeMKV's SCSI passthrough is unreliable over USB/IP.
 
 ## Releases
 

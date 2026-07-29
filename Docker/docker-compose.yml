@@ -25,6 +25,16 @@ services:
       - TZ=UTC
       # Optional: Set log level (DEBUG, INFO, WARNING, ERROR)
       - MKVAUTO_DEBUG_LEVEL=INFO
+      # Optional: configure the app itself, so a fresh container comes up ready
+      # with no setup wizard. Re-applied on every start, so editing a value here
+      # and restarting changes it — which is also why anything set here is shown
+      # read-only in the web UI. Leave a line out to manage that setting in the UI.
+      # Full list: docs/Guides/CONFIGURATION.md#unattended-setup-application-settings
+      # - MKVAUTO_MAKEMKV_KEY=${MAKEMKV_KEY}
+      # - MKVAUTO_TMDB_API_KEY=${TMDB_KEY}
+      # - MKVAUTO_MEDIA_SERVER=plex
+      # - MKVAUTO_AUTO_RIP=false
+      # - MKVAUTO_EJECT_ON_FINISH=false
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/healthcheck.sh"]

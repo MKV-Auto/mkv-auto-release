@@ -1,6 +1,7 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { IconComponent } from '../../../ui/icon/icon.component';
+import { EnvManagedNoteComponent } from './env-managed-note.component';
 
 export interface LibraryStepData {
   type: 'plex' | 'jellyfin';
@@ -37,7 +38,7 @@ const LIBRARY_OPTIONS: LibraryOption[] = [
 @Component({
   selector: 'app-setup-step-library',
   standalone: true,
-  imports: [CommonModule, IconComponent],
+  imports: [EnvManagedNoteComponent, CommonModule, IconComponent],
   template: `
     <div class="setup-step">
       <!-- Header -->
@@ -58,6 +59,7 @@ const LIBRARY_OPTIONS: LibraryOption[] = [
           type="button" 
           class="setup-step-library-card"
           [class.active]="data.type === library.value"
+          [disabled]="isEnvManaged('media_server')"
           (click)="select(library.value)"
           [style.background]="getCardBackground(library)"
           [style.border]="getCardBorder(library)"
@@ -91,6 +93,8 @@ const LIBRARY_OPTIONS: LibraryOption[] = [
           </div>
         </button>
       </div>
+      <app-env-managed-note *ngIf="isEnvManaged('media_server')"
+                            variable="MKVAUTO_MEDIA_SERVER"></app-env-managed-note>
 
       <!-- Info -->
       <div class="setup-step-info setup-step-info-teal">
@@ -134,6 +138,13 @@ const LIBRARY_OPTIONS: LibraryOption[] = [
   `],
 })
 export class SetupStepLibraryComponent {
+  /** Dotted setting paths the container's environment pins (see the modal). */
+  @Input() envManaged: string[] = [];
+
+  isEnvManaged(settingPath: string): boolean {
+    return this.envManaged.includes(settingPath);
+  }
+
   @Input() data!: LibraryStepData;
   @Output() dataChange = new EventEmitter<Partial<LibraryStepData>>();
 

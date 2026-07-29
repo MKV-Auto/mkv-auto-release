@@ -52,8 +52,16 @@ from core.disc_locks import (
 from core.disc_slot_state import (
     mark_slot_absent,
     mark_slot_stable,
+    mark_slot_unknown,
     try_begin_insert_scan,
     end_insert_scan,
+)
+from core.drive_health import (
+    CODE_DRIVE_UNRESPONSIVE,
+    clear_drive_health,
+    get_drive_health,
+    is_drive_fault,
+    mark_drive_unresponsive,
 )
 
 log = get_logger("core._drive_operations")
@@ -197,6 +205,48 @@ def _tuple_drives(drives: List[Tuple[str, str]]) -> list:
     return [build_drive_api_dict(num, mp) for num, mp in drives]
 
 
+def _handle_drive_fault(mount_point: str, disc_num: str | None, exc: BaseException) -> str:
+    """Record and surface a drive-level fault; return the user-facing message.
+
+    Fail-closed entry point for #723/#724. Everything here is best-effort
+    except the state write itself — the caller must abort the scan regardless
+    of whether the UI/notification hops succeed.
+    """
+    message = str(exc) or "Drive is not responding."
+    # Alert once per fault, not once per retry: a wedged drive keeps producing
+    # udev events, and each one costs another mount timeout. The card update
+    # below is idempotent and always emitted; only the bell/Discord alert is
+    # gated on the healthy → unhealthy transition.
+    is_new_fault = get_drive_health(mount_point) is None
+    mark_drive_unresponsive(mount_point, message, code=CODE_DRIVE_UNRESPONSIVE)
+    log.error(
+        "Drive fault on %s (disc_num=%s): %s — aborting scan; no cached identity will be served",
+        mount_point, disc_num, message,
+    )
+    # Purge every cached payload for this slot so nothing downstream can hand
+    # back the *previous* disc's identity for a drive we can no longer read.
+    try:
+        clear_keys_by_mount_point(mount_point)
+    except Exception as clear_exc:
+        log.warning("Failed to clear disc cache for %s after drive fault: %s", mount_point, clear_exc)
+    try:
+        from api.routers.events import _notify_drive_unresponsive
+
+        _notify_drive_unresponsive(
+            mount_point,
+            disc_num,
+            message,
+            code=CODE_DRIVE_UNRESPONSIVE,
+            notify=is_new_fault,
+        )
+    except Exception as notify_exc:
+        log.warning("Failed to surface drive fault for %s: %s", mount_point, notify_exc)
+    # Reset the slot so a later udev "change" is treated as a strong insert
+    # once the user power-cycles the drive.
+    mark_slot_unknown(mount_point)
+    return message
+
+
 def _load_discinfo(disc_num: str, mount_point: str, refresh: bool = False, source: str = "unspecified") -> dict:
     """
     Internal helper to fetch disc info, optionally bypassing cache.
@@ -233,7 +283,15 @@ def _load_discinfo(disc_num: str, mount_point: str, refresh: bool = False, sourc
         # 1. Calculate hash
         log.info("Calculating hash for disc %s", disc_num)
         logger.debug("About to calculate hash disc_num=%s mount_point=%s", disc_num, mount_point)
-        content_hash = hash_media_disc(mount_point, allow_reentrant=False)
+        try:
+            content_hash = hash_media_disc(mount_point, allow_reentrant=False)
+        except Exception as hash_exc:
+            # #723: fail closed on a drive-level fault so no caller can fall
+            # back to the previous disc's cached identity for this slot.
+            if is_drive_fault(hash_exc):
+                _handle_drive_fault(mount_point, disc_num, hash_exc)
+            raise
+        clear_drive_health(mount_point)
         log.info("Hash calculated: %s", content_hash)
         logger.debug("Hash calculated disc_num=%s mount_point=%s content_hash=%s", disc_num, mount_point, content_hash)
         
@@ -257,7 +315,7 @@ def _load_discinfo(disc_num: str, mount_point: str, refresh: bool = False, sourc
         logger.debug("makemkv info scan completed disc_num=%s mount_point=%s source=%s info_log_length=%s", 
                     disc_num, mount_point, source, len(str(info_log)) if info_log else 0)
         il_text = info_log if isinstance(info_log, str) else "\n".join(info_log) if isinstance(info_log, list) else str(info_log)
-        parsed_idx, parsed_hw, _vol = parse_drv_fields_for_mount(il_text, mount_point)
+        parsed_idx, parsed_hw, vol_label = parse_drv_fields_for_mount(il_text, mount_point)
         if parsed_idx:
             upsert_makemkv_drive_cache_for_mount(mount_point, parsed_idx, parsed_hw)
             canonical = str(parsed_idx)
@@ -281,9 +339,27 @@ def _load_discinfo(disc_num: str, mount_point: str, refresh: bool = False, sourc
             "info_log": il_text,
             "raw_info_log": il_text,
         }
+        # #723: MakeMKV reports the disc volume label on the DRV line even when
+        # the title enumeration comes back empty. Keep it so the UI can name
+        # the disc instead of falling back to "Drive 0".
+        if vol_label:
+            payload["makemkv_disc_name"] = vol_label
         disc_size_bytes = get_disc_size_bytes_for_mount_point(mount_point)
         if disc_size_bytes:
             payload["disc_size_bytes"] = disc_size_bytes
+
+        # TheDiscDB's GlobalDiscId. Only obtainable from the physical disc, so
+        # every scan is the chance to capture it — which is also what backfills a
+        # library ripped before we computed it: crud.get_or_create_disc fills the
+        # column when it is empty, so re-inserting any disc closes the gap with no
+        # separate backfill step. Absent for DVDs (no AACS directory) and never
+        # fatal: the scan must not fail over an optional identifier.
+        from core.aacs_disc_id import compute_from_device
+
+        global_disc_id = compute_from_device(mount_point)
+        if global_disc_id:
+            payload["global_disc_id"] = global_disc_id
+            log.info("AACS disc ID for %s: %s", mount_point, global_disc_id)
 
         _maybe_dump_info_log(payload.get("raw_info_log"), canonical, content_hash)
         # Cache by mount_point (primary key for multi-drive correctness)
@@ -452,8 +528,14 @@ def hash_disc(disc_num: str, mount_point: str) -> dict:
     
     try:
         # Calculate hash
-        content_hash = hash_media_disc(mount_point, allow_reentrant=False)
-        
+        try:
+            content_hash = hash_media_disc(mount_point, allow_reentrant=False)
+        except Exception as hash_exc:
+            if is_drive_fault(hash_exc):
+                _handle_drive_fault(mount_point, disc_num, hash_exc)
+            raise
+        clear_drive_health(mount_point)
+
         # Return hash
         return {
             "disc_num": str(disc_num),
@@ -551,6 +633,10 @@ def handle_disc_eject_for_device(mount_point: str, udev_disc_num: Optional[str] 
     # Mark slot absent by mount_point (stable physical identity)
     if mount_point:
         mark_slot_absent(mount_point)
+        # A completed eject means the drive answered again — drop any
+        # recorded "not responding" verdict so the next insert isn't blocked
+        # by a fault the user has already fixed.
+        clear_drive_health(mount_point)
 
     result: dict = {"status": "ok", "message": "Cache cleared"}
     if disc_hash:
@@ -635,8 +721,29 @@ def handle_disc_insert(disc_num: str, mount_point: str) -> dict:
             log.info(f"Hash calculated: {content_hash}")
         except Exception as hash_exc:
             log.error(f"Failed to calculate hash: {hash_exc}")
-            # Continue without hash (Disc Manager can handle it)
-        
+            # #723: a drive-level fault (mount timed out — the drive is not
+            # answering) is a hard stop. Continuing here is what let the app
+            # run a six-minute info scan on a dead drive, log "Info scan
+            # completed", and then serve the PREVIOUS disc's identity for this
+            # mount point. Fail closed instead: no scan, no scan-complete
+            # notification, no cached identity.
+            if is_drive_fault(hash_exc):
+                message = _handle_drive_fault(mount_point, disc_num, hash_exc)
+                return {
+                    "status": "error",
+                    "message": message,
+                    "drive_error": message,
+                    "drive_error_code": CODE_DRIVE_UNRESPONSIVE,
+                    "disc_num": str(disc_num),
+                    "mount_point": mount_point,
+                }
+            # Disc-level failure (e.g. no BDMV/VIDEO_TS structure): MakeMKV can
+            # still often read the disc via direct disc access, so continue
+            # without a hash — the Disc Manager handles the hash-less payload.
+
+        # The drive answered, so any previously recorded fault is stale.
+        clear_drive_health(mount_point)
+
         # 2. Run makemkv info scan (always dev:{mount} so index matches this device; upsert drive cache)
         info_log = None
         extracted_disc_num = None
@@ -661,8 +768,18 @@ def handle_disc_insert(disc_num: str, mount_point: str) -> dict:
             log.info(f"Info scan completed for {mount_point}")
         except Exception as info_exc:
             log.error(f"Failed to run info scan: {info_exc}")
+            if is_drive_fault(info_exc):
+                message = _handle_drive_fault(mount_point, disc_num, info_exc)
+                return {
+                    "status": "error",
+                    "message": message,
+                    "drive_error": message,
+                    "drive_error_code": CODE_DRIVE_UNRESPONSIVE,
+                    "disc_num": str(disc_num),
+                    "mount_point": mount_point,
+                }
             # Continue without info_log (Disc Manager can handle it)
-        
+
         # 3. Build raw_data dict
         # Use extracted disc_num if available, otherwise use mount_point identifier
         # Store MakeMKV disc name separately from release metadata disc_name
@@ -680,9 +797,22 @@ def handle_disc_insert(disc_num: str, mount_point: str) -> dict:
             raw_data["info_log"] = info_log if isinstance(info_log, str) else "\n".join(info_log) if isinstance(info_log, list) else str(info_log)
             raw_data["raw_info_log"] = raw_data["info_log"]
         
+        # TheDiscDB's GlobalDiscId, same as the _load_discinfo refresh path.
+        # This udev-insert handler is how a disc usually arrives, so leaving the
+        # capture out of it — as first shipped in rc.2 — meant the backfill only
+        # ever fired on an explicit rescan, which nobody does. Caught live: a
+        # real insert matched the disc by content hash and left the column NULL.
+        if content_hash:
+            from core.aacs_disc_id import compute_from_device
+
+            global_disc_id = compute_from_device(mount_point)
+            if global_disc_id:
+                raw_data["global_disc_id"] = global_disc_id
+                log.info("AACS disc ID for %s: %s", mount_point, global_disc_id)
+
         # Dump info log if debug enabled
         _maybe_dump_info_log(raw_data.get("raw_info_log"), raw_data.get("disc_num", disc_num), content_hash)
-        
+
         # 4. Notify Disc Manager of scan completion
         try:
             disc_manager.on_disc_scan_complete(raw_data)

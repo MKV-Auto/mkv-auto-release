@@ -76,7 +76,7 @@ describe('LibraryDiscDrawerComponent (Phase 4)', () => {
   beforeEach(async () => {
     metadataSpy = jasmine.createSpyObj('MetadataService', ['getDiscRecord', 'patchDiscRecord']);
     workflowSpy = jasmine.createSpyObj('WorkflowService', ['patchDiscTitle']);
-    discdbSpy = jasmine.createSpyObj('DiscDbService', ['getContributionBundle']);
+    discdbSpy = jasmine.createSpyObj('DiscDbService', ['getContributionBundle', 'getContributionZip']);
     toastSpy = jasmine.createSpyObj('ToastService', ['show']);
     const loggerSpy = jasmine.createSpyObj('LoggerService', ['log', 'warn', 'error', 'debug']);
 
@@ -470,37 +470,64 @@ describe('LibraryDiscDrawerComponent (Phase 4)', () => {
     expect(component.canExportDiscDbBundle).toBe(false);
   });
 
-  it('exportDiscDbBundle downloads the bundle and toasts success', async () => {
-    fixture.componentRef.setInput('disc', makeDisc({ discdb_hit: false }));
+  // #741: the backend hard-refuses a disc with no release link, so offering the
+  // button there just produces an error toast on click.
+  it('blocks export when the disc has no release link', () => {
+    fixture.componentRef.setInput('disc', makeDisc({ discdb_hit: false, release_id: null }));
     fixture.detectChanges();
-    discdbSpy.getContributionBundle.and.resolveTo({
-      schema: 'thediscdb-bundle/v1',
-      generated_at: 'now',
-      disc_id: 'd-1',
-      content_hash: 'h-1',
-      disc_number: 1,
-      release_slug: 'midway-4k',
-      release: {},
-      disc: {},
-      summary: 'Name: Midway',
-      info_log_included: true,
+    expect(component.discDbExportBlockedReason).toContain('Label this disc first');
+  });
+
+  it('allows export once the disc is linked to a release', () => {
+    fixture.componentRef.setInput('disc', makeDisc({ discdb_hit: false, release_id: 'r-1' }));
+    fixture.detectChanges();
+    expect(component.discDbExportBlockedReason).toBeNull();
+  });
+
+  it('does not block export on the optional parts of a submission', () => {
+    // A missing GlobalDiscId, MakeMKV log, or cover art still makes a valid
+    // upstream entry — the zip's README says what is absent. Blocking on those
+    // would stop people contributing perfectly good data.
+    fixture.componentRef.setInput('disc', makeDisc({ discdb_hit: false, release_id: 'r-1' }));
+    fixture.detectChanges();
+    expect(component.discDbExportBlockedReason).toBeNull();
+    expect(component.canExportDiscDbBundle).toBe(true);
+  });
+
+  it('exportDiscDbBundle downloads the bundle and toasts success', async () => {
+    fixture.componentRef.setInput('disc', makeDisc({ discdb_hit: false, release_id: 'r-1' }));
+    fixture.detectChanges();
+    // #741: a zip laid out like TheDiscDb/data, not a JSON blob.
+    discdbSpy.getContributionZip.and.resolveTo({
+      blob: new Blob(['zip'], { type: 'application/zip' }),
+      filename: 'Midway-disc01-thediscdb.zip',
     });
     spyOn(URL, 'createObjectURL').and.returnValue('blob:test');
     spyOn(URL, 'revokeObjectURL');
     const clickSpy = spyOn(HTMLAnchorElement.prototype, 'click');
+    const anchors: HTMLAnchorElement[] = [];
+    const origCreate = document.createElement.bind(document);
+    spyOn(document, 'createElement').and.callFake((tag: string) => {
+      const el = origCreate(tag);
+      if (tag === 'a') anchors.push(el as HTMLAnchorElement);
+      return el;
+    });
 
     await component.exportDiscDbBundle();
 
-    expect(discdbSpy.getContributionBundle).toHaveBeenCalledWith('d-1');
+    expect(discdbSpy.getContributionZip).toHaveBeenCalledWith('d-1');
     expect(clickSpy).toHaveBeenCalled();
+    // The server names the file; reconstructing it here would duplicate the
+    // backend's sanitising rules in a second place.
+    expect(anchors[0].download).toBe('Midway-disc01-thediscdb.zip');
     expect(toastSpy.show).toHaveBeenCalledWith(jasmine.stringMatching(/exported/i), 'success', jasmine.any(Number));
     expect(component.exporting).toBe(false);
   });
 
   it('exportDiscDbBundle surfaces backend errors as a toast', async () => {
-    fixture.componentRef.setInput('disc', makeDisc({ discdb_hit: false }));
+    fixture.componentRef.setInput('disc', makeDisc({ discdb_hit: false, release_id: 'r-1' }));
     fixture.detectChanges();
-    discdbSpy.getContributionBundle.and.rejectWith(new Error('No completed rip job found for this disc'));
+    discdbSpy.getContributionZip.and.rejectWith(new Error('No completed rip job found for this disc'));
 
     await component.exportDiscDbBundle();
 

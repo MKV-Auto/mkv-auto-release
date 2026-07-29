@@ -42,6 +42,22 @@ const STEPS = [
 
 const STEP_COUNT = STEPS.length; // 7
 
+/**
+ * Settings that, when supplied by the environment, make a step's question moot.
+ * Steps absent from this map can never be answered by the environment: Transfer
+ * destinations live in the database with encrypted credentials, and Complete is
+ * not a question. A step counts as env-satisfied only if *every* listed key is
+ * pinned — a half-configured Discord (webhook but no enable flag) still needs a
+ * human.
+ */
+const STEP_ENV_KEYS: Record<number, string[]> = {
+  1: ['makemkv_registration_key'],
+  3: ['preview_duration_seconds', 'preview_max_parallel'],
+  4: ['media_server'],
+  5: ['tmdb_api_key'],
+  6: ['discord.webhook_url', 'discord.enabled'],
+};
+
 @Component({
   selector: 'app-setup-modal',
   standalone: true,
@@ -69,6 +85,8 @@ export class SetupModalComponent implements OnInit {
   readonly steps = STEPS;
   currentStep = 1;
   completedSteps: number[] = [];
+  /** Dotted setting paths pinned by environment variables. */
+  envManaged: string[] = [];
   loading = true;
   stepData: SetupStepData = {
     makemkv: {
@@ -89,7 +107,9 @@ export class SetupModalComponent implements OnInit {
 
   ngOnInit(): void {
     forkJoin({
-      setupStatus: this.systemSvc.getSetupStatus().pipe(catchError(() => of({ first_time_setup_complete: false, setup_step: 1 }))),
+      setupStatus: this.systemSvc
+        .getSetupStatus()
+        .pipe(catchError(() => of({ first_time_setup_complete: false, setup_step: 1, env_managed: [] }))),
       makemkvReg: this.systemSvc.getRegistrationStatus().pipe(catchError(() => of({ expired: true, currentKey: null, message: null }))),
       makemkvHealth: this.systemSvc.getMakeMKVHealth().pipe(
         catchError(() =>
@@ -114,6 +134,7 @@ export class SetupModalComponent implements OnInit {
       tmdb: this.systemSvc.getTmdbConfig().pipe(catchError(() => of({ api_key_set: false, api_key: null }))),
     }).subscribe((result) => {
       this.loading = false;
+      this.envManaged = result.setupStatus.env_managed ?? [];
       // Use targetStep from config if provided, otherwise use saved setup step
       const step = this.config?.targetStep ?? Math.max(1, Math.min(STEP_COUNT, result.setupStatus.setup_step));
       this.currentStep = step;
@@ -161,7 +182,50 @@ export class SetupModalComponent implements OnInit {
           };
         })(),
       };
+
+      this.skipEnvSatisfiedSteps();
     });
+  }
+
+  /**
+   * Land on the first step the environment has not already answered.
+   *
+   * An unattended deployment that pinned the MakeMKV and TMDB keys should not
+   * open on a form asking for them. Env-satisfied steps are marked complete
+   * rather than hidden, so the rail still shows what was configured and how far
+   * along setup is — the user can click back into any of them to see the
+   * (disabled) values the environment supplied.
+   *
+   * Not applied in targeted mode: the caller asked for a specific step.
+   */
+  private skipEnvSatisfiedSteps(): void {
+    if (this.config?.targetStep || !this.envManaged.length) return;
+
+    // Both conditions: the environment supplied the answer *and* the step is
+    // genuinely satisfied. A pinned MakeMKV key must not skip past a MakeMKV
+    // that failed to install — that is exactly the problem step 1 exists to show.
+    while (
+      this.currentStep < STEP_COUNT &&
+      this.isStepEnvSatisfied(this.currentStep) &&
+      this.isStepComplete(this.currentStep)
+    ) {
+      if (!this.completedSteps.includes(this.currentStep)) {
+        this.completedSteps = [...this.completedSteps, this.currentStep];
+      }
+      this.currentStep++;
+    }
+    this.persistStep();
+  }
+
+  /** Every setting this step asks about is pinned by the environment. */
+  isStepEnvSatisfied(step: number): boolean {
+    const keys = STEP_ENV_KEYS[step];
+    return !!keys?.length && keys.every((k) => this.envManaged.includes(k));
+  }
+
+  /** A field bound to this setting must be read-only — a restart would revert edits. */
+  isEnvManaged(settingPath: string): boolean {
+    return this.envManaged.includes(settingPath);
   }
 
   get canProceed(): boolean {
@@ -184,8 +248,11 @@ export class SetupModalComponent implements OnInit {
       // #614: TMDB step. Optional — complete if a key is saved OR user skipped.
       case 5:
         return this.stepData.tmdb.apiKeySet || this.stepData.tmdb.dismissed;
+      // Env-satisfied counts as answered: a deployment that pins a webhook but
+      // leaves `enabled` false is a deliberate choice, and without this the
+      // wizard would dead-end on a step whose fields are disabled.
       case 6:
-        return this.stepData.discord.enabled || this.stepData.discord.dismissed;
+        return this.stepData.discord.enabled || this.stepData.discord.dismissed || this.isStepEnvSatisfied(6);
       case 7:
         return false;
       default:

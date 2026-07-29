@@ -317,11 +317,17 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
     const name = disc.movie_name || disc.info_title || '';
 
     if (disc.disc_state === 'in_drive') {
-      if (!name && !disc.disc_hash) {
-        return 'Insert Disc';
-      }
       if (name) {
         return name;
+      }
+      // A failed scan has no identity to show. "Insert Disc" would be a lie
+      // (the drive is loaded, it just would not answer) and "Drive 0" hides
+      // the problem entirely — name the fault instead (#724).
+      if (disc.scan_state === 'failed') {
+        return 'Drive Error';
+      }
+      if (!disc.disc_hash) {
+        return 'Insert Disc';
       }
       return `Drive ${disc.disc_num || '?'}`;
     }
@@ -329,6 +335,18 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
       return name;
     }
     return 'Unknown Disc';
+  }
+
+  /**
+   * User-facing drive/scan error for a card, or null when healthy.
+   * Rendered in place of the meta line so the message (and its remedy, e.g.
+   * "Try power cycling the drive") is visible without hovering (#724).
+   */
+  getDiscErrorMessage(disc: DiscMetadata): string | null {
+    if (disc.scan_state !== 'failed') {
+      return null;
+    }
+    return disc.scan_error || 'Disc scan failed';
   }
 
   /** Meta line: (year) · format · Disc N. Format is disc format only (Blu-Ray, UHD, or DVD). Disc number when set. */

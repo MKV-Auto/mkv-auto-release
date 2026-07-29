@@ -2212,6 +2212,55 @@ def start_rip(req: JobCreate, db: Session = Depends(get_db)):
             }
         )
     
+    # #724: drive-health gate. When the target drive was recorded as not
+    # responding (mount timed out — see core.drive_health), refuse here with
+    # the actionable message instead of letting the rip start against a drive
+    # whose disc identity we could not read. Runs before every other gate so
+    # the user gets "power cycle the drive", not a misleading
+    # "disc_scan_in_progress" from the empty-cache precondition below.
+    from core.drive_health import get_drive_health
+
+    drive_health = get_drive_health(req.mount_point)
+    if drive_health is not None:
+        log.warning(
+            "POST /jobs/rip rid=%s blocked: drive %s is unhealthy (%s)",
+            rip_request_id, req.mount_point, drive_health.code,
+        )
+        try:
+            from core.drive_health import (
+                FAULT_NOTIFICATION_LEVEL,
+                fault_notification_id_key,
+            )
+            from core.notifications import emit_notification_sync
+
+            emit_notification_sync(
+                message=(
+                    f"Copy not started — {req.mount_point}: {drive_health.message}"
+                ),
+                kind="error",
+                level=FAULT_NOTIFICATION_LEVEL,
+                title="Drive is not responding",
+                # Repeat clicks on a drive that is still down collapse into one
+                # bell/Discord alert; the 409 below is what gives the user
+                # immediate per-click feedback in the UI.
+                id_key=fault_notification_id_key(
+                    drive_health.code, req.mount_point, scope="rip_blocked"
+                ),
+            )
+        except Exception as notif_exc:
+            log.warning(
+                "POST /jobs/rip rid=%s failed to emit drive-health notification: %s",
+                rip_request_id, notif_exc,
+            )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": drive_health.message,
+                "code": drive_health.code,
+                "mount_point": req.mount_point,
+            },
+        )
+
     # Resolve disc_hash and disc_num before cleanup so we can mark same-disc orphaned jobs as "superseded"
     # (avoids emitting job_finished/context_changed for the old job and overwriting the new job's context)
     disc_hash = None

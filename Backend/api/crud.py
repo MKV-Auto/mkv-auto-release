@@ -1423,6 +1423,12 @@ def get_or_create_disc(db: Session, content_hash: str, release: models.Release |
                 disc.discdb_disc_num = int(payload["discdb_disc_num"])
             except (TypeError, ValueError):
                 pass
+        # Add-only, matching upstream's rule for the field. This is what backfills
+        # a library ripped before we computed it: re-inserting any disc fills the
+        # gap, while a disc that already has an ID is never overwritten by a
+        # later scan that failed to read one.
+        if not disc.global_disc_id and payload.get("global_disc_id"):
+            disc.global_disc_id = str(payload["global_disc_id"]).upper()
         db.commit()
         db.refresh(disc)
         return disc
@@ -1454,8 +1460,10 @@ def get_or_create_disc(db: Session, content_hash: str, release: models.Release |
             disc_slug = gen if gen else None
 
     # label_draft is for user draft only; do not fill from scan/DiscDB payloads
+    global_disc_id = payload.get("global_disc_id")
     disc = models.Disc(
         content_hash=content_hash,
+        global_disc_id=str(global_disc_id).upper() if global_disc_id else None,
         release_id=release.id if release else None,
         disc_slug=disc_slug,
         disc_name=disc_name,

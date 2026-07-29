@@ -14,6 +14,7 @@ import { formatHttpErrorDetail } from '../../../services/toast.service';
 import { Subscription } from 'rxjs';
 import { filter } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
+import { EnvManagedNoteComponent } from './env-managed-note.component';
 
 export interface MakemkvStepData {
   key: string;
@@ -26,7 +27,7 @@ export interface MakemkvStepData {
 @Component({
   selector: 'app-setup-step-makemkv',
   standalone: true,
-  imports: [CommonModule, FormsModule, IconComponent, BtnComponent],
+  imports: [EnvManagedNoteComponent, CommonModule, FormsModule, IconComponent, BtnComponent],
   template: `
     <!-- Phase 1: Checking if MakeMKV is installed -->
     <div *ngIf="checkingInstall" class="setup-step setup-step-center">
@@ -151,10 +152,12 @@ export interface MakemkvStepData {
             [(ngModel)]="localKey"
             (ngModelChange)="onKeyChange($event)"
             placeholder="T-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-            [disabled]="validating || data.valid"
+            [disabled]="validating || data.valid || isEnvManaged('makemkv_registration_key')"
           />
           <ui-icon *ngIf="data.valid" name="check-circle" [size]="20" class="setup-step-input-check" style="color: #22c55e;"></ui-icon>
         </div>
+        <app-env-managed-note *ngIf="isEnvManaged('makemkv_registration_key')"
+                              variable="MKVAUTO_MAKEMKV_KEY"></app-env-managed-note>
         <div *ngIf="error" class="setup-step-message setup-step-message-error" style="display: flex; align-items: start; gap: 0.5rem;">
           <ui-icon name="info" [size]="16" style="flex-shrink: 0; margin-top: 0.125rem;"></ui-icon>
           <span>{{ error }}</span>
@@ -244,6 +247,13 @@ export interface MakemkvStepData {
   `],
 })
 export class SetupStepMakemkvComponent implements OnChanges, OnInit, OnDestroy {
+  /** Dotted setting paths the container's environment pins (see the modal). */
+  @Input() envManaged: string[] = [];
+
+  isEnvManaged(settingPath: string): boolean {
+    return this.envManaged.includes(settingPath);
+  }
+
   @Input() data!: MakemkvStepData;
   @Output() dataChange = new EventEmitter<Partial<MakemkvStepData>>();
   @ViewChild('logsContainer') logsContainer?: ElementRef;

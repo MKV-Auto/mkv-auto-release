@@ -1,8 +1,13 @@
-# MKV-Auto Quick Start Guide
+# MKV-Auto Quick Start
 
-## Get Running in 5 Minutes
+Running in about five minutes.
 
-### Step 1: Start the Container
+> **You need Docker on a Linux host** (x86_64 or arm64) with an optical drive
+> attached. Docker Desktop on Windows and macOS **cannot** pass an optical drive
+> into a container — run a small Linux VM instead, see
+> [Windows / macOS setup](VM_SETUP.md).
+
+## 1. Start the container
 
 ```bash
 docker run -d \
@@ -16,198 +21,68 @@ docker run -d \
   ghcr.io/mkv-auto/mkv-auto-release:latest
 ```
 
-(Prefer Compose? Use the image-based `docker-compose.yml` from [INSTALLATION.md](INSTALLATION.md#using-docker-compose) — not the build-from-source file in `Docker/`.)
+The image is multi-arch — Docker pulls the right build for your machine.
 
-**That's it!** The container automatically configures everything needed.
+**More than one drive?** Repeat `-v` and `--device` for each (`/dev/sr1`,
+`/dev/sr2`, …). All of them are detected automatically.
 
-### Step 2: Verify Setup
+**Prefer Compose?** Use the image-based `docker-compose.yml` in
+[INSTALLATION.md](INSTALLATION.md#using-docker-compose) — *not* the
+build-from-source file in `Docker/`.
 
-Check that optical drives are configured:
+**On Unraid?** There is no Community Apps entry yet. Use the `docker run` above,
+or add [`Unraid/mkv-auto.xml`](https://github.com/MKV-Auto/mkv-auto-release/blob/main/Unraid/mkv-auto.xml)
+as a container template by hand — it has the ports, paths, device mapping and
+settings already filled in.
+
+## 2. Check the drive was configured
 
 ```bash
-docker logs mkv-auto | grep "optical"
+docker logs mkv-auto | grep optical
 ```
 
-**You should see**:
+Expected:
+
 ```
 ✅ Disabled CD-ROM autoclose (prevents auto-reinsertion)
 ✅ Optical drives configured correctly (autoclose=0)
 ```
 
-**If you see warnings**, see [Manual Setup](#manual-setup-optional) below.
-
-### Step 3: Access the Web Interface
-
-Open your browser: **http://localhost:8080**
-
-### Step 4: Test Disc Ejection
-
-1. Insert a disc
-2. Wait for it to scan (shows in UI)
-3. Press the physical eject button on your drive
-4. **Disc should stay out!** (no auto-reinsertion)
-
-**If disc reinserts**, see [Troubleshooting](#troubleshooting) below.
-
-## Manual Setup (Optional)
-
-Only needed if automatic configuration failed.
-
-### Quick Fix
-
-Run this ONE TIME on your HOST:
+If you see warnings instead, run this **once on the host**:
 
 ```bash
-sudo bash scripts/setup-host-optical.sh
-```
-
-### Manual Commands
-
-```bash
-# Disable autoclose immediately
 sudo sh -c 'echo 0 > /proc/sys/dev/cdrom/autoclose'
-
-# Make permanent (survives reboot)
 sudo sh -c 'echo "dev.cdrom.autoclose = 0" >> /etc/sysctl.conf'
-
-# Verify
-cat /proc/sys/dev/cdrom/autoclose
-# Should show: 0
 ```
 
-No container restart needed!
+No container restart needed.
 
-## Troubleshooting
+## 3. Open the web interface
 
-### Disc Auto-Reinserts After Ejection
+**http://localhost:8080**
 
-**Quick Test**:
-```bash
-# Check the setting
-docker exec mkv-auto cat /proc/sys/dev/cdrom/autoclose
-```
+The setup wizard installs MakeMKV and walks you through transfer destinations on
+first run.
 
-**If it shows 1** (bad):
-```bash
-# Run manual setup
-sudo bash scripts/setup-host-optical.sh
-```
+## 4. Try a disc
 
-**If it shows 0** (good) but disc still reinserts:
-```bash
-# Check if cooldown is working
-docker exec mkv-auto tail -f /data/mkvauto/logs/api.log | grep -iE "cooldown|spurious"
+Insert a disc, wait for the scan to appear in the UI, then press the physical
+eject button. **The disc should stay out** — if it gets pulled back in, see
+[Troubleshooting](TROUBLESHOOTING.md#the-disc-auto-reinserts-after-ejecting).
 
-# Press eject button
-# Should see: "Ignoring spurious insert"
-```
+## Next
 
-**If still having issues**:
-- See [HOST_OPTICAL_SETUP.md](../HOST_OPTICAL_SETUP.md) for detailed diagnostics
-- Run `scripts/compare-udev-events.sh` to compare host vs container events
+- **Set your output location** — Settings → Library
+- **Set up transfers** (optional) — Settings → Transfer
+- **Discord notifications** (optional) — Settings → Discord
 
-### Container Won't Start
+## Where to go next
 
-```bash
-# Check logs
-docker logs mkv-auto
-
-# Check status
-docker ps -a | grep mkv-auto
-```
-
-### Drive Not Detected
-
-```bash
-# List drives
-docker exec mkv-auto ls -la /dev/sr*
-
-# Check supervisor status
-docker exec mkv-auto supervisorctl status
-```
-
-### Port Already in Use
-
-```bash
-# Change port in docker-compose.yml
-ports:
-  - "8081:80"  # Use port 8081 instead
-```
-
-## Multiple Drives
-
-Have multiple optical drives? Add them all:
-
-```bash
-docker run -d \
-  --name mkv-auto \
-  -p 8080:80 \
-  -v /dev/sr0:/dev/sr0 --device=/dev/sr0 \
-  -v /dev/sr1:/dev/sr1 --device=/dev/sr1 \
-  -v /dev/sr2:/dev/sr2 --device=/dev/sr2 \
-  --privileged \
-  ghcr.io/mkv-auto/mkv-auto-release:latest
-```
-
-Or in docker-compose.yml:
-
-```yaml
-volumes:
-  - /dev/sr0:/dev/sr0
-  - /dev/sr1:/dev/sr1
-  - /dev/sr2:/dev/sr2
-devices:
-  - /dev/sr0
-  - /dev/sr1
-  - /dev/sr2
-```
-
-All drives are auto-detected!
-
-## Unraid Installation
-
-1. Search for "MKV-Auto" in Community Apps
-2. Click Install
-3. Configure optical drive mappings (e.g., /dev/sr0)
-4. Click Apply
-
-Optical drives are automatically configured via the template.
-
-## What Gets Auto-Configured
-
-MKV-Auto automatically sets up:
-
-1. **Optical drive behavior** - Disables autoclose to prevent reinsertion
-2. **Database** - Embedded PostgreSQL
-3. **Cache** - Embedded Redis
-4. **Udev rules** - Automatic disc detection
-5. **Web interface** - Served on port 80 (mapped to 8080)
-
-No manual configuration needed for basic operation!
-
-## Next Steps
-
-Once running:
-
-1. **Configure output directory** - Settings → Library
-2. **Set up transfers** (optional) - Settings → Transfer
-3. **Configure Discord** (optional) - Settings → Discord
-4. **Insert a disc** - Auto-detected and scanned!
-
-## Getting Help
-
-- **Installation issues**: See [INSTALLATION.md](INSTALLATION.md)
-- **Optical drive issues**: See [HOST_OPTICAL_SETUP.md](../HOST_OPTICAL_SETUP.md)
-- **Docker issues**: See [DOCKER.md](DOCKER.md)
-- **General questions**: Open an issue on GitHub
-
-## Full Documentation
-
-- [INSTALLATION.md](INSTALLATION.md) - Complete installation guide
-- [DOCKER.md](DOCKER.md) - Docker deployment details
-- [HOST_OPTICAL_SETUP.md](../HOST_OPTICAL_SETUP.md) - Optical drive configuration
-- [README.development.md](../../README.development.md) - Architecture overview and design rationale
-
----
-
-**Ready to rip!** 🎬
+| | |
+|---|---|
+| [Installation](INSTALLATION.md) | Full walkthrough — installing Docker, host setup, multi-drive, Unraid |
+| [Configuration](CONFIGURATION.md) | Environment variables, volumes, networking — including how to [skip the setup wizard](CONFIGURATION.md#unattended-setup-application-settings) by supplying your keys as variables |
+| [Windows / macOS](VM_SETUP.md) | Running via a Linux VM |
+| [Troubleshooting](TROUBLESHOOTING.md) | When something does not work |
+| [Upgrading](UPGRADE.md) | Moving to a new version |
+| [Docker reference](DOCKER.md) | Image internals, building from source, production |

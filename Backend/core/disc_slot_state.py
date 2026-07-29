@@ -46,6 +46,19 @@ def mark_slot_stable(mount_point: str) -> None:
         _slot_state[str(mount_point)] = "stable"
 
 
+def mark_slot_unknown(mount_point: str) -> None:
+    """Call when a scan ended inconclusively (e.g. the drive stopped responding).
+
+    Resets the slot to the pre-scan default so the next udev *change* is
+    treated as a strong insert. Without this a drive that wedged mid-scan
+    would keep whatever "stable" verdict a previous cycle left behind, and
+    every later event would be dismissed as SCSI settle noise — the drive
+    would never get another chance to rescan once it recovers.
+    """
+    with _lock:
+        _slot_state.pop(str(mount_point), None)
+
+
 def should_treat_change_as_weak_insert(mount_point: str) -> bool:
     """
     True if a udev *change* remapped to insert may be SCSI/media noise:

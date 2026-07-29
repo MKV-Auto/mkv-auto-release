@@ -173,6 +173,21 @@ def hydrate_disc_payload(disc_num: str, mount_point: str, payload: Dict[str, Any
         if cached_scan:
             hydrated["scan_tracks"] = cached_scan
 
+    if not info_label:
+        # #723: an empty scan (no CINFO lines) still leaves MakeMKV's DRV
+        # volume label, e.g. STAR_WARS_REBELS_S3_D1. Use it as the info_title
+        # so the card names the disc instead of showing "Drive 0" (and so
+        # default_disc_name below can compose a disc_name from it). Scoped to
+        # info_title only — release/movie naming still requires a real CINFO
+        # title or a DiscDB hit, so a volume label never invents a Release.
+        volume_label = hydrated.get("makemkv_disc_name") or hydrated.get("volume_label")
+        if isinstance(volume_label, str) and volume_label.strip() and not hydrated.get("info_title"):
+            hydrated["info_title"] = _title_case(volume_label.strip().replace("_", " "))
+            log.info(
+                "Using MakeMKV volume label as info_title fallback for disc=%s: %r",
+                disc_num, volume_label,
+            )
+
     if info_label:
         nice_name = _title_case(info_label)
         hydrated["info_title"] = hydrated.get("info_title") or nice_name or info_label

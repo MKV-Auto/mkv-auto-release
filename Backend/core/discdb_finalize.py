@@ -113,7 +113,15 @@ def _to_release_json(label: Dict[str, Any], release_slug: str) -> Dict[str, Any]
         "Locale": label.get("locale"),
         "RegionCode": label.get("region_code"),
         "SortTitle": label.get("sort_title") or label.get("release_name"),
-        "ImageUrl": label.get("image_url"),
+        # `cover_front_url` is what build_label_payload_from_disc supplies;
+        # `image_url` is the older finalize-from-client key. Accept both.
+        "ImageUrl": label.get("image_url") or label.get("cover_front_url"),
+        # Upstream's release.json carries these three. Contributor and group
+        # attribution belongs to the person opening the pull request — emit them
+        # as empty rather than omit them, so a contributor sees the fields exist.
+        "BackImageUrl": label.get("back_image_url") or label.get("cover_back_url"),
+        "Contributors": label.get("contributors") or [],
+        "Groups": label.get("groups") or [],
         "ReleaseDate": label.get("release_date"),
         "DateAdded": datetime.now(timezone.utc).isoformat(),
     }
@@ -772,6 +780,13 @@ def _to_disc_json(
         "Mode": label.get("mode"),
         "Titles": titles,
     }
+    # Upstream's AACS disc ID: SHA1 of AACS/Unit_Key_RO.inf, uppercase hex. It
+    # cannot be derived from an MKV-only rip, and upstream treats it as optional
+    # and add-only — so emit it only when we actually have one. A wrong value
+    # would be worse than none, because upstream's field is immutable once set.
+    global_disc_id = label.get("global_disc_id")
+    if global_disc_id:
+        disc_json["GlobalDiscId"] = str(global_disc_id).upper()
     return disc_json
 
 
@@ -1095,6 +1110,9 @@ def build_label_payload_from_disc(disc: Any, release: Any) -> Dict[str, Any]:
         "disc_name": disc.disc_name,
         "disc_number": disc.disc_number,
         "disc_format": disc.format,
+        # Upstream's GlobalDiscId. Null until a scan has seen the physical disc,
+        # which is why _to_disc_json omits the key rather than emitting null.
+        "global_disc_id": getattr(disc, "global_disc_id", None),
         "titles": titles,
     }
     movie_name = None
@@ -1110,8 +1128,12 @@ def build_label_payload_from_disc(disc: Any, release: Any) -> Dict[str, Any]:
             "release_slug": release.slug,
             "release_name": release.name,
             "release_year": getattr(release, "release_year", None),
-            "production_year": getattr(release, "production_year", None),
-            "original_year": getattr(release, "original_year", None),
+            # Was `getattr(release, "production_year")` — a column Release does
+            # not have, so it read None on every release and the year vanished
+            # from the export. It lives on Movie, which is where the UI reads it
+            # from too (api/routers/discs.py: "production_year from movie,
+            # release_year from boxset or release").
+            "production_year": getattr(movie, "production_year", None) if movie else None,
             "tmdb_id": movie.tmdb_id if movie else None,
             "tmdb_type": (movie.tmdb_type if movie else None) or release.type,
             "movie_name": movie_name,
@@ -1124,6 +1146,34 @@ def build_label_payload_from_disc(disc: Any, release: Any) -> Dict[str, Any]:
         }
     )
     return payload
+
+
+def _film_identity(release: Any, label: Dict[str, Any]) -> Dict[str, Any]:
+    """The title and year upstream names a directory with.
+
+    Read off the relations rather than the label payload, because the payload
+    cannot express the boxset case: ``Release.movie_id`` is non-nullable, so a
+    boxset release has a movie too, and ``build_label_payload_from_disc`` fills
+    ``movie_name`` and leaves ``boxset_name`` empty. Upstream files a boxset
+    under the *set's* name and year — ``data/sets/AVP Double Feature (2014)`` —
+    so the set wins whenever there is one.
+    """
+    boxset = getattr(release, "boxset", None)
+    movie = getattr(release, "movie", None)
+
+    if boxset and (boxset.name or getattr(boxset, "title", None)):
+        return {
+            "film_title": boxset.name or boxset.title,
+            "film_year": getattr(boxset, "year", None),
+        }
+    if movie and movie.name:
+        return {"film_title": movie.name, "film_year": getattr(movie, "production_year", None)}
+    # Series without a movie row, or a release with neither: the release name is
+    # the only title left, and it is better than "Unknown".
+    return {
+        "film_title": label.get("series_name") or release.name,
+        "film_year": label.get("production_year"),
+    }
 
 
 def generate_discdb_bundle(job_id: str, db: Any) -> Dict[str, Any]:
@@ -1180,6 +1230,12 @@ def generate_discdb_bundle(job_id: str, db: Any) -> Dict[str, Any]:
         "content_hash": disc.content_hash,
         "disc_number": disc.disc_number,
         "release_slug": release_slug,
+        # The zip export needs these to reconstruct upstream's directory,
+        # `data/{kind}/{Film Title (Year)}/{release-slug}`. The film title is the
+        # movie/boxset/series name — NOT the release name, which often carries
+        # edition wording ("… 4K UHD") that upstream keeps out of the path.
+        "release_type": release.type,
+        **_film_identity(release, label_payload),
         "release": release_json,
         "disc": disc_json,
         "summary": summary_text,

@@ -366,6 +366,22 @@ export class LibraryDiscDrawerComponent implements OnChanges, OnDestroy {
     return this.disc?.discdb_hit !== true;
   }
 
+  /**
+   * #741 — the backend refuses to export a disc with no release link, so
+   * offering the button would just produce an error toast on click.
+   *
+   * Deliberately *not* gated on the optional parts of a submission — a missing
+   * GlobalDiscId, MakeMKV log, or cover art still makes a valid entry upstream,
+   * and the zip's README says what is absent. Blocking on those would stop
+   * people contributing perfectly good data.
+   */
+  get discDbExportBlockedReason(): string | null {
+    if (!this.disc?.release_id) {
+      return 'Label this disc first — a submission needs the release it belongs to.';
+    }
+    return null;
+  }
+
   exporting = false;
 
   async exportDiscDbBundle(): Promise<void> {
@@ -373,11 +389,10 @@ export class LibraryDiscDrawerComponent implements OnChanges, OnDestroy {
     if (!discId || this.exporting) return;
     this.exporting = true;
     try {
-      const bundle = await this.discdbSvc.getContributionBundle(discId);
-      const slug = bundle.release_slug || 'release';
-      const discNum = bundle.disc_number ?? 1;
-      const filename = `discdb-bundle-${slug}-disc${String(discNum).padStart(2, '0')}.json`;
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      // #741: a zip laid out like TheDiscDb/data, not a JSON blob the user then
+      // has to split apart themselves. Filename comes from the server so the
+      // sanitising rules live in one place.
+      const { blob, filename } = await this.discdbSvc.getContributionZip(discId);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -385,7 +400,7 @@ export class LibraryDiscDrawerComponent implements OnChanges, OnDestroy {
       a.click();
       URL.revokeObjectURL(url);
       this.toast.show(
-        'DiscDB bundle exported — see the contribution guide for how to submit it upstream',
+        'Submission exported — unzip it into your fork of TheDiscDb/data and open a PR (see README.txt inside)',
         'success',
         6000,
       );

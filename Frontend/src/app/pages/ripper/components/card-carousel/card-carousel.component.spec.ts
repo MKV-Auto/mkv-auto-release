@@ -246,6 +246,32 @@ describe('CardCarouselComponent', () => {
       ).toBe('Drive 1');
     });
 
+    it('returns Drive Error for a failed in-drive scan with no name (#724)', () => {
+      expect(
+        component.getDiscTitle({
+          disc_id: 'drive-error-0',
+          disc_state: 'in_drive',
+          disc_num: '0',
+          mount_point: '/dev/sr0',
+          scan_state: 'failed',
+          scan_error: 'Drive is not responding (mount timed out after 30s).',
+        } as DiscMetadata)
+      ).toBe('Drive Error');
+    });
+
+    it('prefers the volume-label info_title over Drive Error when the scan failed (#723)', () => {
+      expect(
+        component.getDiscTitle({
+          disc_id: 'd1',
+          disc_state: 'in_drive',
+          disc_num: '0',
+          info_title: 'Star Wars Rebels S3 D1',
+          scan_state: 'failed',
+          scan_error: 'Empty scan output',
+        } as DiscMetadata)
+      ).toBe('Star Wars Rebels S3 D1');
+    });
+
     it('returns Unknown Disc for unfinished when no movie_name or info_title', () => {
       expect(
         component.getDiscTitle({
@@ -288,6 +314,94 @@ describe('CardCarouselComponent', () => {
           disc_id: 'd2',
         } as DiscMetadata)
       ).toBe('—');
+    });
+  });
+
+  describe('getDiscErrorMessage', () => {
+    it('returns the scan_error when the scan failed', () => {
+      expect(
+        component.getDiscErrorMessage({
+          disc_id: 'd1',
+          disc_state: 'in_drive',
+          scan_state: 'failed',
+          scan_error: 'Drive is not responding (mount timed out after 30s). Try power cycling the drive.',
+        } as DiscMetadata)
+      ).toBe('Drive is not responding (mount timed out after 30s). Try power cycling the drive.');
+    });
+
+    it('falls back to a generic message when the scan failed without detail', () => {
+      expect(
+        component.getDiscErrorMessage({
+          disc_id: 'd1',
+          disc_state: 'in_drive',
+          scan_state: 'failed',
+        } as DiscMetadata)
+      ).toBe('Disc scan failed');
+    });
+
+    it('returns null when the scan did not fail', () => {
+      expect(
+        component.getDiscErrorMessage({
+          disc_id: 'd1',
+          disc_state: 'in_drive',
+          scan_state: 'ready',
+          scan_error: 'stale error',
+        } as DiscMetadata)
+      ).toBeNull();
+    });
+  });
+
+  describe('drive card renders the drive error in place of the meta line (#724)', () => {
+    beforeEach(async () => {
+      TestBed.resetTestingModule();
+      const failedDrive: DiscMetadata[] = [
+        {
+          disc_id: 'drive-error-0',
+          disc_num: '0',
+          mount_point: '/dev/sr0',
+          disc_state: 'in_drive',
+          scan_state: 'failed',
+          scan_error:
+            'Drive is not responding (mount timed out after 30s). Try power cycling the drive.',
+        } as DiscMetadata,
+      ];
+      const workflowWithFailedDrive = {
+        discs$: of(failedDrive),
+        getSelectedCard$: jasmine.createSpy('getSelectedCard$').and.returnValue(of(null)),
+        getUIOrchestrationState$: jasmine.createSpy('getUIOrchestrationState$').and.returnValue(
+          of({ driveLoadingStates: new Map(), driveScanState: 'idle' })
+        ),
+        setSelectedCard: jasmine.createSpy('setSelectedCard'),
+        setContextByCard: jasmine.createSpy('setContextByCard').and.returnValue(of(undefined)),
+        getJobProgress: jasmine.createSpy('getJobProgress').and.returnValue(of(null)),
+      };
+      await TestBed.configureTestingModule({
+        imports: [CardCarouselComponent],
+        providers: [
+          { provide: WorkflowService, useValue: workflowWithFailedDrive },
+          { provide: MetadataService, useValue: { getMovieOptions: () => of([]) } },
+          { provide: LoggerService, useValue: { error: () => {} } },
+        ],
+      }).compileComponents();
+      fixture = TestBed.createComponent(CardCarouselComponent);
+      component = fixture.componentInstance;
+      fixture.detectChanges();
+    });
+
+    it('shows the error text and the power-cycle remedy, not the meta line', async () => {
+      await fixture.whenStable();
+      fixture.detectChanges();
+      const error = fixture.nativeElement.querySelector('.disc-card-error');
+      expect(error).toBeTruthy();
+      expect(error.textContent).toContain('Try power cycling the drive');
+      expect(fixture.nativeElement.querySelector('.disc-card-meta')).toBeNull();
+    });
+
+    it('titles the card Drive Error rather than Drive 0 or a stale movie name', async () => {
+      await fixture.whenStable();
+      fixture.detectChanges();
+      const name = fixture.nativeElement.querySelector('.disc-card-name');
+      expect(name.textContent.trim()).toBe('Drive Error');
     });
   });
 

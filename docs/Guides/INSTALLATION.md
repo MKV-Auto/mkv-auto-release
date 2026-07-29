@@ -8,15 +8,15 @@ Complete installation guide for MKV-Auto - automated optical disc ripping and me
 - [Quick Start (Docker)](#quick-start-docker)
 - [Detailed Installation](#detailed-installation)
 - [Initial Setup](#initial-setup)
-- [Configuration](#configuration)
+- [Configuration](CONFIGURATION.md)
 - [Troubleshooting](#troubleshooting)
-- [Upgrading](#upgrading)
+- [Upgrading](UPGRADE.md)
 
 ## System Requirements
 
 ### Hardware
 
-- **CPU**: x86_64 / AMD64 architecture (ARM not supported due to MakeMKV)
+- **CPU**: x86_64 / AMD64 or arm64 / aarch64 — the image is multi-arch
 - **RAM**: Minimum 4GB, recommended 8GB+
 - **Storage**: 200GB+ free space for ripped content (1TB+ recommended for multi-drive systems)
 - **Optical Drive**: One or more optical disc drives (DVD/Blu-ray/UHD)
@@ -28,66 +28,44 @@ Complete installation guide for MKV-Auto - automated optical disc ripping and me
 - **Linux Kernel**: 4.x or later with optical drive support
 - **Host OS**: Linux (Ubuntu 22.04+, Debian 11+, Fedora 36+, etc.)
 
+> **Windows and macOS are not supported hosts.** Docker Desktop runs containers
+> inside a VM with no access to physical optical drives, so `--device=/dev/sr0`
+> has nothing to map. On macOS the documented `docker run` fails outright:
+>
+> ```
+> docker: Error response from daemon: error gathering device information
+> while adding custom device "/dev/sr0": not a device node
+> ```
+>
+> Pointing `--device` at the real macOS node (`/dev/disk8` or similar) fails too
+> — `no such file or directory` — because the Linux VM cannot see it. Dropping
+> `--device` and keeping only `-v /dev/sr0:/dev/sr0` is worse: Docker creates an
+> empty *directory* at that path, the container starts, and no drive is ever
+> detected.
+>
+> Run a **Linux VM with USB passthrough** instead — VirtualBox or VMware
+> Workstation on Windows, UTM or Parallels or VMware Fusion on macOS — or use a
+> Linux box or NAS such as Unraid or TrueNAS. See
+> [Windows](VM_SETUP_WINDOWS.md) / [macOS](VM_SETUP_MACOS.md) VM setup for a step-by-step walkthrough.
+>
+> **Hyper-V will not work.** It has no direct USB passthrough; Enhanced Session
+> Mode redirects devices over RDP rather than presenting a real optical device
+> to the guest, and Discrete Device Assignment is Windows Server only.
+>
+> WSL2 with `usbipd-win` is not viable either: the stock WSL2 kernel omits the
+> CD-ROM module (`sr_mod`), and even after rebuilding it, MakeMKV's raw SCSI
+> commands do not survive USB/IP reliably.
+
 ### Network
 
 - **Ports**: Port 80 (or 8080) available for web interface
 - **Optional**: Network storage (NFS/SMB) for transfers
 
-## Quick Start (Docker)
+## Quick start
 
-### Using Docker Run
-
-```bash
-# Pull the image
-docker pull ghcr.io/mkv-auto/mkv-auto-release:latest
-
-# Run the container
-docker run -d \
-  --name mkv-auto \
-  -p 8080:80 \
-  -v mkv-data:/data \
-  -v /dev/sr0:/dev/sr0 \
-  --device=/dev/sr0 \
-  --privileged \
-  --restart unless-stopped \
-  ghcr.io/mkv-auto/mkv-auto-release:latest
-
-# Access at http://localhost:8080
-```
-
-### Using Docker Compose
-
-1. **Create a `docker-compose.yml`** with the published image (the `Docker/docker-compose.yml` in this repo is a *build-from-source* file for developers — don't use it to run the app):
-
-```yaml
-services:
-  mkv-auto:
-    image: ghcr.io/mkv-auto/mkv-auto-release:latest
-    container_name: mkv-auto
-    ports:
-      - "8080:80"
-    volumes:
-      - mkv-data:/data
-    devices:
-      - /dev/sr0:/dev/sr0   # change to /dev/sr1, etc. if needed
-    privileged: true
-    restart: unless-stopped
-
-volumes:
-  mkv-data:
-```
-
-2. **Start the container:**
-
-```bash
-docker compose up -d
-```
-
-3. **Access the web interface:**
-
-```
-http://localhost:8080
-```
+If you just want it running, see **[QUICKSTART.md](QUICKSTART.md)** — pull,
+run, open the UI. The rest of this guide is the full walkthrough: installing
+Docker itself, identifying your drives, and host configuration.
 
 ## Detailed Installation
 
@@ -158,17 +136,7 @@ docker compose up -d
 
 #### Option B: Using Docker Run
 
-```bash
-docker run -d \
-  --name mkv-auto \
-  -p 8080:80 \
-  -v mkv-data:/data \
-  -v /dev/sr0:/dev/sr0 \
-  --device=/dev/sr0 \
-  --privileged \
-  --restart unless-stopped \
-  ghcr.io/mkv-auto/mkv-auto-release:latest
-```
+The single-command form is in [QUICKSTART.md](QUICKSTART.md#1-start-the-container).
 
 ### Step 4: Verify Installation
 
@@ -268,8 +236,19 @@ No container restart required after manual setup.
 
 ### Unraid Users
 
-If you installed via Unraid Community Apps, optical drives are automatically configured.
-No manual setup needed!
+**MKV-Auto is not in Community Apps yet.** Install it as you would any other
+container, or add the template shipped in the repo — `Unraid/mkv-auto.xml` — as a
+container template by hand. It has the ports, data path, device mapping and
+settings pre-filled, so you are not typing them in from scratch.
+
+The template also carries the application settings — MakeMKV key, TMDB key, media
+server, Discord, auto-rip and eject behaviour. Filling them in means the container
+starts ready to use with no setup wizard; leave a field blank to configure it in
+the web UI instead. See
+[Unattended setup](CONFIGURATION.md#unattended-setup-application-settings).
+
+Optical drive host configuration is not automatic on Unraid — follow
+[Host optical setup](../HOST_OPTICAL_SETUP.md#option-3-unraid-specific).
 
 ### Testing
 
@@ -283,182 +262,31 @@ If disc still reinserts, run the manual setup above.
 
 ## Configuration
 
-### Environment Variables
+Environment variables, volume layout and networking are in
+**[CONFIGURATION.md](CONFIGURATION.md)**.
 
-Customize the container with environment variables:
+### Skipping the setup wizard
 
-```yaml
-environment:
-  # Database (use external PostgreSQL)
-  - DATABASE_URL=postgresql://user:pass@host:5432/discs
-  
-  # Cache (use external Redis)
-  - REDIS_URL=redis://host:6379/0
-  
-  # Data directories
-  - MKVAUTO_ROOT=/data/mkvauto
-  - MKVAUTO_DATA=/data/mkvauto/data
-  
-  # Logging
-  - MKVAUTO_DEBUG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
-  
-  # Timezone
-  - TZ=America/New_York
-```
+The first time you open the web UI it walks you through a setup wizard. You can
+skip it entirely by supplying the same values as environment variables — your
+MakeMKV and TMDB keys, media server, Discord webhook and so on — so a fresh
+container comes up already configured. That is the usual choice for a Compose
+stack, or any deployment you want to rebuild reproducibly.
 
-### Volume Mapping
-
-Data is stored in the `/data` volume:
-
-```bash
-# Use a named volume (recommended)
-volumes:
-  - mkv-data:/data
-
-# Or bind mount to host directory
-volumes:
-  - /path/on/host:/data
-```
-
-**Data structure:**
-- `/data/postgres` - Database files (if embedded)
-- `/data/redis` - Cache files (if embedded)
-- `/data/mkvauto/data` - Job artifacts and ripped files
-- `/data/mkvauto/logs` - Application logs
-- `/data/mkvauto/tmp` - Temporary files
-
-### Network Configuration
-
-#### Using Different Port
-
-```bash
-# Map container port 80 to host port 3000
-docker run -p 3000:80 ... mkv-auto
-# Access at http://localhost:3000
-```
-
-#### Using HTTPS (Reverse Proxy)
-
-See [DOCKER.md](DOCKER.md#https-setup) for reverse proxy configuration.
+See [Unattended setup](CONFIGURATION.md#unattended-setup-application-settings)
+for the full list. Anything you set that way is re-applied on every start and
+shown read-only in the web UI, since a change made there would be reverted on the
+next restart.
 
 ## Troubleshooting
 
-### Container Won't Start
-
-```bash
-# Check logs
-docker logs mkv-auto
-
-# Check disk space
-df -h
-
-# Verify Docker is running
-docker info
-```
-
-### Can't Access Web Interface
-
-```bash
-# Check if container is running
-docker ps -f name=mkv-auto
-
-# Check port mapping
-docker port mkv-auto
-
-# Test from inside container
-docker exec mkv-auto curl http://localhost:80
-```
-
-### Optical Drive Not Detected
-
-If the drive never spins up when you connect it or insert a disc, try a container restart and USB re-plug first; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
-
-```bash
-# Verify drive exists on host
-ls -l /dev/sr*
-
-# Check container has access
-docker exec mkv-auto ls -l /dev/sr*
-
-# Verify privileged mode is enabled
-docker inspect mkv-auto | grep Privileged
-```
-
-### Permission Issues
-
-```bash
-# Check volume permissions
-docker exec mkv-auto ls -la /data
-
-# Fix permissions if needed
-docker exec mkv-auto chown -R postgres:postgres /data/postgres
-docker exec mkv-auto chown -R redis:redis /data/redis
-```
-
-### Database Connection Errors
-
-```bash
-# If using embedded databases, check logs
-docker logs mkv-auto | grep -i postgres
-docker logs mkv-auto | grep -i redis
-
-# If using external databases, test connectivity
-docker exec mkv-auto pg_isready -h <db_host>
-docker exec mkv-auto redis-cli -h <redis_host> ping
-```
+See **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** — drive not detected, disc
+auto-reinserting, container won't start, web UI unreachable, permissions,
+and database errors.
 
 ## Upgrading
 
-### Upgrading to New Version
-
-```bash
-# Stop and remove old container
-docker stop mkv-auto
-docker rm mkv-auto
-
-# Pull new image
-docker pull ghcr.io/mkv-auto/mkv-auto-release:latest
-
-# Start new container (data persists in volume)
-docker-compose up -d
-# Or use docker run command
-```
-
-### Backup Before Upgrade
-
-For full upgrade steps (pull new image, restart with same volumes, backup, rollback), see [UPGRADE.md](UPGRADE.md).
-
-```bash
-# Backup data volume
-docker run --rm \
-  -v mkv-data:/data \
-  -v $(pwd):/backup \
-  ubuntu tar czf /backup/mkv-data-backup-$(date +%Y%m%d).tar.gz /data
-
-# Backup database (embedded PostgreSQL — default setup)
-docker exec mkv-auto pg_dump -U postgres discs > backup.sql
-
-# Backup database (external PostgreSQL container)
-docker exec mkv-auto-postgres pg_dump -U postgres discs > backup.sql
-```
-
-### Rollback to Previous Version
-
-```bash
-# Stop current container
-docker stop mkv-auto
-docker rm mkv-auto
-
-# Run previous version
-docker run -d \
-  --name mkv-auto \
-  -p 8080:80 \
-  -v mkv-data:/data \
-  -v /dev/sr0:/dev/sr0 \
-  --device=/dev/sr0 \
-  --privileged \
-  ghcr.io/mkv-auto/mkv-auto-release:1.0.0  # Specific version
-```
+See **[UPGRADE.md](UPGRADE.md)** — pulling a new image, backup, and rollback.
 
 ## Getting Help
 

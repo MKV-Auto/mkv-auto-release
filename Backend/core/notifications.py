@@ -8,6 +8,17 @@ The frontend subscribes and displays toasts; delivery per channel follows
 Dedupe: before sending, we SET notification_dedup:{id} with 24h TTL (NX).
 If key already exists we skip sending; otherwise we set and send.
 
+The id is derived from ``job_id``/``level``/``id_key`` (see ``_notification_id``).
+System-scoped notifications — no job, e.g. a drive fault — dedupe on their
+``id_key``, so repeated detections of one condition collapse into one alert.
+Two escape hatches keep that from muting a condition the user has since fixed:
+
+* ``dedupe_ttl`` shortens the window for a single call (used by startup checks,
+  which would otherwise go quiet across a container restart).
+* ``clear_notification_dedupe`` drops the window explicitly on recovery, so the
+  next genuine occurrence alerts again. ``core.drive_health.clear_drive_health``
+  calls it when a drive starts answering.
+
 Pipeline job toasts/Discord for stage and terminal job status are centralized on
 ``apply_job_state`` (see docs/NOTIFICATIONS.md). Exceptions include disk-space
 alerts and ``transfer_started`` (see that doc).
@@ -23,7 +34,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from core.discord_notification_defaults import DEFAULT_DISCORD_NOTIFICATION_LEVELS
 from core.notification_preferences import resolve_delivery_channels
@@ -33,6 +44,11 @@ logger = logging.getLogger("core.notifications")
 # 24h TTL for dedupe window
 NOTIFICATION_DEDUP_TTL_SECONDS = 86400
 NOTIFICATION_DEDUP_PREFIX = "notification_dedup:"
+
+# Short window for conditions re-detected on every process start. Long enough to
+# swallow a crash-loop's worth of repeats, short enough that a user who restarts
+# to apply a fix still hears about it if the fix did not take.
+NOTIFICATION_DEDUP_TTL_STARTUP_SECONDS = 900
 
 # All supported notification levels (for Discord/push filtering and docs).
 NOTIFICATION_LEVELS: List[str] = [
@@ -51,6 +67,7 @@ NOTIFICATION_LEVELS: List[str] = [
     "previews_ready",
     "error_disk_space",
     "error_disc_read",
+    "error_drive_unresponsive",
     "error_transfer",
     "error_generic",
     "action_required",
@@ -82,14 +99,23 @@ def _notification_id(job_id: Optional[str], level: str, key: Optional[str] = Non
     if job_id:
         part = f"{job_id}:{level}"
         return f"{part}:{key}" if key else part
+    if key:
+        # System-scoped but identified: the caller named the condition (a mount
+        # point, a bus, a disc hash), so honour it. Timestamping here instead
+        # would mint a new id every second and silently defeat the dedupe the
+        # caller asked for.
+        return f"sys:{level}:{key}"
     ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     return f"sys:{level}:{ts}"
 
 
-async def _dedupe_should_send(nid: str) -> bool:
+async def _dedupe_should_send(
+    nid: str,
+    ttl_seconds: int = NOTIFICATION_DEDUP_TTL_SECONDS,
+) -> bool:
     """
-    Return True if we should send (first time for this id in 24h), False to skip.
-    Uses Redis SET key NX EX 86400; True if SET happened, False if key already existed.
+    Return True if we should send (first time for this id in the TTL), False to skip.
+    Uses Redis SET key NX EX ttl; True if SET happened, False if key already existed.
     """
     try:
         import redis.asyncio as aioredis
@@ -97,14 +123,52 @@ async def _dedupe_should_send(nid: str) -> bool:
         client = aioredis.Redis.from_url(redis_url, decode_responses=True)
         try:
             dedupe_key = f"{NOTIFICATION_DEDUP_PREFIX}{nid}"
-            # SET key 1 NX EX 86400 => True if key was set, False if already existed
-            ok = await client.set(dedupe_key, "1", nx=True, ex=NOTIFICATION_DEDUP_TTL_SECONDS)
+            # SET key 1 NX EX ttl => True if key was set, False if already existed
+            ok = await client.set(dedupe_key, "1", nx=True, ex=ttl_seconds)
             return bool(ok)
         finally:
             await client.aclose()
     except Exception as e:
         logger.warning("Notification dedupe check failed, allowing send: %s", e)
         return True
+
+
+async def _dedupe_forget(nid: str) -> bool:
+    """Drop the dedupe window for *nid*. True when a window was actually open.
+
+    Best-effort like the check itself: Redis being unreachable must not break
+    the recovery path that called us.
+    """
+    try:
+        import redis.asyncio as aioredis
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/2")
+        client = aioredis.Redis.from_url(redis_url, decode_responses=True)
+        try:
+            removed = await client.delete(f"{NOTIFICATION_DEDUP_PREFIX}{nid}")
+            return bool(removed)
+        finally:
+            await client.aclose()
+    except Exception as e:
+        logger.warning("Notification dedupe clear failed for id=%s: %s", nid, e)
+        return False
+
+
+async def clear_notification_dedupe(
+    level: str,
+    id_key: Optional[str] = None,
+    job_id: Optional[str] = None,
+) -> bool:
+    """Re-arm *level*/*id_key* so the next matching notification sends again.
+
+    Call this when the condition a notification announced has demonstrably
+    cleared. Without it a recoverable fault stays muted for the full TTL, even
+    after the user fixes it and triggers the same fault again.
+    """
+    nid = _notification_id(job_id, level, id_key)
+    cleared = await _dedupe_forget(nid)
+    if cleared:
+        logger.info("Cleared notification dedupe window: id=%s", nid)
+    return cleared
 
 
 async def emit_notification(
@@ -118,6 +182,7 @@ async def emit_notification(
     actions: Optional[List[Dict[str, Any]]] = None,
     id_key: Optional[str] = None,
     info_title: Optional[str] = None,
+    dedupe_ttl: Optional[int] = None,
 ) -> None:
     """
     Emit a user-facing notification: broadcast on unified WebSocket and optionally send to Discord.
@@ -134,7 +199,11 @@ async def emit_notification(
         title: Optional short title (defaults to message for display).
         actions: Optional list of { label, url } for frontend actions.
         id_key: Optional extra key for id when multiple events per job (e.g. per_title).
+            Without a job_id this is what makes the id stable, so repeats of one
+            condition dedupe instead of alerting per occurrence.
         info_title: Optional disc/title name for context (e.g. MakeMKV info_title).
+        dedupe_ttl: Optional override (seconds) for the dedupe window. Defaults to
+            NOTIFICATION_DEDUP_TTL_SECONDS.
     """
     nid = _notification_id(job_id, level, id_key)
     now = datetime.now(timezone.utc).isoformat()
@@ -186,11 +255,13 @@ async def emit_notification(
         )
         return
 
-    if not await _dedupe_should_send(nid):
+    ttl = NOTIFICATION_DEDUP_TTL_SECONDS if dedupe_ttl is None else dedupe_ttl
+    if not await _dedupe_should_send(nid, ttl):
         logger.debug(
-            "Skipping notification (dedupe window): level=%s id=%s",
+            "Skipping notification (dedupe window): level=%s id=%s ttl=%s",
             level,
             nid,
+            ttl,
         )
         return
 
@@ -208,6 +279,30 @@ async def emit_notification(
             logger.warning("Failed to send notification to Discord: %s", e)
 
 
+def _run_from_sync(make_coro: Callable[[], Awaitable[Any]], description: str) -> None:
+    """Run *make_coro()* from a sync context (e.g. Celery or a sync API handler).
+
+    Prefers the FastAPI app event loop; falls back to a fresh loop (e.g. tests).
+    Takes a factory rather than a coroutine so the fallback path can build a
+    second one instead of re-awaiting a consumed object.
+    """
+    try:
+        from api.main import _app_instance
+        app = _app_instance
+        if app and hasattr(app, "state") and hasattr(app.state, "event_loop"):
+            loop = app.state.event_loop
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(make_coro(), loop)
+                return
+    except Exception as e:
+        logger.warning("Failed to schedule %s from sync context: %s", description, e)
+    # Fallback: run in new loop (e.g. tests)
+    try:
+        asyncio.run(make_coro())
+    except RuntimeError:
+        logger.warning("Could not run %s: no event loop available", description)
+
+
 def emit_notification_sync(
     message: str,
     kind: str,
@@ -219,36 +314,14 @@ def emit_notification_sync(
     actions: Optional[List[Dict[str, Any]]] = None,
     id_key: Optional[str] = None,
     info_title: Optional[str] = None,
+    dedupe_ttl: Optional[int] = None,
 ) -> None:
     """
     Schedule emit_notification from a sync context (e.g. Celery or sync API).
     Uses the FastAPI app event loop if available.
     """
-    try:
-        from api.main import _app_instance
-        app = _app_instance
-        if app and hasattr(app, "state") and hasattr(app.state, "event_loop"):
-            loop = app.state.event_loop
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    emit_notification(
-                        message, kind, level,
-                        action_type=action_type,
-                        action_payload=action_payload,
-                        job_id=job_id,
-                        title=title,
-                        actions=actions,
-                        id_key=id_key,
-                        info_title=info_title,
-                    ),
-                    loop,
-                )
-                return
-    except Exception as e:
-        logger.warning("Failed to schedule notification from sync context: %s", e)
-    # Fallback: run in new loop (e.g. tests)
-    try:
-        asyncio.run(emit_notification(
+    _run_from_sync(
+        lambda: emit_notification(
             message, kind, level,
             action_type=action_type,
             action_payload=action_payload,
@@ -257,6 +330,19 @@ def emit_notification_sync(
             actions=actions,
             id_key=id_key,
             info_title=info_title,
-        ))
-    except RuntimeError:
-        logger.warning("Could not emit notification: no event loop available")
+            dedupe_ttl=dedupe_ttl,
+        ),
+        "notification",
+    )
+
+
+def clear_notification_dedupe_sync(
+    level: str,
+    id_key: Optional[str] = None,
+    job_id: Optional[str] = None,
+) -> None:
+    """Schedule clear_notification_dedupe from a sync context."""
+    _run_from_sync(
+        lambda: clear_notification_dedupe(level, id_key=id_key, job_id=job_id),
+        "notification dedupe clear",
+    )

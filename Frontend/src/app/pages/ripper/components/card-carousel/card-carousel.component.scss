@@ -357,6 +357,22 @@ button.disc-card.loading,
   text-align: left;
 }
 
+/* Drive error (#724) — replaces the meta line when a scan failed. Amber to
+   match the alert icon; clamped to two lines so a full sentence (including
+   the power-cycle remedy) fits the fixed-ratio card without overflowing. */
+.disc-card-error {
+  font-size: 0.6875rem;
+  color: #fbbf24; /* amber-400 */
+  line-height: 1.25;
+  width: 100%;
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ---- Footer — single row: mount | Scanning... + pill (ui-lab: flex items-center justify-between gap-2) ---- */
 .disc-card-footer {
   margin-top: 0.5rem;

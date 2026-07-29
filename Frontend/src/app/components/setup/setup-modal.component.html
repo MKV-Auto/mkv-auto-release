@@ -55,6 +55,7 @@
       <app-setup-step-makemkv
         *ngIf="currentStep === 1"
         [data]="stepData.makemkv"
+        [envManaged]="envManaged"
         (dataChange)="onStepDataChange('makemkv', $event)"
       ></app-setup-step-makemkv>
       <app-setup-step-transfer
@@ -65,21 +66,25 @@
       <app-setup-step-preview
         *ngIf="currentStep === 3"
         [data]="stepData.preview"
+        [envManaged]="envManaged"
         (dataChange)="onStepDataChange('preview', $event)"
       ></app-setup-step-preview>
       <app-setup-step-library
         *ngIf="currentStep === 4"
         [data]="stepData.library"
+        [envManaged]="envManaged"
         (dataChange)="onStepDataChange('library', $event)"
       ></app-setup-step-library>
       <app-setup-step-tmdb
         *ngIf="currentStep === 5"
         [data]="stepData.tmdb"
+        [envManaged]="envManaged"
         (dataChange)="onStepDataChange('tmdb', $event)"
       ></app-setup-step-tmdb>
       <app-setup-step-discord
         *ngIf="currentStep === 6"
         [data]="stepData.discord"
+        [envManaged]="envManaged"
         (dataChange)="onStepDataChange('discord', $event)"
       ></app-setup-step-discord>
       <app-setup-step-complete

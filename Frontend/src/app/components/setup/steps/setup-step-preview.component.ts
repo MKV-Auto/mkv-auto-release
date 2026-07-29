@@ -2,6 +2,7 @@ import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { IconComponent } from '../../../ui/icon/icon.component';
+import { EnvManagedNoteComponent } from './env-managed-note.component';
 
 export interface PreviewStepData {
   duration: number;
@@ -11,7 +12,7 @@ export interface PreviewStepData {
 @Component({
   selector: 'app-setup-step-preview',
   standalone: true,
-  imports: [CommonModule, FormsModule, IconComponent],
+  imports: [EnvManagedNoteComponent, CommonModule, FormsModule, IconComponent],
   template: `
     <div class="setup-step">
       <!-- Header -->
@@ -40,7 +41,10 @@ export interface PreviewStepData {
               (ngModelChange)="onDurationChange($event)" 
               class="setup-step-range"
               [style.background]="getRangeGradient()"
+              [disabled]="isEnvManaged('preview_duration_seconds')"
             />
+            <app-env-managed-note *ngIf="isEnvManaged('preview_duration_seconds')"
+                                  variable="MKVAUTO_PREVIEW_DURATION_SECONDS"></app-env-managed-note>
             <div class="setup-step-range-labels">
               <span class="setup-step-range-label-start">30 seconds</span>
               <div class="setup-step-range-value">{{ data.duration }} seconds</div>
@@ -64,9 +68,12 @@ export interface PreviewStepData {
               type="button" 
               class="setup-step-num-btn" 
               [class.active]="data.maxParallel === n" 
+              [disabled]="isEnvManaged('preview_max_parallel')"
               (click)="dataChange.emit({ maxParallel: n })"
             >{{ n }}</button>
           </div>
+          <app-env-managed-note *ngIf="isEnvManaged('preview_max_parallel')"
+                                variable="MKVAUTO_PREVIEW_MAX_PARALLEL"></app-env-managed-note>
           <p class="setup-step-help-text">Higher values generate previews faster but use more system resources</p>
         </div>
       </div>
@@ -118,6 +125,13 @@ export interface PreviewStepData {
   `],
 })
 export class SetupStepPreviewComponent {
+  /** Dotted setting paths the container's environment pins (see the modal). */
+  @Input() envManaged: string[] = [];
+
+  isEnvManaged(settingPath: string): boolean {
+    return this.envManaged.includes(settingPath);
+  }
+
   @Input() data!: PreviewStepData;
   @Output() dataChange = new EventEmitter<Partial<PreviewStepData>>();
 

@@ -78,7 +78,14 @@
             </span>
           </div>
           <h3 class="disc-card-name" [attr.title]="getDiscTitle(card.data)">{{ getDiscTitle(card.data) }}</h3>
-          <div class="disc-card-meta">{{ getDiscMeta(card.data) }}</div>
+          <div
+            class="disc-card-error"
+            *ngIf="getDiscErrorMessage(card.data) as driveErrorMessage; else driveMeta"
+            role="status"
+            [attr.title]="driveErrorMessage">{{ driveErrorMessage }}</div>
+          <ng-template #driveMeta>
+            <div class="disc-card-meta">{{ getDiscMeta(card.data) }}</div>
+          </ng-template>
         </div>
         <div class="disc-card-footer">
           <span class="disc-card-mount">{{ getDriveMount(card.data) }}</span>

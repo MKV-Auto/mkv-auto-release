@@ -4,6 +4,36 @@ import { Observable, shareReplay } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { environment } from '../environments/environment';
 
+export interface SetupStatus {
+  first_time_setup_complete: boolean;
+  setup_step: number;
+  /**
+   * Dotted setting paths supplied by environment variables. The environment is
+   * re-applied on every boot, so these cannot be meaningfully edited in the UI —
+   * a restart would revert the change. Fields backed by them are disabled.
+   */
+  env_managed?: string[];
+}
+
+/** #741: status of a background bulk TheDiscDB export. */
+export interface DiscDbExportJob {
+  job_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  done: number;
+  total: number;
+  current: string;
+  error: string | null;
+  included: number;
+  skipped: number;
+  cancelled: boolean;
+  download_ready: boolean;
+}
+
+export interface EnvManagedSettings {
+  managed: string[];
+  supported: { env: string; setting: string; set: boolean; note: string }[];
+}
+
 /** #699: shape of GET /system/update-status. */
 export interface UpdateStatus {
   current_version: string;
@@ -663,16 +693,65 @@ export class SystemService {
     );
   }
 
-  getSetupStatus(): Observable<{ first_time_setup_complete: boolean; setup_step: number }> {
-    return this.http.get<{ first_time_setup_complete: boolean; setup_step: number }>(`${this.apiUrl}/system/setup/status`);
+  getSetupStatus(): Observable<SetupStatus> {
+    return this.http.get<SetupStatus>(`${this.apiUrl}/system/setup/status`);
   }
 
-  markSetupComplete(): Observable<{ first_time_setup_complete: boolean; setup_step: number }> {
-    return this.http.post<{ first_time_setup_complete: boolean; setup_step: number }>(`${this.apiUrl}/system/setup/complete`, {});
+  markSetupComplete(): Observable<SetupStatus> {
+    return this.http.post<SetupStatus>(`${this.apiUrl}/system/setup/complete`, {});
   }
 
-  saveSetupProgress(step: number): Observable<{ first_time_setup_complete: boolean; setup_step: number }> {
-    return this.http.patch<{ first_time_setup_complete: boolean; setup_step: number }>(`${this.apiUrl}/system/setup/progress`, { setup_step: step });
+  saveSetupProgress(step: number): Observable<SetupStatus> {
+    return this.http.patch<SetupStatus>(`${this.apiUrl}/system/setup/progress`, { setup_step: step });
+  }
+
+  /**
+   * #741 — bulk TheDiscDB export. Runs in the background: building the archive
+   * is dominated by cover-art fetches, roughly one round trip per release, so a
+   * large library would push a synchronous request past proxy timeouts.
+   */
+  startDiscDbExport(): Observable<DiscDbExportJob> {
+    return this.http.post<DiscDbExportJob>(
+      `${this.apiUrl}/discdb/contributions/export-all`, {},
+    );
+  }
+
+  getDiscDbExportStatus(jobId: string): Observable<DiscDbExportJob> {
+    return this.http.get<DiscDbExportJob>(
+      `${this.apiUrl}/discdb/contributions/export-all/${encodeURIComponent(jobId)}`,
+    );
+  }
+
+  /** The in-flight export, if any, so a reloaded page can rejoin it. */
+  getActiveDiscDbExport(): Observable<DiscDbExportJob | { status: 'idle' }> {
+    return this.http.get<DiscDbExportJob | { status: 'idle' }>(
+      `${this.apiUrl}/discdb/contributions/export-all/active`,
+    );
+  }
+
+  cancelDiscDbExport(jobId: string): Observable<void> {
+    return this.http.delete<void>(
+      `${this.apiUrl}/discdb/contributions/export-all/${encodeURIComponent(jobId)}`,
+    );
+  }
+
+  downloadDiscDbExport(jobId: string): Observable<{ blob: Blob; filename: string }> {
+    return this.http
+      .get(`${this.apiUrl}/discdb/contributions/export-all/${encodeURIComponent(jobId)}/download`,
+           { responseType: 'blob', observe: 'response' })
+      .pipe(
+        map(resp => ({
+          blob: resp.body as Blob,
+          filename:
+            resp.headers.get('Content-Disposition')?.match(/filename="?([^"]+)"?/)?.[1] ??
+            'thediscdb-submissions.zip',
+        })),
+      );
+  }
+
+  /** Which settings the environment pins, and every variable available. */
+  getEnvManagedSettings(): Observable<EnvManagedSettings> {
+    return this.http.get<EnvManagedSettings>(`${this.apiUrl}/system/settings/env-managed`);
   }
 
   // New transfer config methods

@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { SystemService } from '../../../services/system.service';
 import { IconComponent } from '../../../ui/icon/icon.component';
 import { BtnComponent } from '../../../ui/btn/btn.component';
+import { EnvManagedNoteComponent } from './env-managed-note.component';
 
 export interface DiscordStepData {
   enabled: boolean;
@@ -16,7 +17,7 @@ type TestResult = 'success' | 'error' | null;
 @Component({
   selector: 'app-setup-step-discord',
   standalone: true,
-  imports: [CommonModule, FormsModule, IconComponent, BtnComponent],
+  imports: [EnvManagedNoteComponent, CommonModule, FormsModule, IconComponent, BtnComponent],
   template: `
     <div class="setup-step">
       <!-- Header -->
@@ -41,7 +42,7 @@ type TestResult = 'success' | 'error' | null;
             <p class="setup-step-toggle-subtitle">Receive updates about your ripping jobs</p>
           </div>
         </div>
-        <button type="button" class="setup-step-toggle" [class.on]="data.enabled" (click)="toggleEnabled()" role="switch" [attr.aria-checked]="data.enabled">
+        <button type="button" class="setup-step-toggle" [class.on]="data.enabled" (click)="toggleEnabled()" role="switch" [attr.aria-checked]="data.enabled" [disabled]="isEnvManaged('discord.enabled')">
           <span class="setup-step-toggle-thumb"></span>
         </button>
       </div>
@@ -57,7 +58,10 @@ type TestResult = 'success' | 'error' | null;
           [(ngModel)]="localWebhookUrl" 
           (ngModelChange)="onWebhookChange($event)" 
           placeholder="https://discord.com/api/webhooks/..." 
+          [disabled]="isEnvManaged('discord.webhook_url')"
         />
+        <app-env-managed-note *ngIf="isEnvManaged('discord.webhook_url')"
+                              variable="MKVAUTO_DISCORD_WEBHOOK_URL"></app-env-managed-note>
 
         <!-- Test Result Messages -->
         <div *ngIf="testResult === 'success'" class="setup-step-message success">
@@ -156,6 +160,13 @@ type TestResult = 'success' | 'error' | null;
   `],
 })
 export class SetupStepDiscordComponent implements OnChanges {
+  /** Dotted setting paths the container's environment pins (see the modal). */
+  @Input() envManaged: string[] = [];
+
+  isEnvManaged(settingPath: string): boolean {
+    return this.envManaged.includes(settingPath);
+  }
+
   @Input() data!: DiscordStepData;
   @Output() dataChange = new EventEmitter<Partial<DiscordStepData>>();
 

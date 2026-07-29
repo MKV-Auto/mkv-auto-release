@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
@@ -264,20 +265,29 @@ def list_contributions(
     List discs eligible for DiscDB contribution (labeled misses with completed jobs).
     Returns disc metadata + contribution status for the Contributions tab (#334).
     """
+    # EXISTS rather than JOIN + DISTINCT: a disc has several jobs, and DISTINCT
+    # over the entity makes Postgres compare `discs`' json columns for equality,
+    # which they do not support — this endpoint 500s on Postgres. SQLite allows
+    # it, so tests never saw it.
+    has_ripped_job = (
+        db.query(db_models.Job)
+        .filter(
+            db_models.Job.disc_id == db_models.Disc.id,
+            db_models.Job.job_status.in_(["completed", "running"]),
+            db_models.Job.rip_state == "completed",
+        )
+        .exists()
+    )
     q = (
         db.query(db_models.Disc)
         .options(
             joinedload(db_models.Disc.release).joinedload(db_models.Release.movie),
         )
-        .join(db_models.Job, db_models.Job.disc_id == db_models.Disc.id)
-        .filter(
-            db_models.Job.job_status.in_(["completed", "running"]),
-            db_models.Job.rip_state == "completed",
-        )
+        .filter(has_ripped_job)
     )
     if status:
         q = q.filter(db_models.Disc.discdb_contribution_status == status)
-    discs = q.distinct().order_by(db_models.Disc.updated_at.desc()).limit(100).all()
+    discs = q.order_by(db_models.Disc.updated_at.desc()).limit(100).all()
 
     results = []
     for disc in discs:
@@ -324,33 +334,125 @@ def update_contribution_status(
     return {"disc_id": disc_id, "status": disc.discdb_contribution_status}
 
 
+# These four are declared before `/{disc_id}/bundle` so "export-all" is not
+# captured as a disc id.
+
+
+@router.post("/contributions/export-all", status_code=202)
+def start_export_all(db: Session = Depends(get_db)):
+    """Kick off the bulk TheDiscDB export (#741).
+
+    Building the archive is dominated by cover-art fetches — roughly one round
+    trip per release — so a large library would push a synchronous request past
+    proxy timeouts. Returns immediately; poll the status route.
+
+    Calling this while an export is running returns that one rather than
+    starting a second: two would duplicate every fetch and race each other
+    stamping the same discs as exported.
+    """
+    from core.discdb_export_jobs import start_export_job
+
+    return start_export_job().to_dict()
+
+
+@router.get("/contributions/export-all/active")
+def get_active_export(db: Session = Depends(get_db)):
+    """What a freshly-loaded page should attach to.
+
+    Returns a run in progress if there is one, and otherwise the most recent
+    finished archive that is still on disk. A long export usually finishes while
+    nobody is watching the page; without the second case the archive would sit
+    out its retention window unreachable and the user's only option would be to
+    build the whole thing again.
+    """
+    from core.discdb_export_jobs import get_resumable_job
+
+    job = get_resumable_job()
+    return job.to_dict() if job else {"status": "idle"}
+
+
+@router.get("/contributions/export-all/{job_id}")
+def get_export_status(job_id: str):
+    from core.discdb_export_jobs import get_job
+
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, detail="Export job not found or expired")
+    return job.to_dict()
+
+
+@router.delete("/contributions/export-all/{job_id}", status_code=204)
+def cancel_export(job_id: str):
+    """Stop a running export. It stops between discs, not mid-disc."""
+    from core.discdb_export_jobs import cancel_job
+
+    if not cancel_job(job_id):
+        raise HTTPException(404, detail="No running export with that id")
+    return Response(status_code=204)
+
+
+@router.get("/contributions/export-all/{job_id}/download")
+def download_export(job_id: str):
+    from core.discdb_export_jobs import get_job
+
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, detail="Export job not found or expired")
+    if job.status != "completed" or not job.path:
+        raise HTTPException(409, detail=f"Export is {job.status}, not ready to download")
+    if not job.path.exists():
+        # Retention swept it, or the tmp volume was cleared under us.
+        raise HTTPException(410, detail="Export archive is no longer available; run it again")
+    return FileResponse(
+        path=str(job.path),
+        media_type="application/zip",
+        filename=job.filename or "thediscdb-submissions.zip",
+        headers={
+            "X-Export-Included": str(job.summary.get("included", 0)),
+            "X-Export-Skipped": str(job.summary.get("skipped", 0)),
+        },
+    )
+
+
 @router.get("/contributions/{disc_id}/bundle")
 def get_contribution_bundle(
     disc_id: str,
+    format: str = "zip",
     db: Session = Depends(get_db),
 ):
-    """
-    Generate a DiscDB-format export bundle for a disc (#334).
-    Wraps existing discdb_finalize.py logic.
+    """Generate a TheDiscDB submission for a disc (#334, #741).
+
+    Defaults to a zip laid out like the upstream repository, so a contributor
+    unzips it into their fork and opens a pull request. `format=json` returns the
+    raw bundle instead — the same data, easier to inspect and to assert against.
     """
     disc = db.query(db_models.Disc).filter(db_models.Disc.id == disc_id).first()
     if not disc:
         raise HTTPException(404, detail="Disc not found")
-    # Find a completed job for this disc
+    # Gated on the job being *finished*, not merely ripped. Finish is only
+    # offered once the whole workflow — rip, post-processing, transfer — is
+    # done, so it is the point at which this disc's data has stopped moving.
     job = (
         db.query(db_models.Job)
         .filter(
             db_models.Job.disc_id == disc_id,
-            db_models.Job.rip_state == "completed",
+            db_models.Job.job_status == "completed",
         )
         .order_by(db_models.Job.created_at.desc())
         .first()
     )
     if not job:
-        raise HTTPException(400, detail="No completed rip job found for this disc")
+        raise HTTPException(
+            400, detail="No finished job for this disc — finish the job before exporting"
+        )
+    want_zip = (format or "zip").strip().lower() != "json"
     try:
-        from core.discdb_finalize import generate_discdb_bundle
-        bundle = generate_discdb_bundle(str(job.id), db)
+        if want_zip:
+            from core.discdb_export import build_discdb_zip
+            filename, payload = build_discdb_zip(str(job.id), db)
+        else:
+            from core.discdb_finalize import generate_discdb_bundle
+            bundle = generate_discdb_bundle(str(job.id), db)
     except HTTPException:
         raise
     except Exception as exc:
@@ -362,4 +464,10 @@ def get_contribution_bundle(
         disc.discdb_contribution_status = "exported"
     disc.discdb_exported_at = datetime.now(timezone.utc)
     db.commit()
+    if want_zip:
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
     return bundle

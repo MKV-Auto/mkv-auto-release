@@ -1205,10 +1205,15 @@ export class WorkflowActionsComponent implements OnInit, OnDestroy {
     // and the WebUI ToastService through the existing WS channel — so we
     // just early-return here to suppress the generic "Failed to start rip"
     // fallback toast and avoid duplicate UI signal.
+    // #724: the drive stopped responding, so the backend refused to start a
+    // copy it could not attribute to the right disc. It has already emitted an
+    // error-class notification carrying the message and the power-cycle
+    // remedy — early-return so we don't stack a vaguer toast on top.
     if (
       errObj?.status === 409 &&
       (detailCode === 'drive_unsafe_with_others' ||
-        detailCode === 'drive_unidentifiable')
+        detailCode === 'drive_unidentifiable' ||
+        detailCode === 'drive_unresponsive')
     ) {
       return;
     }

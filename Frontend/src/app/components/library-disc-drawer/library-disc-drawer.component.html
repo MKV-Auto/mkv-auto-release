@@ -77,11 +77,16 @@
         <div *ngIf="canExportDiscDbBundle" class="library-disc-drawer__field">
           <button type="button"
                   class="library-disc-drawer__export"
+                  [class.is-exporting]="exporting"
                   (click)="exportDiscDbBundle()"
-                  [disabled]="exporting"
-                  title="Download a TheDiscDB-format JSON bundle for manual contribution">
+                  [disabled]="exporting || !!discDbExportBlockedReason"
+                  [title]="discDbExportBlockedReason
+                    || 'Download a TheDiscDB submission — unzip it into a fork of TheDiscDb/data and open a PR'">
             {{ exporting ? 'Exporting…' : '⬇ Export DiscDB bundle' }}
           </button>
+          <p *ngIf="discDbExportBlockedReason" class="library-disc-drawer__export-hint">
+            {{ discDbExportBlockedReason }}
+          </p>
         </div>
       </section>
 
