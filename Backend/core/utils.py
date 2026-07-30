@@ -1785,6 +1785,7 @@ def retrieve_discdb_data(content_hash: str) -> dict:
                 format
                 slug
                 contentHash
+                globalDiscId
                 id
                 titles {
                   __typename

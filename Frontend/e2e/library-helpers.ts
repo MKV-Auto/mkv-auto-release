@@ -117,8 +117,15 @@ export async function installBaseMocks(
   await page.route('**/api/jobs/**', (route) => route.fulfill(noopJson([])));
   await page.route('**/api/drives**', (route) => route.fulfill(noopJson([])));
   await page.route('**/api/events/**', (route) => route.abort());
-  // WebSocket isn't easy to mock; block it so the page doesn't hang.
-  await page.route(/ws|websocket/, (route) => route.abort());
+  // WebSocket: accept the handshake and go silent. Aborting it (the old
+  // behavior) threw WorkflowService into a ~2s reconnect loop — every retry
+  // churned the page and collapsed open card menus, making menu clicks a
+  // race that slower CI runners reliably lost. (The old bare /ws|websocket/
+  // regex also matched Vite's @angular_platform-BROWSER dep chunk under
+  // `ng serve` and aborted the app bundle itself at boot.)
+  await page.routeWebSocket(/\/(ws|websocket)([/?#]|$)/, () => {
+    // Connected, never speaks — the app idles with no events.
+  });
 
   // ---- specific endpoints (registered last → win over the catch-alls) ----
   // /readyz: blocks the APP_INITIALIZER. Without this the static

@@ -13,6 +13,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  HostListener,
   EventEmitter,
   Input,
   Output,
@@ -63,6 +64,10 @@ export class LibraryBoxsetCardComponent {
   @Output() releaseUpdated = new EventEmitter<ReleaseSummary>();
   @Output() releaseDeleted = new EventEmitter<ReleaseSummary>();
   @Output() discOpen = new EventEmitter<DiscSummary>();
+  /** #741: scoped TheDiscDB export request, handled by the page (one poller). */
+  @Output() exportDiscs = new EventEmitter<string[]>();
+  @Input() eligibleDiscIds: ReadonlySet<string> = new Set();
+  @Input() updateDiscIds: ReadonlySet<string> = new Set();
 
   expanded = false;
   editing = false;
@@ -107,6 +112,74 @@ export class LibraryBoxsetCardComponent {
 
   toggleExpanded(): void {
     this.expanded = !this.expanded;
+  }
+
+  menuOpen = false;
+
+  toggleMenu(ev: Event): void {
+    ev.stopPropagation();
+    this.menuOpen = !this.menuOpen;
+  }
+
+  @HostListener('document:click')
+  closeMenu(): void {
+    this.menuOpen = false;
+  }
+
+  /** Discs across every member release that the export would include. */
+  get exportableDiscIdList(): string[] {
+    const ids: string[] = [];
+    for (const rel of this.releases) {
+      for (const d of this.releaseDiscs[String(rel.id)] ?? []) {
+        if (d.id && this.eligibleDiscIds.has(String(d.id))) ids.push(String(d.id));
+      }
+    }
+    return ids;
+  }
+
+  get exportableDiscCount(): number {
+    return this.exportableDiscIdList.length;
+  }
+
+  private allDiscs(): DiscSummary[] {
+    const out: DiscSummary[] = [];
+    for (const rel of this.releases) out.push(...(this.releaseDiscs[String(rel.id)] ?? []));
+    return out;
+  }
+
+  get readyCount(): number {
+    return this.allDiscs().filter(
+      d => d.id && this.eligibleDiscIds.has(String(d.id)) && !this.updateDiscIds.has(String(d.id)),
+    ).length;
+  }
+
+  get changedCount(): number {
+    return this.allDiscs().filter(d => d.id && this.updateDiscIds.has(String(d.id))).length;
+  }
+
+  get inDbCount(): number {
+    return this.allDiscs().filter(
+      d => d.discdb_hit === true || d.discdb_disc_num != null,
+    ).length;
+  }
+
+  onMenuEdit(ev: Event): void {
+    ev.stopPropagation();
+    this.menuOpen = false;
+    this.startEdit();
+  }
+
+  onMenuExport(ev: Event): void {
+    ev.stopPropagation();
+    this.menuOpen = false;
+    const ids = this.exportableDiscIdList;
+    if (ids.length) this.exportDiscs.emit(ids);
+  }
+
+  onMenuDelete(ev: Event): void {
+    ev.stopPropagation();
+    this.menuOpen = false;
+    this.confirmDelete();
   }
 
   startEdit(): void {

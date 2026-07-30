@@ -59,13 +59,67 @@ Upstream reviews these by hand. If your library is large, consider splitting it
 across a few pull requests by removing directories from your clone before
 committing.
 
+## Updates, boxsets, and film-level files
+
+**Updating an entry TheDiscDB already has.** When you correct data on a disc
+that matched TheDiscDB (a *hit*), the export targets **their** path — their film
+directory, their release slug, their disc number — so unzipping shows *modified*
+files in your fork, which is what an update looks like in a pull request. The
+coordinates are captured when the disc matches; for discs matched before this
+existed, the export asks TheDiscDB once at export time. If it cannot resolve
+them (offline, entry moved), the zip falls back to a new directory and the
+README warns you to check for the existing entry first.
+
+An update ships **only the disc files** — never `release.json`, cover art, or
+film-level files, which belong to the existing entry. It also starts from
+upstream's committed copy of the disc file and lays your data over it, so
+anything they have that your record cannot produce — hand-written chapter
+names, per-title descriptions, the `GlobalDiscId` — survives instead of being
+deleted by the diff. The result is a pull request that reads as the correction
+it is, not a rewrite.
+
+You are told, twice, when an export contains updates: the library page shows a
+dialog the moment the download lands, and the zip's README lists each updated
+directory with the exact files it replaces. Both include a **suggested commit
+message** computed against upstream's current entry — what changed, field by
+field, each with the prior value it replaces — ready to paste into your PR.
+
+**Only genuine corrections count.** The per-title filenames in the disc data
+are MakeMKV output names — they differ between any two rips without upstream
+being wrong, so an update always keeps upstream's. Likewise, only edits to the
+surfaces a human actually corrects — title names, types, seasons, episodes,
+descriptions, the disc's name or format — mark a disc as *changed since
+TheDiscDB*; touching technical fields or re-saving the same value does not.
+And if what's left of your correction matches what upstream already has, the
+export says so and ships nothing rather than replacing their files with
+byte-equivalent copies.
+
+**Boxsets.** Upstream models a set as an *index*: `data/sets/{Set (Year)}/`
+holds only `boxset.json` (metadata plus `Discs[]` references pointing at the
+member films) and cover art. The disc files themselves live under each member
+film's own directory — and that is exactly how the export lays them out. The
+`Discs[]` list is built from your full set, so it is complete even if you
+export one disc at a time.
+
+**Film-level files.** Every upstream film directory carries `metadata.json`
+and `cover.jpg` beside its release folders. The export generates both for
+films that are new to TheDiscDB (never for updates — the upstream film already
+has richer ones). `tmdb.json` and `imdb.json` are not generated; they appear to
+come from upstream's own tooling, and the zip's README says so.
+
 ## Submit it
 
 1. Fork and clone [TheDiscDb/data](https://github.com/TheDiscDb/data).
 2. Unzip the export into the root of your clone. The `data/…` path in the zip
-   lines up with the repository, so the files land where they belong.
-3. `git status` should show only new files — one release directory for a single
-   disc, or one per release if you exported the whole library.
+   lines up with the repository, so the files land where they belong. **Merge,
+   don't replace**: the `unzip` command and Windows Explorer both merge folders
+   into place, but macOS Finder *replaces* a folder's entire contents when you
+   drag one onto another — on an update that deletes the files upstream already
+   has beside yours. On a Mac, unzip from a terminal.
+3. `git status` shows new entries as untracked directories and updates as
+   *modified* files. The zip's `README.txt` lists which is which — every update
+   names the exact files that replace upstream's copies, so what git shows
+   should match the README line for line.
 4. Commit, push, open a pull request.
 
 `README.txt` inside the zip repeats these steps and lists anything the export

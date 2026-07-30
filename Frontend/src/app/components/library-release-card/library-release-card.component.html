@@ -29,6 +29,21 @@
           · {{ titleCount }} title{{ titleCount === 1 ? '' : 's' }}
         </ng-container>
       </div>
+      <!-- #741: card-level TheDiscDB state. A chip only exists where there is
+           no click — actions live in the ⋯ menu. -->
+      <div class="library-release-card__chips">
+        <span *ngIf="readyCount > 0" class="library-release-card__chip library-release-card__chip--amber">
+          ⬆ {{ discs.length === 1 ? 'Not in TheDiscDB · ready to export' : (readyCount + ' ready to export') }}
+        </span>
+        <span *ngIf="changedCount > 0" class="library-release-card__chip library-release-card__chip--amber"
+              title="Already in TheDiscDB, but your local edits differ — exporting submits an update">
+          ↻ {{ discs.length === 1 ? 'Changed since TheDiscDB' : (changedCount + ' changed since TheDiscDB') }}
+        </span>
+        <span *ngIf="fullyContributed" class="library-release-card__chip library-release-card__chip--teal">
+          ✓ In TheDiscDB
+        </span>
+      </div>
+
     </div>
 
     <!-- EDIT MODE: inline form -->
@@ -82,23 +97,18 @@
     </form>
 
     <!-- Actions: shown in view mode only -->
+    <!-- #741 UI: the permanent "✎ Edit / 🗑 Delete" pair collapses into one
+         quiet ⋯ menu. Same capabilities, zero visual weight until asked for.
+         Finalized keeps the items visible with the reason inline, instead of
+         graying out silently. -->
     <div *ngIf="!editing" class="library-release-card__actions">
       <button type="button"
-              class="library-release-card__btn"
-              (click)="startEdit()"
-              [disabled]="isFinalized"
-              [title]="isFinalized ? 'Release finalized — edits locked' : 'Edit release metadata'"
-              aria-label="Edit release">
-        ✎ Edit
-      </button>
-      <button type="button"
-              class="library-release-card__btn library-release-card__btn--danger"
-              (click)="confirmDelete()"
-              [disabled]="isFinalized"
-              [title]="isFinalized ? 'Release finalized — cannot delete' : 'Delete release'"
-              aria-label="Delete release">
-        🗑 Delete
-      </button>
+              class="library-release-card__kebab"
+              [class.is-open]="menuOpen"
+              (click)="toggleMenu($event)"
+              [attr.aria-expanded]="menuOpen"
+              aria-haspopup="menu"
+              aria-label="Release actions">⋯</button>
       <button type="button"
               class="library-release-card__expand"
               (click)="toggleExpanded()"
@@ -106,6 +116,29 @@
               [attr.aria-label]="(expanded ? 'Collapse' : 'Expand') + ' disc list'">
         <span class="library-release-card__chev" [class.is-open]="expanded">▾</span>
       </button>
+
+      <div *ngIf="menuOpen" class="library-release-card__menu" role="menu">
+        <button type="button" class="library-release-card__menu-item"
+                [class.is-locked]="isFinalized"
+                (click)="onMenuEdit($event)" role="menuitem">
+          <span aria-hidden="true">✎</span> Edit release
+          <span *ngIf="isFinalized" class="library-release-card__menu-lock">🔒 finalized</span>
+        </button>
+        <button *ngIf="exportableDiscCount > 0" type="button"
+                class="library-release-card__menu-item"
+                (click)="onMenuExport($event)" role="menuitem">
+          <span aria-hidden="true">⬆</span>
+          {{ exportMenuLabel }}
+        </button>
+        <div class="library-release-card__menu-div" aria-hidden="true"></div>
+        <button type="button"
+                class="library-release-card__menu-item library-release-card__menu-item--danger"
+                [class.is-locked]="isFinalized"
+                (click)="onMenuDelete($event)" role="menuitem">
+          <span aria-hidden="true">🗑</span> Delete release…
+          <span *ngIf="isFinalized" class="library-release-card__menu-lock">🔒 finalized</span>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -120,6 +153,8 @@
               [attr.aria-label]="'Open ' + discRowLabel(disc) + ' details'">
         <span class="library-release-card__disc-label">{{ discRowLabel(disc) }}</span>
         <span class="library-release-card__disc-meta">{{ discRowMeta(disc) }}</span>
+        <span *ngIf="isDiscInDb(disc)" class="library-release-card__disc-chip library-release-card__disc-chip--teal"
+              title="In TheDiscDB">✓ DiscDB</span>
         <span *ngIf="discRowFinalized(disc)" class="library-release-card__disc-flag">✓</span>
       </button>
     </li>

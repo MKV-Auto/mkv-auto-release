@@ -48,11 +48,20 @@ test.describe('Library — delete release', () => {
     // Sanity: card present before delete.
     await expect(page.getByText('Test Movie (2024)')).toBeVisible();
 
+    // Edit/Delete live behind the card's kebab menu since the contribution
+    // surface landed (#756). Scope to the card: the library shell can render
+    // more than one card, and every kebab shares the same accessible name.
+    const card = page.locator('app-library-release-card', { hasText: 'Test Movie (2024)' });
+    await card.getByRole('button', { name: 'Release actions' }).click();
+    // The entries carry role="menuitem", which overrides the implicit
+    // button role — getByRole('button') never matches them.
+    await expect(card.getByRole('menuitem', { name: /Delete release/ })).toBeVisible();
+
     const reqP = page.waitForRequest(
       (r) => r.method() === 'DELETE' && r.url().includes(`/releases/${release.id}`),
       { timeout: 5_000 },
     );
-    await page.getByRole('button', { name: 'Delete release' }).click();
+    await card.getByRole('menuitem', { name: /Delete release/ }).click();
     await reqP;
 
     // Card gone.

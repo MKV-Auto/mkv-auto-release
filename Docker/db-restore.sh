@@ -15,6 +15,10 @@ set -uo pipefail
 
 DB_NAME="${MKVAUTO_DB_NAME:-discs}"
 BACKUP_DIR="${MKVAUTO_BACKUP_DIR:-/data/backups}"
+# The role the app connects as (see /entrypoint.sh). Restored objects must be
+# owned by it: restoring --no-owner AS POSTGRES flips every table to postgres
+# ownership and locks the app out of its own database (#757).
+APP_ROLE="${MKVAUTO_DB_ROLE:-mkvauto}"
 PGBIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1)"
 PG_RESTORE="${PGBIN:+$PGBIN/}pg_restore"
 
@@ -42,9 +46,11 @@ echo "Restoring '$DB_NAME' from $DUMP"
 echo "  (this OVERWRITES existing data — Ctrl-C now if the app writers are still running)"
 
 # --clean --if-exists drops+recreates objects before load; --no-owner so it
-# works regardless of the dumping role. Errors during --clean of absent objects
-# are tolerated by --if-exists; a genuine restore error still exits non-zero.
-if pg_as_postgres "'$PG_RESTORE' --clean --if-exists --no-owner -d '$DB_NAME' '$DUMP'"; then
+# works regardless of the dumping role; --role so the recreated objects are
+# owned by the app role rather than postgres (we connect as postgres for peer
+# auth, then SET ROLE). Errors during --clean of absent objects are tolerated
+# by --if-exists; a genuine restore error still exits non-zero.
+if pg_as_postgres "'$PG_RESTORE' --clean --if-exists --no-owner --role '$APP_ROLE' -d '$DB_NAME' '$DUMP'"; then
   echo "Restore complete. Restart writers: supervisorctl start uvicorn celery-rip celery-default celery-preview"
 else
   rc=$?

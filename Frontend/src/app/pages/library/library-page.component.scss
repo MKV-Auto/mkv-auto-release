@@ -163,3 +163,128 @@
     &:hover { background: rgba(255, 255, 255, 0.12); }
   }
 }
+
+
+// #741: contribution strip + tab. Amber is the contribution accent everywhere
+// (chips, strip, tab) so the affordances read as one feature.
+.library-tab--contrib {
+  border-style: dashed;
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.08);
+  color: #fcd34d;
+  &.is-active { border-style: solid; background: rgba(251, 191, 36, 0.16); }
+}
+
+.library-contrib-strip {
+  display: flex; align-items: center; gap: 11px;
+  margin: 14px 0 0;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  background: rgba(251, 191, 36, 0.07);
+
+  &--busy { border-color: rgba(99, 102, 241, 0.4); background: rgba(99, 102, 241, 0.08); }
+  &--done { border-color: rgba(94, 234, 212, 0.3); background: rgba(94, 234, 212, 0.06); }
+
+  &__icon { font-size: 16px; color: #fcd34d; flex: none; }
+  &--busy &__icon { color: #c7d2fe; }
+  &--done &__icon { color: #5eead4; }
+
+  &__text { margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.85); flex: 1; }
+  &__current { color: rgba(255, 255, 255, 0.5); }
+
+  &__btn {
+    font-size: 12.5px; padding: 6px 12px; border-radius: 8px;
+    border: 1px solid rgba(251, 191, 36, 0.5);
+    background: rgba(251, 191, 36, 0.12);
+    color: #fcd34d; cursor: pointer;
+    &:hover { background: rgba(251, 191, 36, 0.2); }
+  }
+
+  &__dismiss {
+    font-size: 12.5px; padding: 6px 8px; border-radius: 8px;
+    border: none; background: none;
+    color: rgba(255, 255, 255, 0.4); cursor: pointer;
+    &:hover { color: rgba(255, 255, 255, 0.7); }
+  }
+}
+
+// Post-export dialog for updates: these files land on top of files TheDiscDB
+// already has, and nobody should learn that from a surprise git diff. Amber,
+// like every other contribution affordance on this page.
+.library-export-updates-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+
+.library-export-updates {
+  width: min(640px, 100%);
+  max-height: 85vh; overflow-y: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: #16181d;
+  padding: 20px 22px;
+
+  &__head {
+    display: flex; align-items: baseline; gap: 12px;
+    h2 { margin: 0; font-size: 16px; color: #fcd34d; flex: 1; }
+  }
+
+  &__close {
+    border: none; background: none; cursor: pointer;
+    color: rgba(255, 255, 255, 0.4); font-size: 14px;
+    &:hover { color: rgba(255, 255, 255, 0.7); }
+  }
+
+  &__intro, &__warn {
+    font-size: 13px; line-height: 1.5; color: rgba(255, 255, 255, 0.8);
+    code { color: #fcd34d; }
+  }
+
+  &__entry {
+    margin: 12px 0; padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  &__target { margin: 0; font-size: 13px; color: white; font-family: ui-monospace, monospace; }
+  &__files { margin: 4px 0 0; font-size: 12px; color: rgba(251, 191, 36, 0.9); }
+
+  &__commit-wrap { position: relative; margin-top: 10px; }
+
+  &__copy {
+    position: absolute; top: 6px; right: 6px;
+    font-size: 11px; padding: 3px 8px; border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.5);
+    color: rgba(255, 255, 255, 0.7); cursor: pointer;
+    &:hover { color: white; border-color: rgba(255, 255, 255, 0.3); }
+  }
+
+  &__commit {
+    margin: 0; padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.35);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+    // The full corrections list can run long (every replaced value is stated
+    // expressly); the block scrolls rather than growing the modal.
+    max-height: 240px; overflow-y: auto;
+  }
+
+  &__warn { color: rgba(255, 255, 255, 0.6); }
+
+  &__foot { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+  &__ok {
+    font-size: 13px; padding: 7px 16px; border-radius: 8px;
+    border: 1px solid rgba(251, 191, 36, 0.5);
+    background: rgba(251, 191, 36, 0.12);
+    color: #fcd34d; cursor: pointer;
+    &:hover { background: rgba(251, 191, 36, 0.2); }
+  }
+}

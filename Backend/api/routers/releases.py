@@ -2462,7 +2462,21 @@ def patch_disc_record(disc_id: str, req: DiscMetadataPatch, db: Session = Depend
         updates["disc_name"] = req.disc_name
     if req.disc_format is not None:
         updates["format"] = req.disc_format
+    # DiscDB dirty-detection (#741) — but only for user-CORRECTION surfaces
+    # whose value actually changed. Re-linking a release, renumbering or
+    # re-slugging a disc is local organization, not "TheDiscDB has this
+    # wrong", and a no-op save is not an edit at all.
+    corrects_user_surface = (
+        req.disc_name is not None and (req.disc_name or None) != (disc.disc_name or None)
+    ) or (
+        req.disc_format is not None and (req.disc_format or None) != (disc.format or None)
+    )
     if updates:
+        # Human edit path; pipeline writes never come through here.
+        from datetime import datetime, timezone
+
+        if corrects_user_surface:
+            updates["user_edited_at"] = datetime.now(timezone.utc)
         db.query(db_models.Disc).filter(db_models.Disc.id == disc.id).update(updates)
         db.commit()
         db.refresh(disc)

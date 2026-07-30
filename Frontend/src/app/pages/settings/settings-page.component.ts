@@ -48,6 +48,7 @@ type SettingsSection =
   | 'makemkv'
   | 'tmdb'
   | 'export'
+  | 'discdb'
   | 'help';
 
 interface SettingsNavItem {
@@ -66,6 +67,7 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
   { id: 'makemkv', label: 'MakeMKV', icon: 'terminal' },
   { id: 'tmdb', label: 'TMDB', icon: 'search' },
   { id: 'export', label: 'Export / Import', icon: 'download' },
+  { id: 'discdb', label: 'TheDiscDB', icon: 'upload' },
   { id: 'help', label: 'Help', icon: 'info' },
 ];
 
@@ -786,42 +788,18 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
           </ui-card>
         </div>
 
-        <!-- Export/Import Tab (template: ExportImport) -->
-        <div *ngIf="activeTab === 'export'" class="settings-section-stack">
+        <!-- TheDiscDB Tab: contributing to the shared disc database. Its own
+             section — sandwiching it inside backup/restore made a contribution
+             tool read as part of user-data export, which it is not (#741). -->
+        <div *ngIf="activeTab === 'discdb'" class="settings-section-stack">
           <ui-card>
             <div class="settings-section-body">
               <ui-section-header
-                title="Export &amp; Import"
-                subtitle="Backup and restore your ripping history. Metadata only — no video files.">
-                <ui-icon uiSecIcon name="download" [size]="14"></ui-icon>
+                title="TheDiscDB submissions"
+                subtitle="Package discs that aren't in TheDiscDB yet so other users get automatic identification.">
+                <ui-icon uiSecIcon name="upload" [size]="14"></ui-icon>
               </ui-section-header>
 
-              <div class="settings-alert settings-alert--error" *ngIf="importError">
-                <ui-icon name="alert" [size]="14"></ui-icon>
-                <span>{{ importError }}</span>
-              </div>
-
-              <!-- Export -->
-              <div class="settings-iox-block settings-iox-block--export">
-                <div class="settings-iox-block__head">
-                  <ui-icon name="download" [size]="20"></ui-icon>
-                  <div>
-                    <h5 class="settings-iox-block__title">Export data</h5>
-                    <p class="settings-iox-block__body">
-                      Download a ZIP archive containing all releases, discs,
-                      titles, and transfer history. Use this to back up your
-                      data or migrate to a new installation.
-                    </p>
-                  </div>
-                </div>
-                <ui-btn variant="primary" (click)="exportHistory()" [loading]="exporting">
-                  <ui-icon uiBtnIcon name="download" [size]="13"></ui-icon>
-                  Export all data
-                </ui-btn>
-              </div>
-
-              <!-- #741: bulk TheDiscDB submission. Distinct from the backup
-                   above — this one is for contributing upstream, not restoring. -->
               <div class="settings-iox-block settings-iox-block--export">
                 <div class="settings-iox-block__head">
                   <ui-icon name="download" [size]="20"></ui-icon>
@@ -892,6 +870,43 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                     Cancel
                   </ui-btn>
                 </div>
+              </div>
+            </div>
+          </ui-card>
+        </div>
+
+        <!-- Export/Import Tab (template: ExportImport) -->
+        <div *ngIf="activeTab === 'export'" class="settings-section-stack">
+          <ui-card>
+            <div class="settings-section-body">
+              <ui-section-header
+                title="Export &amp; Import"
+                subtitle="Backup and restore your ripping history. Metadata only — no video files.">
+                <ui-icon uiSecIcon name="download" [size]="14"></ui-icon>
+              </ui-section-header>
+
+              <div class="settings-alert settings-alert--error" *ngIf="importError">
+                <ui-icon name="alert" [size]="14"></ui-icon>
+                <span>{{ importError }}</span>
+              </div>
+
+              <!-- Export -->
+              <div class="settings-iox-block settings-iox-block--export">
+                <div class="settings-iox-block__head">
+                  <ui-icon name="download" [size]="20"></ui-icon>
+                  <div>
+                    <h5 class="settings-iox-block__title">Export data</h5>
+                    <p class="settings-iox-block__body">
+                      Download a ZIP archive containing all releases, discs,
+                      titles, and transfer history. Use this to back up your
+                      data or migrate to a new installation.
+                    </p>
+                  </div>
+                </div>
+                <ui-btn variant="primary" (click)="exportHistory()" [loading]="exporting">
+                  <ui-icon uiBtnIcon name="download" [size]="13"></ui-icon>
+                  Export all data
+                </ui-btn>
               </div>
 
               <!-- Import -->

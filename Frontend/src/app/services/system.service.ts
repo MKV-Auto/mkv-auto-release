@@ -16,6 +16,16 @@ export interface SetupStatus {
 }
 
 /** #741: status of a background bulk TheDiscDB export. */
+/** One export entry that overwrites files TheDiscDB already has — the page
+ *  surfaces these when the export lands, so nobody unzips a replacement
+ *  without knowing. Mirrors the zip README's update section. */
+export interface DiscDbExportUpdate {
+  target: string;
+  files: string[];
+  subject: string;
+  changes: string[];
+}
+
 export interface DiscDbExportJob {
   job_id: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
@@ -24,6 +34,7 @@ export interface DiscDbExportJob {
   current: string;
   error: string | null;
   included: number;
+  updates?: DiscDbExportUpdate[];
   skipped: number;
   cancelled: boolean;
   download_ready: boolean;
@@ -710,10 +721,26 @@ export class SystemService {
    * is dominated by cover-art fetches, roughly one round trip per release, so a
    * large library would push a synchronous request past proxy timeouts.
    */
-  startDiscDbExport(): Observable<DiscDbExportJob> {
+  startDiscDbExport(discIds?: string[]): Observable<DiscDbExportJob> {
+    // A disc-id list scopes the archive (one release or boxset from the
+    // library page); omitted means the whole library. Eligibility rules apply
+    // to the scoped set server-side, so an ineligible id is ignored.
     return this.http.post<DiscDbExportJob>(
-      `${this.apiUrl}/discdb/contributions/export-all`, {},
+      `${this.apiUrl}/discdb/contributions/export-all`,
+      discIds ? { disc_ids: discIds } : {},
     );
+  }
+
+  /** Discs the bulk export would include — the strip's count comes from here
+   *  so it is by construction what "Export all" will do. */
+  getDiscDbEligible(): Observable<{
+    count: number; disc_ids: string[];
+    update_disc_ids: string[]; new_count: number; update_count: number;
+  }> {
+    return this.http.get<{
+      count: number; disc_ids: string[];
+      update_disc_ids: string[]; new_count: number; update_count: number;
+    }>(`${this.apiUrl}/discdb/contributions/export-all/eligible`);
   }
 
   getDiscDbExportStatus(jobId: string): Observable<DiscDbExportJob> {

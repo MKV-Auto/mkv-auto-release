@@ -100,6 +100,10 @@ class Disc(Base):
 
     id = Column(String, primary_key=True, default=_uuid_str)
     content_hash = Column(String, nullable=False, unique=True)
+    # Stamped only by the human edit paths (title PATCH, disc metadata PATCH),
+    # never by pipeline writes. A DiscDB hit with this set is "dirty": the local
+    # copy diverged from upstream, so it is worth exporting as an update.
+    user_edited_at = Column(TIMESTAMP(timezone=True), nullable=True)
     # TheDiscDB's GlobalDiscId: SHA1 of the disc's AACS/Unit_Key_RO.inf, uppercase
     # hex. Identifies a pressing globally where content_hash identifies it by file
     # layout. Only obtainable from the physical disc, and absent on DVDs (no AACS

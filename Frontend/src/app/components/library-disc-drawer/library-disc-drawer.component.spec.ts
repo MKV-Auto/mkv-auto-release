@@ -460,14 +460,16 @@ describe('LibraryDiscDrawerComponent (Phase 4)', () => {
 
   // #86 — manual DiscDB bundle export (misses only)
 
-  it('canExportDiscDbBundle is true for misses and false for hits', () => {
+  it('canExportDiscDbBundle offers export for hits too (#741)', () => {
+    // The drawer is the manual override: upstream can be stale in ways
+    // dirty-detection cannot see, so a human may re-export any disc.
     fixture.componentRef.setInput('disc', makeDisc({ discdb_hit: false }));
     fixture.detectChanges();
     expect(component.canExportDiscDbBundle).toBe(true);
 
     fixture.componentRef.setInput('disc', makeDisc({ discdb_hit: true }));
     fixture.detectChanges();
-    expect(component.canExportDiscDbBundle).toBe(false);
+    expect(component.canExportDiscDbBundle).toBe(true);
   });
 
   // #741: the backend hard-refuses a disc with no release link, so offering the

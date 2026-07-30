@@ -2714,6 +2714,53 @@ def assert_title_patch_allowed(job, title, field_names) -> None:
             )
 
 
+
+
+def _stamp_user_edit(disc) -> None:
+    """Record that a human changed this disc's metadata.
+
+    Called only from the user-facing PATCH endpoints — pipeline writes must not
+    reach this, or DiscDB dirty-detection would flag every processed disc. A
+    DiscDB hit with this stamp is exported as an *update* (#741).
+    """
+    from datetime import datetime, timezone
+
+    disc.user_edited_at = datetime.now(timezone.utc)
+
+
+# The fields a human actually CORRECTS — the ones that make a DiscDB hit worth
+# re-exporting as an update. Filenames (comment), durations, sizes, stream data
+# and ordering are environment/technical values: they differ between two rips
+# of the same disc without upstream being wrong, so they must not mark the
+# disc dirty.
+_USER_CORRECTION_FIELDS = ("title", "type", "season", "episode", "description", "edition")
+
+
+def _changes_user_surface(title, fields: Dict[str, Any]) -> bool:
+    """True when this patch changes a value on a user-correction surface.
+
+    A patch that only touches technical fields — or that re-saves the same
+    values — is not a correction, and must not flag the disc for a
+    TheDiscDB update export.
+    """
+    def norm(key: str, value: Any) -> Any:
+        if key == "type":
+            try:
+                value = _normalize_title_type(value)
+            except Exception:  # noqa: BLE001 - comparison must never block a patch
+                pass
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
+
+    for key in _USER_CORRECTION_FIELDS:
+        if key not in fields:
+            continue
+        if norm(key, fields[key]) != norm(key, getattr(title, key, None)):
+            return True
+    return False
+
+
 @router.patch("/{disc_id}/titles", response_model=TitlePatchResponse)
 def patch_disc_title(
     disc_id: str,
@@ -2784,6 +2831,7 @@ def patch_disc_title(
 
     assert_title_patch_allowed(get_active_job_for_disc(db, disc_id), title, set(fields))
 
+    corrects_user_surface = _changes_user_surface(title, fields)
     _apply_title_patch_fields(title, fields)
     from core.duplicate_group_sync import sync_duplicate_group_labels_for_disc
 
@@ -2797,6 +2845,8 @@ def patch_disc_title(
     title.title_seq = incoming_seq
     new_version = max(_get_titles_version(disc), current_version + 1)
     _set_titles_version(disc, new_version)
+    if corrects_user_surface:
+        _stamp_user_edit(disc)
     db.commit()
 
     return TitlePatchResponse(
@@ -2835,6 +2885,7 @@ def patch_disc_titles_batch(
     current_version = _get_titles_version(disc)
     results: List[Dict[str, Any]] = []
     any_success = False
+    any_correction = False
     active_job = get_active_job_for_disc(db, disc_id)
 
     for patch in batch.patches:
@@ -2889,6 +2940,8 @@ def patch_disc_titles_batch(
                 })
                 continue
 
+            if _changes_user_surface(title, fields):
+                any_correction = True
             _apply_title_patch_fields(title, fields)
             title.title_seq = incoming_seq
             results.append({
@@ -2915,6 +2968,8 @@ def patch_disc_titles_batch(
         )
         new_version = max(_get_titles_version(disc), current_version + 1)
         _set_titles_version(disc, new_version)
+        if any_correction:
+            _stamp_user_edit(disc)
         db.commit()
         current_version = new_version
 

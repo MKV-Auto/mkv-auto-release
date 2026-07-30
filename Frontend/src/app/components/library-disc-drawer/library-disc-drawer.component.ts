@@ -360,10 +360,11 @@ export class LibraryDiscDrawerComponent implements OnChanges, OnDestroy {
     return t === 'series' || t === 'tv';
   }
 
-  /** #86 — export only makes sense for DiscDB misses: hits came FROM
-   * TheDiscDB, so there is nothing new to contribute. */
+  /** #741 — export is offered for every disc, hits included. The drawer is
+   * the manual override: upstream can be stale in ways dirty-detection cannot
+   * see, and a human deciding to re-export trumps the heuristic. */
   get canExportDiscDbBundle(): boolean {
-    return this.disc?.discdb_hit !== true;
+    return true;
   }
 
   /**

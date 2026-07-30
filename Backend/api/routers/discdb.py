@@ -338,8 +338,41 @@ def update_contribution_status(
 # captured as a disc id.
 
 
+class ExportAllRequest(BaseModel):
+    """Optional scope for the bulk export (#741 library page).
+
+    ``disc_ids`` limits the archive to those discs — a release's or boxset's —
+    with the same eligibility rules applied; an ineligible id is ignored, never
+    exported. Omitted or null means the whole library.
+    """
+    disc_ids: Optional[List[str]] = None
+
+
+@router.get("/contributions/export-all/eligible")
+def get_export_eligible(db: Session = Depends(get_db)):
+    """The discs the bulk export would include, as ids.
+
+    The library page builds its contribution strip ("N discs aren't in
+    TheDiscDB yet") and per-card chips from this, so the count shown is by
+    construction the count "Export all" will act on — the two cannot drift.
+    """
+    from core.discdb_export import _eligible_contribution_discs
+
+    discs = _eligible_contribution_discs(db)
+    # Split so the UI can say "N new · M updates" and mark dirty hits
+    # distinctly — an update chip means "your copy is better than upstream".
+    update_ids = [str(d.id) for d in discs if d.discdb_disc_num is not None]
+    return {
+        "count": len(discs),
+        "disc_ids": [str(d.id) for d in discs],
+        "update_disc_ids": update_ids,
+        "new_count": len(discs) - len(update_ids),
+        "update_count": len(update_ids),
+    }
+
+
 @router.post("/contributions/export-all", status_code=202)
-def start_export_all(db: Session = Depends(get_db)):
+def start_export_all(body: Optional[ExportAllRequest] = None, db: Session = Depends(get_db)):
     """Kick off the bulk TheDiscDB export (#741).
 
     Building the archive is dominated by cover-art fetches — roughly one round
@@ -352,7 +385,8 @@ def start_export_all(db: Session = Depends(get_db)):
     """
     from core.discdb_export_jobs import start_export_job
 
-    return start_export_job().to_dict()
+    disc_ids = body.disc_ids if body else None
+    return start_export_job(disc_ids=disc_ids).to_dict()
 
 
 @router.get("/contributions/export-all/active")

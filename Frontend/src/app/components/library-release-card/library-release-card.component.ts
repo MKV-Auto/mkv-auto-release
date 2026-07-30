@@ -20,6 +20,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   EventEmitter,
+  HostListener,
   Input,
   Output,
   inject,
@@ -63,6 +64,16 @@ export class LibraryReleaseCardComponent {
   @Output() deleted = new EventEmitter<ReleaseSummary>();
   /** Phase 4 will subscribe to this to open the disc drawer. */
   @Output() discOpen = new EventEmitter<DiscSummary>();
+  /** #741: ask the page to run a scoped TheDiscDB export for these disc ids.
+   *  The page owns the job and its progress UI — one poller for the whole
+   *  library, not one per card. */
+  @Output() exportDiscs = new EventEmitter<string[]>();
+  /** Disc ids the bulk export would include, from
+   *  GET /discdb/contributions/export-all/eligible. Drives the chips and the
+   *  menu item, so what the UI offers is what the export will do. */
+  @Input() eligibleDiscIds: ReadonlySet<string> = new Set();
+  /** Dirty hits (already upstream, corrected locally) — exported as updates. */
+  @Input() updateDiscIds: ReadonlySet<string> = new Set();
 
   expanded = false;
   editing = false;
@@ -118,6 +129,82 @@ export class LibraryReleaseCardComponent {
   get isFinalized(): boolean {
     const fs = (this.release as any).finalize_state;
     return fs === 'completed' || fs === 'finalized';
+  }
+
+  menuOpen = false;
+
+  toggleMenu(ev: Event): void {
+    ev.stopPropagation();
+    this.menuOpen = !this.menuOpen;
+  }
+
+  @HostListener('document:click')
+  closeMenu(): void {
+    this.menuOpen = false;
+  }
+
+  get exportableDiscCount(): number {
+    return this.discs.filter(d => this.isDiscExportable(d)).length;
+  }
+
+  /** Eligible discs that are NEW to TheDiscDB (not updates). */
+  get readyCount(): number {
+    return this.discs.filter(
+      d => this.isDiscExportable(d) && !this.updateDiscIds.has(String(d.id)),
+    ).length;
+  }
+
+  /** Eligible dirty hits — upstream has them, our copy is better. */
+  get changedCount(): number {
+    return this.discs.filter(d => d.id && this.updateDiscIds.has(String(d.id))).length;
+  }
+
+  /** In TheDiscDB, by the persisted column when the scan-payload flag is
+   *  absent — the library projection does not always carry discdb_hit. */
+  isDiscInDb(d: DiscSummary): boolean {
+    return d.discdb_hit === true || d.discdb_disc_num != null;
+  }
+
+  /** Every disc is upstream and none diverged — nothing to do, say so quietly. */
+  get fullyContributed(): boolean {
+    return this.discs.length > 0
+      && this.discs.every(d => this.isDiscInDb(d))
+      && this.changedCount === 0;
+  }
+
+  get exportMenuLabel(): string {
+    const n = this.exportableDiscCount;
+    if (this.changedCount === n && n > 0) {
+      return n === 1 ? 'Export update to TheDiscDB' : `Export ${n} updates to TheDiscDB`;
+    }
+    return n === 1 ? 'Export to TheDiscDB' : `Export ${n} discs to TheDiscDB`;
+  }
+
+  isDiscExportable(disc: DiscSummary): boolean {
+    return !!disc.id && this.eligibleDiscIds.has(String(disc.id));
+  }
+
+  onMenuEdit(ev: Event): void {
+    ev.stopPropagation();
+    this.menuOpen = false;
+    // Finalized: the item stays visible and says why; clicking is a no-op
+    // rather than a silent failure route into the edit form.
+    if (this.isFinalized) return;
+    this.startEdit();
+  }
+
+  onMenuExport(ev: Event): void {
+    ev.stopPropagation();
+    this.menuOpen = false;
+    const ids = this.discs.filter(d => this.isDiscExportable(d)).map(d => String(d.id));
+    if (ids.length) this.exportDiscs.emit(ids);
+  }
+
+  onMenuDelete(ev: Event): void {
+    ev.stopPropagation();
+    this.menuOpen = false;
+    if (this.isFinalized) return;
+    this.confirmDelete();
   }
 
   toggleExpanded(): void {

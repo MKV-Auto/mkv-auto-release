@@ -325,9 +325,10 @@ async function main() {
   await waitFor('http://127.0.0.1:4200', 45, 400);
   log('Frontend on :4200 ready');
 
-  // 5. Run Playwright (use 127.0.0.1 to avoid IPv6 localhost issues)
+  // 5. Run Playwright (use 127.0.0.1 to avoid IPv6 localhost issues).
+  // Extra CLI args pass through: `npm run e2e:full -- <spec> --trace on`.
   const pwEnv = { ...process.env, E2E_USE_EXISTING: '1', E2E_BASE_URL: 'http://127.0.0.1:4200', E2E_FULL: '1', E2E_API_URL: 'http://127.0.0.1:' + BACKEND_PORT };
-  const pw = spawn('npx', ['playwright', 'test'], { cwd: frontend, stdio: 'inherit', env: pwEnv });
+  const pw = spawn('npx', ['playwright', 'test', ...process.argv.slice(2)], { cwd: frontend, stdio: 'inherit', env: pwEnv });
   const exitCode = await new Promise((resolve) => pw.on('close', (code) => resolve(code ?? 0)));
 
   onExit(exitCode);

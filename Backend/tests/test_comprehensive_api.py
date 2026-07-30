@@ -336,46 +336,27 @@ class TestJobsAPI:
         assert response.status_code in [200, 404], \
             f"Unexpected status {response.status_code}: {response.text}"
 
-    def test_concurrent_rip_requests(self, client, unique_disc_hash):
-        """Test handling of concurrent rip requests."""
-        import threading
-        import time
-        
-        results = []
-        errors = []
-        
-        def make_request():
-            try:
-                response = client.post(
-                    "/jobs/rip",
-                    json={
-                        "disc_num": "1",
-                        "mount_point": "/dev/sr0",
-                        "disc_hash": unique_disc_hash,
-                        "mode": "copy"
-                    }
-                )
-                results.append(response.status_code)
-            except Exception as e:
-                errors.append(str(e))
-        
-        # Start multiple threads
-        threads = [threading.Thread(target=make_request) for _ in range(3)]
-        for t in threads:
-            t.start()
-        
-        # Wait for all threads
-        for t in threads:
-            t.join()
-        
-        # Only one should succeed (200), others should be 409 (conflict) or may return existing job (200)
-        assert len(results) == 3, f"Expected 3 responses, got {len(results)}. Errors: {errors}"
-        # At least one should succeed
-        assert results.count(200) >= 1, \
-            f"Expected at least 1 successful request (200), got {results.count(200)}. Status codes: {results}"
-        # Others should be conflicts or may also return 200 if they get the same job
-        # The important thing is that we don't get errors
-        assert len(errors) == 0, f"Unexpected errors during concurrent requests: {errors}"
+    @pytest.mark.asyncio
+    async def test_concurrent_rip_requests(self, client, unique_disc_hash):
+        """Concurrent rip requests: at least one succeeds, the rest either
+        conflict (409) or land on the same job (200) — never a transport
+        error. (#748 rewrite: bounded event-loop gather, no threaded
+        TestClient, no untimed joins.)"""
+        from tests.async_requests import gather_requests
+
+        body = {
+            "disc_num": "1",
+            "mount_point": "/dev/sr0",
+            "disc_hash": unique_disc_hash,
+            "mode": "copy",
+        }
+        responses = await gather_requests(
+            client.app, [("POST", "/jobs/rip", {"json": body})] * 3
+        )
+        statuses = [r.status_code for r in responses]
+        assert len(statuses) == 3
+        assert statuses.count(200) >= 1, \
+            f"Expected at least 1 successful request (200). Status codes: {statuses}"
 
     def test_start_rip_performance(self, client, enhanced_fake_drive_manager):
         """Test that rip initiation completes in reasonable time."""

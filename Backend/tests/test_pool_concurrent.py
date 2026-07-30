@@ -7,10 +7,7 @@ Run with: pytest Backend/tests/test_pool_concurrent.py -v
 """
 from __future__ import annotations
 
-import concurrent.futures
 import time
-from typing import List, Tuple
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -25,18 +22,6 @@ CONCURRENT_USERS = 20
 # Max wall-clock time for the whole batch (seconds).
 # With Phase 1 refactor (no session across await) batch completes in ~13s; 15s allows headroom.
 MAX_WALL_TIME = 15.0
-
-
-def _client_session(client: TestClient) -> List[Tuple[str, int]]:
-    """Simulate one user's page load: hit the three pool-sensitive endpoints. Returns [(path, status_code), ...]."""
-    results = []
-    r = client.get("/coordinator/initial-state")
-    results.append(("/coordinator/initial-state", r.status_code))
-    r = client.get("/jobs/unfinished/workflow-contexts")
-    results.append(("/jobs/unfinished/workflow-contexts", r.status_code))
-    r = client.get("/jobs?limit=200")
-    results.append(("/jobs?limit=200", r.status_code))
-    return results
 
 
 @pytest.fixture
@@ -70,25 +55,30 @@ def client(test_db, monkeypatch):
     app.dependency_overrides.clear()
 
 
-def test_concurrent_coordinator_and_jobs_endpoints(client: TestClient) -> None:
+@pytest.mark.asyncio
+async def test_concurrent_coordinator_and_jobs_endpoints(client: TestClient) -> None:
     """
     Many concurrent requests to pool-sensitive endpoints must all succeed (200) and complete in time.
 
-    Validates that the app does not exhaust the DB pool under load. Before refactor (session-across-await
-    fixes), this test may timeout or get 500s; after refactor it should pass.
+    Validates that the app does not exhaust the DB pool under load. #748
+    rewrite: all 60 requests fire concurrently through one event loop
+    (bounded gather) instead of a thread pool over the sync TestClient,
+    which could deadlock in the client's blocking portal and hang the suite.
     """
+    from tests.async_requests import gather_requests
+
+    paths = [
+        "/coordinator/initial-state",
+        "/jobs/unfinished/workflow-contexts",
+        "/jobs?limit=200",
+    ]
+    requests = [("GET", path, None) for _ in range(CONCURRENT_USERS) for path in paths]
+
     start = time.perf_counter()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENT_USERS) as executor:
-        futures = [executor.submit(_client_session, client) for _ in range(CONCURRENT_USERS)]
-        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+    responses = await gather_requests(client.app, requests, timeout=MAX_WALL_TIME + 45)
     elapsed = time.perf_counter() - start
 
-    # All requests must return 200
-    all_statuses = []
-    for session_results in results:
-        for _path, status in session_results:
-            all_statuses.append(status)
-
+    all_statuses = [r.status_code for r in responses]
     assert len(all_statuses) == CONCURRENT_USERS * 3, "expected one result per request per user"
     failures = [s for s in all_statuses if s != 200]
     assert not failures, f"expected all 200, got failures: {failures}"

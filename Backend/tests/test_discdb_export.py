@@ -164,6 +164,9 @@ class TestZipLayout:
             f"{target}/release.json",
             f"{target}/disc01.json",
             f"{target}/disc01-summary.txt",
+            # #754: new films carry the film-level metadata upstream entries
+            # all have. (cover.jpg only when the film has a cover URL.)
+            "data/movie/Cinderella Man (2005)/metadata.json",
             "README.txt",
         }
         assert name.endswith(".zip")
@@ -387,6 +390,91 @@ class TestUpstreamFields:
         assert with_id["GlobalDiscId"] == "D2924B73D929F45F2CDFF7174688D128CDEC3E29"
 
 
+class TestUpstreamForm:
+    """The zip must read like upstream's own committed files. Every rule here
+    was verified against TheDiscDb/data: no file there carries null-valued
+    keys, ChapterCount, Content, an Item on an unwanted title, or placeholder
+    chapter names."""
+
+    def _zip_disc(self, disc):
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=_bundle(disc=disc)), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+        return json.loads(_read(data, "data/movie/Cinderella Man (2005)/2025-4k/disc01.json"))
+
+    def test_null_valued_keys_are_omitted(self):
+        """Upstream omits optional fields entirely; on an update, a null here
+        diffs as *deleting* the value they have."""
+        out = self._zip_disc({"Index": 1, "Slug": "4k", "Name": "4K", "Mode": None,
+                              "ContentHash": "ABC",
+                              "Titles": [{"Index": 0, "Description": None, "Season": None}]})
+        assert "Mode" not in out
+        assert out["Titles"] == [{"Index": 0}]
+
+    def test_pipeline_internal_title_fields_stay_home(self):
+        out = self._zip_disc({"Index": 1, "ContentHash": "ABC", "Titles": [
+            {"Index": 0, "ChapterCount": 28, "Content": True,
+             "Item": {"Title": "X", "Type": "MainMovie", "Chapters": []}},
+        ]})
+        title = out["Titles"][0]
+        assert "ChapterCount" not in title and "Content" not in title
+        assert title["Item"]["Type"] == "MainMovie"
+
+    def test_an_ignored_title_carries_no_item(self):
+        """'ignore' is MKV-Auto vocabulary; upstream's form for an unwanted
+        title is simply no Item (proven 74-for-74 on the Predators overlay)."""
+        out = self._zip_disc({"Index": 1, "ContentHash": "ABC", "Titles": [
+            {"Index": 0, "Item": {"Title": "a.mkv", "Type": "ignore", "Chapters": []}},
+            {"Index": 1, "Item": {"Title": "Film", "Type": "MainMovie", "Chapters": []}},
+        ]})
+        assert "Item" not in out["Titles"][0]
+        assert out["Titles"][1]["Item"]["Title"] == "Film"
+
+    def test_placeholder_chapter_names_collapse_to_the_empty_list(self):
+        """MakeMKV invents 'Chapter N' names when the disc has none; upstream
+        writes [] until someone supplies real names."""
+        out = self._zip_disc({"Index": 1, "ContentHash": "ABC", "Titles": [
+            {"Index": 0, "Item": {"Title": "F", "Type": "MainMovie", "Chapters": [
+                {"Index": 1, "Title": "Chapter 1"}, {"Index": 2, "Title": "Chapter 2"}]}},
+        ]})
+        assert out["Titles"][0]["Item"]["Chapters"] == []
+
+    def test_real_chapter_names_survive(self):
+        out = self._zip_disc({"Index": 1, "ContentHash": "ABC", "Titles": [
+            {"Index": 0, "Item": {"Title": "F", "Type": "MainMovie", "Chapters": [
+                {"Index": 1, "Title": "The Fall"}, {"Index": 2, "Title": "Chapter 2"}]}},
+        ]})
+        assert out["Titles"][0]["Item"]["Chapters"][0]["Title"] == "The Fall"
+
+    def test_serialization_matches_upstreams_escaping_and_file_ending(self):
+        """System.Text.Json writes ' as \\u0027 and embedded quotes as \\u0022,
+        and their files end without a trailing newline — byte-matching keeps
+        unchanged strings out of an update's diff entirely."""
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=_bundle(disc={
+                       "Index": 1, "Name": "Dead Man's \"Cut\"", "ContentHash": "ABC",
+                       "Titles": []})), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+
+        raw = _read(data, "data/movie/Cinderella Man (2005)/2025-4k/disc01.json")
+        assert not raw.endswith("\n")
+        assert '"Dead Man\\u0027s \\u0022Cut\\u0022"' in raw
+        assert json.loads(raw)["Name"] == 'Dead Man\'s "Cut"'
+
+    def test_the_bundle_itself_is_not_reshaped(self):
+        """The form rules are zip-serialization only — the JSON bundle is our
+        API surface and keeps the pipeline fields."""
+        from core.discdb_export import _upstream_disc_form
+
+        disc = {"Index": 1, "Titles": [{"Index": 0, "Content": True}]}
+        _upstream_disc_form(disc)
+        assert disc["Titles"][0]["Content"] is True
+
+
 class TestStoredInfoLog:
     """The DB path itself, not a mock of it — this is where the log really lives."""
 
@@ -472,14 +560,16 @@ class TestFilmIdentity:
             out = _film_identity(self._release(session), {})
         assert out == {"film_title": "Cinderella Man", "film_year": 2005}
 
-    def test_a_boxset_wins_over_its_movie(self, test_db):
-        """Release.movie_id is non-nullable, so a boxset release has a movie too —
-        but upstream files it under data/sets/{Set Name (Year)}."""
+    def test_the_member_film_wins_over_its_boxset(self, test_db):
+        """#755, verified against TheDiscDb/data: sets are an index. Disc files
+        live under each member film's directory (their Predator 4-movie
+        collection keeps discs under data/movie/Predators (2010)/), and the set
+        itself ships separately as boxset.json under data/sets/."""
         from core.discdb_finalize import _film_identity
 
         with test_db() as session:
             out = _film_identity(self._release(session, type="boxset", with_boxset=True), {})
-        assert out == {"film_title": "AVP Double Feature", "film_year": 2014}
+        assert out == {"film_title": "Cinderella Man", "film_year": 2005}
 
     def test_the_edition_name_never_becomes_the_directory(self, test_db):
         """"Cinderella Man 4K UHD" is the release name; upstream keeps edition
@@ -531,6 +621,508 @@ class TestLabelPayloadYear:
         assert payload["production_year"] == 2005
         # The release year is a separate thing and must not stand in for it.
         assert payload["release_year"] == 2025
+
+
+class TestUpdateTargeting:
+    """#753: a hit's export must land on TheDiscDB's own path, or the overlay
+    shows a duplicate sibling release instead of modified files."""
+
+    @pytest.fixture(autouse=True)
+    def _offline(self):
+        """These tests assert targeting, not merging — never touch the network."""
+        with patch("core.discdb_export._fetch_upstream_disc_json", return_value=None):
+            yield
+
+    def _hit_bundle(self, **over):
+        return _bundle(
+            is_discdb_hit=True,
+            discdb_upstream={
+                "film_title": "Predators", "film_year": 2010,
+                "release_slug": "predator-4-movie-collection-4k", "disc_index": 2,
+            },
+            **over,
+        )
+
+    def test_update_lands_on_the_upstream_path_and_stem(self):
+        """Proven need: our Predators dirty-hit matched upstream's
+        predator-4-movie-collection-4k/disc02.json, but exported as
+        predators-2018/disc01.json — a duplicate, not a correction."""
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._hit_bundle()), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+
+        names = _names(data)
+        target = "data/movie/Predators (2010)/predator-4-movie-collection-4k"
+        assert f"{target}/disc02.json" in names
+        assert not any("predators-2018" in n or "Cinderella" in n for n in names)
+
+    def test_update_ships_only_disc_files(self):
+        """An update corrects DISC data. Overwriting upstream's release.json or
+        cover art with our thinner copies would regress their repo."""
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._hit_bundle(
+                       release={**_bundle()["release"], "ImageUrl": "https://x/f.jpg"})), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=b"\xff\xd8") as fetch:
+            _, data = build_discdb_zip("job1", db=None)
+
+        names = _names(data)
+        target = "data/movie/Predators (2010)/predator-4-movie-collection-4k"
+        assert f"{target}/disc02.json" in names
+        assert f"{target}/disc02-summary.txt" in names
+        assert not any(n.endswith("release.json") for n in names)
+        assert not any(n.endswith(".jpg") for n in names)
+        fetch.assert_not_called()
+
+    def test_update_body_carries_upstreams_disc_index(self):
+        """The stem alone is not enough: leaving our local Index in the JSON
+        corrupts their index field (the live Predators overlay diffed
+        "Index": 2 → 1 before this)."""
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._hit_bundle()), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+
+        disc = json.loads(_read(
+            data, "data/movie/Predators (2010)/predator-4-movie-collection-4k/disc02.json"))
+        assert disc["Index"] == 2
+
+    def test_update_keeps_upstreams_global_disc_id_when_we_lack_one(self):
+        """A record scanned before AACS-ID capture has no GlobalDiscId — and an
+        update that omits the key deletes the value upstream already has."""
+        bundle = self._hit_bundle()
+        bundle["discdb_upstream"]["global_disc_id"] = "D6168C3C41D5A944C7D5A2B27BA54130D0766BFA"
+        with patch("core.discdb_finalize.generate_discdb_bundle", return_value=bundle), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+
+        disc = json.loads(_read(
+            data, "data/movie/Predators (2010)/predator-4-movie-collection-4k/disc02.json"))
+        assert disc["GlobalDiscId"] == "D6168C3C41D5A944C7D5A2B27BA54130D0766BFA"
+        # Where upstream files carry it, so the diff stays clean.
+        keys = list(disc)
+        assert keys.index("GlobalDiscId") == keys.index("ContentHash") + 1
+
+    def test_update_prefers_our_fresh_global_disc_id(self):
+        """When this scan captured the AACS ID itself, ours is contemporaneous
+        with the rip — it wins over the stored upstream value."""
+        bundle = self._hit_bundle(
+            disc={"Index": 1, "Slug": "4k", "Name": "4K", "ContentHash": "ABC",
+                  "GlobalDiscId": "OURS", "Titles": []})
+        bundle["discdb_upstream"]["global_disc_id"] = "THEIRS"
+        with patch("core.discdb_finalize.generate_discdb_bundle", return_value=bundle), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+
+        disc = json.loads(_read(
+            data, "data/movie/Predators (2010)/predator-4-movie-collection-4k/disc02.json"))
+        assert disc["GlobalDiscId"] == "OURS"
+
+    def test_update_does_not_touch_film_level_files(self):
+        """The upstream film dir already has metadata.json/cover.jpg —
+        overwriting theirs from our thinner data would be a regression."""
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._hit_bundle(film_tmdb_id="10195")), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+        assert not any(n.endswith("metadata.json") for n in _names(data))
+
+    def test_update_readme_names_what_gets_replaced(self):
+        """"git status shows only new files" is wrong for an update — the
+        README must say which files overwrite upstream's, what git will show
+        instead, and how to unzip without clobbering the rest of their entry
+        (macOS Finder replaces a folder's contents on drag)."""
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._hit_bundle()), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+
+        readme = _read(data, "README.txt")
+        assert "This is an UPDATE" in readme
+        assert "replaces: disc02.json, disc02-summary.txt" in readme
+        assert "appear as *modified*" in readme
+        assert "macOS Finder" in readme
+
+    def test_a_new_entry_readme_keeps_the_new_files_expectation(self):
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=_bundle()), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+
+        readme = _read(data, "README.txt")
+        assert "only the release directory listed below should appear" in readme
+        assert "This is an UPDATE" not in readme
+        assert "macOS Finder" not in readme
+
+    def test_a_hit_without_coords_falls_back_to_a_live_lookup(self):
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=_bundle(is_discdb_hit=True)), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None), \
+             patch("core.discdb_export._resolve_upstream_coords",
+                   return_value={"film_title": "Predators", "film_year": 2010,
+                                 "release_slug": "predator-4-movie-collection-4k",
+                                 "disc_index": 2}) as resolve:
+            _, data = build_discdb_zip("job1", db=None)
+        resolve.assert_called_once_with("ABC")
+        assert any("predator-4-movie-collection-4k/disc02.json" in n for n in _names(data))
+
+    def test_an_unresolvable_hit_warns_about_the_duplicate_risk(self):
+        """Offline or unknown upstream: export the old way, but say so."""
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=_bundle(is_discdb_hit=True)), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None), \
+             patch("core.discdb_export._resolve_upstream_coords", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+        assert "Check for an existing entry" in _read(data, "README.txt")
+
+
+class TestUpdateMergesOntoUpstream:
+    """An update starts from upstream's committed disc file and lays our data
+    over it — values they have that our record cannot produce (chapter names,
+    per-title descriptions, tracks we failed to parse) must survive the PR."""
+
+    def _hit_bundle(self, **over):
+        return _bundle(
+            is_discdb_hit=True,
+            discdb_upstream={
+                "film_title": "Predators", "film_year": 2010,
+                "release_slug": "predator-4-movie-collection-4k", "disc_index": 2,
+            },
+            **over,
+        )
+
+    THEIRS = {
+        "Index": 2, "Slug": "predators-blu-ray", "Name": "Predators Blu-ray",
+        "ContentHash": "ABC",
+        "Titles": [{
+            "Index": 0, "Comment": "Predators.mkv", "SourceFile": "00800.mpls",
+            "Description": "Exclusive prequel vignettes.",
+            "Tracks": [{"Index": 0, "Name": "Mpeg4 AVC", "Type": "Video"}],
+            "Item": {"Title": "Predators", "Type": "MainMovie", "Chapters": [
+                {"Index": 1, "Title": "Dead Man's Parachute"}]},
+        }],
+    }
+
+    def _zip_disc(self, disc, theirs):
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._hit_bundle(disc=disc)), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None), \
+             patch("core.discdb_export._fetch_upstream_disc_json",
+                   return_value=theirs) as fetch:
+            _, data = build_discdb_zip("job1", db=None)
+        if theirs is not None:
+            fetch.assert_called_once_with(
+                "data/movie/Predators (2010)/predator-4-movie-collection-4k", "disc02")
+        return json.loads(_read(
+            data, "data/movie/Predators (2010)/predator-4-movie-collection-4k/disc02.json"))
+
+    def test_their_values_we_cannot_produce_survive(self):
+        """Live Predators overlay: their hand-written chapter names and title
+        description were deleted because our record has neither."""
+        ours = {"Index": 1, "Slug": "predators-blu-ray", "Name": "Corrected",
+                "ContentHash": "ABC",
+                "Titles": [{"Index": 0, "Comment": "Predators_t00.mkv",
+                            "SourceFile": "00800.mpls", "Tracks": [],
+                            "Item": {"Title": "Predators", "Type": "MainMovie",
+                                     "Chapters": [{"Index": 1, "Title": "Chapter 1"}]}}]}
+        out = self._zip_disc(ours, self.THEIRS)
+        title = out["Titles"][0]
+        assert title["Description"] == "Exclusive prequel vignettes."
+        assert title["Tracks"] == self.THEIRS["Titles"][0]["Tracks"]
+        assert title["Item"]["Chapters"][0]["Title"] == "Dead Man's Parachute"
+
+    def test_our_corrections_still_win(self):
+        ours = {"Index": 1, "Slug": "predators-blu-ray", "Name": "Corrected",
+                "ContentHash": "ABC",
+                "Titles": [{"Index": 0, "Comment": "Predators_t00.mkv",
+                            "SourceFile": "00800.mpls",
+                            "Tracks": [{"Index": 0, "Name": "HEVC", "Type": "Video"}],
+                            "Item": {"Title": "Predators", "Type": "MainMovie",
+                                     "Chapters": [{"Index": 1, "Title": "The Fall"}]}}]}
+        out = self._zip_disc(ours, self.THEIRS)
+        assert out["Name"] == "Corrected"
+        title = out["Titles"][0]
+        assert title["Tracks"][0]["Name"] == "HEVC"
+        assert title["Item"]["Chapters"][0]["Title"] == "The Fall"
+
+    def test_their_filenames_are_never_corrected(self):
+        """Comment is the MakeMKV output filename — environment data that
+        differs between any two rips without upstream being wrong. Their
+        value survives; ours only fills a gap."""
+        ours = {"Index": 1, "Slug": "s", "Name": "N", "ContentHash": "ABC",
+                "Titles": [
+                    {"Index": 0, "Comment": "Predators_t00.mkv", "SourceFile": "00800.mpls"},
+                    {"Index": 1, "Comment": "Predators_t01.mkv", "SourceFile": "00141.mpls"},
+                ]}
+        theirs = {"Index": 2, "Titles": [
+            {"Index": 0, "Comment": "Predators.mkv", "SourceFile": "00800.mpls"},
+            {"Index": 1, "SourceFile": "00141.mpls"},  # theirs has no Comment here
+        ]}
+        out = self._zip_disc(ours, theirs)
+        assert out["Titles"][0]["Comment"] == "Predators.mkv"
+        assert out["Titles"][1]["Comment"] == "Predators_t01.mkv"
+
+    def test_an_update_that_matches_upstream_ships_nothing(self):
+        """If nothing survives the merge as a difference, an 'update' would
+        replace their files with byte-equivalent data plus a fresh log —
+        churn, not a correction."""
+        ours = {"Index": 1, "Slug": "predators-blu-ray", "Name": "Predators Blu-ray",
+                "ContentHash": "ABC",
+                "Titles": [{"Index": 0, "Comment": "Predators_t00.mkv",
+                            "SourceFile": "00800.mpls",
+                            "Tracks": [{"Index": 0, "Name": "Mpeg4 AVC", "Type": "Video"}],
+                            "Item": {"Title": "Predators", "Type": "MainMovie",
+                                     "Chapters": []}}]}
+        theirs = {"Index": 2, "Slug": "predators-blu-ray", "Name": "Predators Blu-ray",
+                  "ContentHash": "ABC",
+                  "Titles": [{"Index": 0, "Comment": "Predators.mkv",
+                              "SourceFile": "00800.mpls",
+                              "Tracks": [{"Index": 0, "Name": "Mpeg4 AVC", "Type": "Video"}],
+                              "Item": {"Title": "Predators", "Type": "MainMovie",
+                                       "Chapters": []}}]}
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._hit_bundle(disc=ours)), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None), \
+             patch("core.discdb_export._fetch_upstream_disc_json", return_value=theirs):
+            _, data = build_discdb_zip("job1", db=None)
+
+        names = _names(data)
+        assert names == ["README.txt"]
+        assert "already matches TheDiscDB's current entry" in _read(data, "README.txt")
+
+    def test_a_title_they_labelled_and_we_ignored_keeps_their_item(self):
+        ours = {"Index": 1, "Slug": "s", "Name": "N", "ContentHash": "ABC",
+                "Titles": [{"Index": 0, "SourceFile": "00800.mpls",
+                            "Item": {"Title": "x.mkv", "Type": "ignore", "Chapters": []}}]}
+        out = self._zip_disc(ours, self.THEIRS)
+        assert out["Titles"][0]["Item"]["Type"] == "MainMovie"
+
+    def test_fetch_failure_ships_our_data_alone(self):
+        ours = {"Index": 1, "Slug": "s", "Name": "Corrected", "ContentHash": "ABC",
+                "Titles": []}
+        out = self._zip_disc(ours, None)
+        assert out["Name"] == "Corrected"
+
+    def test_readme_suggests_a_commit_message_from_the_real_diff(self):
+        """The user asked for exactly this: the README states what got
+        replaced and why — computed against upstream's committed file, so it
+        matches the PR diff line for line."""
+        ours = {"Index": 2, "Slug": "predators-blu-ray", "Name": "Corrected",
+                "ContentHash": "ABC",
+                "Titles": [{"Index": 0, "Comment": "Predators_t00.mkv",
+                            "SourceFile": "00800.mpls",
+                            "Item": {"Title": "Predators", "Type": "MainMovie",
+                                     "Chapters": []}}]}
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._hit_bundle(disc=ours)), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None), \
+             patch("core.discdb_export._fetch_upstream_disc_json",
+                   return_value=self.THEIRS):
+            _, data = build_discdb_zip("job1", db=None)
+
+        readme = _read(data, "README.txt")
+        assert "Suggested commit message" in readme
+        assert "Update Predators (2010)/predator-4-movie-collection-4k disc02" in readme
+        assert ("Update provided by MKV-Auto "
+                "(https://github.com/MKV-Auto/mkv-auto-release)") in readme
+        assert "Replacing: data/movie/Predators (2010)/predator-4-movie-collection-4k" in readme
+        assert '- Name: "Predators Blu-ray" -> "Corrected"' in readme
+        # Filenames are environment data, not corrections — theirs survive the
+        # merge, so no comment lines appear in the message.
+        assert "comment" not in readme.lower().split("suggested commit message")[1]
+
+    def test_change_summary_covers_the_field_classes(self):
+        from core.discdb_export import _update_change_summary
+
+        theirs = {"Name": "Old", "Titles": [
+            {"Index": 0, "Comment": "a.mkv",
+             "Item": {"Type": "Extra", "Title": "X", "Chapters": []}},
+            {"Index": 1, "Comment": "b.mkv"},
+        ]}
+        ours = {"Name": "New", "GlobalDiscId": "D616", "Titles": [
+            {"Index": 0, "Comment": "a_t00.mkv",
+             "Item": {"Type": "DeletedScene", "Title": "X", "Chapters": []}},
+            {"Index": 1, "Comment": "b.mkv"},
+            {"Index": 2, "Comment": "c.mkv", "SourceFile": "00300.mpls"},
+        ]}
+        out = _update_change_summary(ours, theirs)
+        assert 'Name: "Old" -> "New"' in out
+        assert 'GlobalDiscId added: "D616"' in out
+        assert "1 title comment corrected:" in out
+        assert '  title 0: "a.mkv" -> "a_t00.mkv"' in out
+        assert 'title 0: type "Extra" -> "DeletedScene"' in out
+        assert "title 2 added (00300.mpls)" in out
+
+    def test_raw_url_derives_from_the_configured_repo(self):
+        from core.discdb_export import _fetch_upstream_disc_json
+
+        seen = {}
+
+        class _Resp:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"Index": 2}
+
+        with patch("requests.get", side_effect=lambda url, **kw: seen.setdefault("url", url) and _Resp or _Resp) as get:
+            out = _fetch_upstream_disc_json("data/movie/Predators (2010)/x", "disc02")
+        assert out == {"Index": 2}
+        assert seen["url"] == ("https://raw.githubusercontent.com/TheDiscDb/data/main/"
+                               "data/movie/Predators (2010)/x/disc02.json")
+
+    def test_a_non_github_repo_is_skipped_without_a_request(self, monkeypatch):
+        from core.discdb_export import _fetch_upstream_disc_json
+
+        monkeypatch.setenv("THEDISCDB_REPO", "https://git.example.com/mirror/data.git")
+        with patch("requests.get") as get:
+            assert _fetch_upstream_disc_json("data/movie/X", "disc01") is None
+        get.assert_not_called()
+
+
+class TestUpstreamCoordExtraction:
+    """The scan-time capture that makes #753 possible — pulled from the hit
+    query the app already runs, no new API surface."""
+
+    RAW = {"mediaItems": {"nodes": [{
+        "title": "Predators", "year": 2010,
+        "releases": [{
+            "slug": "predator-4-movie-collection-4k",
+            "discs": [
+                {"index": 1, "contentHash": "3EB9D208BA05CEA852B6AF6ABBC85F74"},
+                {"index": 2, "contentHash": "6DA0211ACBB2B02366198D761378E7BF",
+                 "globalDiscId": "D6168C3C41D5A944C7D5A2B27BA54130D0766BFA"},
+            ],
+        }],
+    }]}}
+
+    def test_extracts_the_matched_discs_coordinates(self):
+        from core.disc_manager import extract_upstream_coords
+
+        out = extract_upstream_coords(self.RAW, "6DA0211ACBB2B02366198D761378E7BF")
+        assert out == {
+            "film_title": "Predators", "film_year": 2010,
+            "release_slug": "predator-4-movie-collection-4k", "disc_index": 2,
+            "global_disc_id": "D6168C3C41D5A944C7D5A2B27BA54130D0766BFA",
+        }
+
+    def test_a_disc_without_a_global_id_gets_no_placeholder_key(self):
+        """Old upstream entries and DVDs have none — a null here would read as
+        'delete theirs' downstream."""
+        from core.disc_manager import extract_upstream_coords
+
+        out = extract_upstream_coords(self.RAW, "3EB9D208BA05CEA852B6AF6ABBC85F74")
+        assert out and "global_disc_id" not in out
+
+    def test_hash_match_is_case_insensitive(self):
+        from core.disc_manager import extract_upstream_coords
+
+        out = extract_upstream_coords(self.RAW, "6da0211acbb2b02366198d761378e7bf")
+        assert out and out["disc_index"] == 2
+
+    def test_unknown_hash_or_broken_shape_returns_none(self):
+        from core.disc_manager import extract_upstream_coords
+
+        assert extract_upstream_coords(self.RAW, "DEADBEEF") is None
+        assert extract_upstream_coords({}, "6DA0211ACBB2B02366198D761378E7BF") is None
+        assert extract_upstream_coords(None, None) is None
+
+
+class TestFilmLevelFiles:
+    """#754: every upstream film directory carries metadata.json + cover.jpg
+    beside its release dirs; a new film arriving without them is incomplete."""
+
+    def test_metadata_json_shape_matches_upstream(self):
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=_bundle(film_tmdb_id="10195")), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+
+        meta = json.loads(_read(data, "data/movie/Cinderella Man (2005)/metadata.json"))
+        assert meta["Title"] == "Cinderella Man"
+        assert meta["FullTitle"] == "Cinderella Man (2005)"
+        assert meta["Slug"] == "cinderella-man-2005"
+        assert meta["Type"] == "Movie"
+        assert meta["Year"] == 2005
+        assert meta["ImageUrl"] == "Movie/cinderella-man-2005/cover.jpg"
+        assert meta["ExternalIds"] == {"Tmdb": "10195"}
+
+    def test_film_cover_is_fetched_when_the_movie_has_one(self):
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=_bundle(film_cover_url="https://tmdb/cover.jpg")), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=b"\xff\xd8jpg"):
+            _, data = build_discdb_zip("job1", db=None)
+        assert "data/movie/Cinderella Man (2005)/cover.jpg" in _names(data)
+
+    def test_readme_flags_the_maintainer_side_files(self):
+        """tmdb.json / imdb.json look maintainer-generated — say so instead of
+        silently omitting what every upstream entry visibly has."""
+        with patch("core.discdb_finalize.generate_discdb_bundle", return_value=_bundle()), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+        assert "tmdb.json" in _read(data, "README.txt")
+
+
+class TestBoxsetReferenceFiles:
+    """#755: sets are an index — boxset.json under data/sets/ referencing the
+    member films, never containing disc files."""
+
+    def _boxset_bundle(self):
+        return _bundle(boxset={
+            "name": "John Wick: Chapters 1-3", "sort_title": "John Wick Chapters 1-3",
+            "year": 2020, "slug": "john-wick-chapters-1-3",
+            "upc": "012345678905", "asin": "B08XYZ", "locale": "en-us",
+            "region_code": "1", "release_date": None,
+            "cover_front_url": "https://img/jw-front.jpg", "cover_back_url": None,
+            "disc_refs": [
+                {"Index": 1, "Name": "John Wick", "Format": "Blu-Ray",
+                 "Slug": "john-wick-2014-bd", "TitleSlug": "john-wick-2014"},
+                {"Index": 2, "Name": "John Wick: Chapter 3", "Format": "Blu-Ray",
+                 "Slug": "jw3-bd", "TitleSlug": "john-wick-chapter-3-2019"},
+            ],
+        })
+
+    def test_boxset_json_is_a_reference_file_under_sets(self):
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._boxset_bundle()), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=b"\xff\xd8jpg"):
+            _, data = build_discdb_zip("job1", db=None)
+
+        box = json.loads(_read(data, "data/sets/John Wick- Chapters 1-3 (2020)/boxset.json"))
+        assert box["Slug"] == "john-wick-chapters-1-3"
+        assert box["Upc"] == "012345678905"
+        assert [d["TitleSlug"] for d in box["Discs"]] == [
+            "john-wick-2014", "john-wick-chapter-3-2019",
+        ]
+        # The disc files themselves stay under the member film, not the set.
+        assert not any(n.startswith("data/sets/") and n.endswith(".txt") and "summary" not in n
+                       for n in _names(data))
+        assert "data/sets/John Wick- Chapters 1-3 (2020)/front.jpg" in _names(data)
+
+    def test_the_disc_lands_under_its_member_film_not_the_set(self):
+        with patch("core.discdb_finalize.generate_discdb_bundle",
+                   return_value=self._boxset_bundle()), \
+             patch("core.discdb_export._find_info_log", return_value=None), \
+             patch("core.discdb_export._fetch_image", return_value=None):
+            _, data = build_discdb_zip("job1", db=None)
+        assert "data/movie/Cinderella Man (2005)/2025-4k/disc01.json" in _names(data)
 
 
 class TestSharedReleaseDirectory:
@@ -609,7 +1201,7 @@ class TestExportJobRegistry:
         seen = threading.Event()
         release = threading.Event()
 
-        def slow(db, dest=None, progress=None, should_cancel=None):
+        def slow(db, dest=None, progress=None, should_cancel=None, disc_ids=None):
             seen.set()
             release.wait(5)
             # The builder checks between discs; report what it would have done.

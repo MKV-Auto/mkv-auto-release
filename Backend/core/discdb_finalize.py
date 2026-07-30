@@ -2,12 +2,12 @@ import json
 import logging
 import shutil
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 import requests
 from fastapi import HTTPException
-from core.importbuddy_prefill import parse_copy_log
+from core.importbuddy_prefill import parse_copy_log, parse_copy_log_text
 from core.title_type_normalize import normalize_title_type_for_api
 from core.utils import get_export_root
 
@@ -1148,24 +1148,29 @@ def build_label_payload_from_disc(disc: Any, release: Any) -> Dict[str, Any]:
     return payload
 
 
-def _film_identity(release: Any, label: Dict[str, Any]) -> Dict[str, Any]:
-    """The title and year upstream names a directory with.
+def _stored_raw_log(disc: Any) -> Optional[str]:
+    """The scan's copy of the MakeMKV info log, off ``disc.disc_info``."""
+    info = getattr(disc, "disc_info", None)
+    if not isinstance(info, dict):
+        return None
+    raw = info.get("raw_info_log") or info.get("info_log")
+    if isinstance(raw, list):
+        raw = "\n".join(str(x) for x in raw)
+    return raw if isinstance(raw, str) and raw.strip() else None
 
-    Read off the relations rather than the label payload, because the payload
-    cannot express the boxset case: ``Release.movie_id`` is non-nullable, so a
-    boxset release has a movie too, and ``build_label_payload_from_disc`` fills
-    ``movie_name`` and leaves ``boxset_name`` empty. Upstream files a boxset
-    under the *set's* name and year — ``data/sets/AVP Double Feature (2014)`` —
-    so the set wins whenever there is one.
+
+def _film_identity(release: Any, label: Dict[str, Any]) -> Dict[str, Any]:
+    """The title and year upstream names the film directory with.
+
+    Always the **member film**, never the boxset (#755): verified against
+    TheDiscDb/data, sets are an index — ``data/sets/{Set}/boxset.json`` holds
+    references, while the disc files live under each member film's own
+    directory (their Predator 4-movie collection keeps its discs under
+    ``data/movie/Predators (2010)/…``). The set itself is exported separately
+    as ``boxset.json``.
     """
-    boxset = getattr(release, "boxset", None)
     movie = getattr(release, "movie", None)
 
-    if boxset and (boxset.name or getattr(boxset, "title", None)):
-        return {
-            "film_title": boxset.name or boxset.title,
-            "film_year": getattr(boxset, "year", None),
-        }
     if movie and movie.name:
         return {"film_title": movie.name, "film_year": getattr(movie, "production_year", None)}
     # Series without a movie row, or a release with neither: the release name is
@@ -1202,8 +1207,11 @@ def generate_discdb_bundle(job_id: str, db: Any) -> Dict[str, Any]:
     if (release.type or "").strip().lower() in ("series", "tv") and not label_payload.get("movie_name"):
         label_payload.setdefault("series_name", release.name)
 
-    # The MakeMKV info log enriches titles with parsed chapters/streams when the
-    # job artifacts still exist; after cleanup we degrade to DB-only data.
+    # The MakeMKV info log enriches titles with parsed chapters/streams. The
+    # job artifact is checked first, but artifacts are cleaned up — the scan's
+    # copy on the disc row outlives them, so fall back to it rather than
+    # exporting every title with an empty Tracks list (which, on an update,
+    # would delete the track data upstream already has).
     parsed_log = None
     paths = JobPaths.for_id(str(job.id))
     for cand_dir in (paths.raw, paths.metadata):
@@ -1214,6 +1222,13 @@ def generate_discdb_bundle(job_id: str, db: Any) -> Dict[str, Any]:
             except Exception as exc:
                 logger.warning("bundle: failed to parse %s: %s", cand, exc)
             break
+    if not (parsed_log and parsed_log.get("titles")):
+        stored = _stored_raw_log(disc)
+        if stored:
+            try:
+                parsed_log = parse_copy_log_text(stored)
+            except Exception as exc:
+                logger.warning("bundle: failed to parse stored info log: %s", exc)
 
     release_slug = _normalize_slug(release.slug or label_payload.get("release_slug"), "release")
     disc_slug = _normalize_slug(label_payload.get("disc_slug"), None)
@@ -1223,7 +1238,8 @@ def generate_discdb_bundle(job_id: str, db: Any) -> Dict[str, Any]:
     release_json = _to_release_json(label_payload, release_slug)
     summary_text = _render_disc_summary(disc_json, disc.disc_number, label_payload)
 
-    return {
+    movie = getattr(release, "movie", None)
+    bundle = {
         "schema": "thediscdb-bundle/v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "disc_id": str(disc.id),
@@ -1232,12 +1248,76 @@ def generate_discdb_bundle(job_id: str, db: Any) -> Dict[str, Any]:
         "release_slug": release_slug,
         # The zip export needs these to reconstruct upstream's directory,
         # `data/{kind}/{Film Title (Year)}/{release-slug}`. The film title is the
-        # movie/boxset/series name — NOT the release name, which often carries
+        # member film's name — NOT the release name, which often carries
         # edition wording ("… 4K UHD") that upstream keeps out of the path.
         "release_type": release.type,
         **_film_identity(release, label_payload),
+        # #754: film-level files (metadata.json, cover.jpg) every upstream film
+        # directory carries beside its release dirs.
+        "film_tmdb_id": getattr(movie, "tmdb_id", None) if movie else None,
+        "film_cover_url": getattr(movie, "cover_url", None) if movie else None,
         "release": release_json,
         "disc": disc_json,
         "summary": summary_text,
         "info_log_included": parsed_log is not None,
     }
+
+    # #753: a hit's export is an UPDATE and must land on TheDiscDB's own path.
+    # Coordinates are captured at scan time into disc_info; without them the
+    # exporter falls back to a live lookup, then to the old new-directory shape.
+    if disc.discdb_disc_num is not None:
+        bundle["is_discdb_hit"] = True
+        info = disc.disc_info if isinstance(disc.disc_info, dict) else {}
+        coords = info.get("discdb_upstream")
+        if isinstance(coords, dict):
+            bundle["discdb_upstream"] = coords
+
+    # #755: sets are an index upstream — boxset.json referencing member films,
+    # with disc files under each film. Membership comes from OUR database, so
+    # the reference list is complete even when the archive carries one disc.
+    boxset = getattr(release, "boxset", None)
+    if boxset is not None:
+        refs = []
+        from api import models as _m
+
+        member_releases = (
+            db.query(_m.Release).filter(_m.Release.boxset_id == boxset.id).all()
+        )
+        for mrel in member_releases:
+            ident = _film_identity(mrel, {})
+            for mdisc in sorted(
+                getattr(mrel, "discs", []) or [], key=lambda d: d.disc_number or 0
+            ):
+                refs.append({
+                    "Index": len(refs) + 1,
+                    "Name": ident["film_title"],
+                    "Format": mdisc.format,
+                    "Slug": _normalize_slug(mrel.slug, "release"),
+                    "TitleSlug": _title_slug(ident["film_title"], ident["film_year"]),
+                })
+        bundle["boxset"] = {
+            "name": boxset.name or getattr(boxset, "title", None),
+            "sort_title": getattr(boxset, "sort_title", None),
+            "year": getattr(boxset, "year", None),
+            "slug": _normalize_slug(getattr(boxset, "slug", None), "boxset"),
+            "upc": getattr(boxset, "upc", None),
+            "asin": getattr(boxset, "asin", None),
+            "locale": getattr(boxset, "locale", None),
+            "region_code": getattr(boxset, "region_code", None),
+            "release_date": (
+                boxset.release_date.isoformat() if getattr(boxset, "release_date", None) else None
+            ),
+            "cover_front_url": getattr(boxset, "cover_front_url", None),
+            "cover_back_url": getattr(boxset, "cover_back_url", None),
+            "disc_refs": refs,
+        }
+
+    return bundle
+
+
+def _title_slug(title: Any, year: Any) -> str:
+    """Upstream's film slug: kebab title plus year — `predators-2010`."""
+    import re as _re
+
+    base = _re.sub(r"[^a-z0-9]+", "-", str(title or "").lower()).strip("-") or "unknown"
+    return f"{base}-{year}" if year else base

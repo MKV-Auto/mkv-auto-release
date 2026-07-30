@@ -9,6 +9,18 @@ def parse_copy_log(log_path: Path) -> Dict[str, Any]:
     """
     Parse MakeMKV makemkv/copy log to extract disc label/mount, saved titles, and summary counts.
     """
+    if not log_path.exists():
+        return parse_copy_log_text(None)
+    return parse_copy_log_text(log_path.read_text(encoding="utf-8", errors="ignore"))
+
+
+def parse_copy_log_text(text: Optional[str]) -> Dict[str, Any]:
+    """Same parse over log text instead of a file path.
+
+    The scan persists the raw ``info … -r`` output on the disc row, which
+    outlives job-artifact cleanup — this entry point lets callers parse that
+    stored copy.
+    """
     data: Dict[str, Any] = {
         "disc_label": None,
         "mount_point": None,
@@ -16,13 +28,15 @@ def parse_copy_log(log_path: Path) -> Dict[str, Any]:
         "total_titles_saved": None,
         "skipped_titles": [],
     }
-    if not log_path.exists():
+    if not text:
         return data
 
-    pat_saved = re.compile(r'^MSG:3307,\d+,\d+,"File (\d{5}\.(?:mpls|m2ts)) was added as title #(\d+)"')
+    # `(?:\(\d+\))?` — MakeMKV names an angle copy `00312.mpls(2)`; without it
+    # the second copy never parses and its title exports with no tracks.
+    pat_saved = re.compile(r'^MSG:3307,\d+,\d+,"File (\d{5}\.(?:mpls|m2ts)(?:\(\d+\))?) was added as title #(\d+)"')
     pat_total = re.compile(r'^MSG:5036,\d+,\d+,"Copy complete\. (\d+) titles saved\.')
     pat_drive = re.compile(r'^DRV:\d+,\d+,\d+,\d+,"[^"]*","([^"]*)","([^"]*)"')
-    pat_skipped = re.compile(r'^MSG:(3309|3025),\d+,\d+,"(?:Title|File) #?(\d{5}\.(?:mpls|m2ts)) .*skipped"')
+    pat_skipped = re.compile(r'^MSG:(3309|3025),\d+,\d+,"(?:Title|File) #?(\d{5}\.(?:mpls|m2ts)(?:\(\d+\))?) .*skipped"')
     pat_tinfo = re.compile(r"^TINFO:(\d+),(\d+),(\d+),\"(.*)\"$")
     pat_sinfo = re.compile(r"^SINFO:(\d+),(\d+),(\d+),(\d+),\"(.*)\"$")
 
@@ -30,90 +44,89 @@ def parse_copy_log(log_path: Path) -> Dict[str, Any]:
     tinfo_map: Dict[int, Dict[str, Any]] = {}
     sinfo_map: Dict[int, List[Dict[str, Any]]] = {}
     skipped: List[str] = []
-    with log_path.open("r", encoding="utf-8", errors="ignore") as fh:
-        for line in fh:
-            line = line.strip()
-            m = pat_saved.match(line)
-            if m:
-                fn, tid = m.groups()
-                titles.append({"index": int(tid), "source_file": fn})
-                continue
-            m = pat_tinfo.match(line)
-            if m:
-                idx = int(m.group(1))
-                code = int(m.group(2))
-                message = m.group(4)
-                entry = tinfo_map.setdefault(idx, {})
-                entry.setdefault("index", idx)
-                match code:
-                    case 8:
-                        entry["chapters"] = entry.get("chapters") or []
-                        try:
-                            entry["chapter_count"] = int(message)
-                        except Exception:
-                            pass
-                    case 9:
-                        entry["duration"] = message
-                    case 10:
-                        entry["display_size"] = message
-                    case 11:
-                        try:
-                            entry["size"] = int(message)
-                        except Exception:
-                            entry["size"] = message
-                    case 16:
-                        entry["playlist"] = message
-                    case 26:
-                        entry["segment_map"] = message
-                    case 27:
-                        entry["comment"] = message
-                    case 49:
-                        entry["java_comment"] = message
-                    case 24:
-                        entry["playlist"] = message
-                continue
-            m = pat_sinfo.match(line)
-            if m:
-                track_idx = int(m.group(1))
-                code = int(m.group(3))
-                msg = m.group(5)
-                segs = sinfo_map.setdefault(track_idx, [])
-                seg_entry: Dict[str, Any] = segs[-1] if segs else {}
-                if code == 1:
-                    seg_entry = {"index": int(m.group(2)), "type": msg}
-                    segs.append(seg_entry)
-                elif code == 7:
-                    seg_entry["name"] = msg
-                elif code == 2:
-                    seg_entry["audio_type"] = msg
-                elif code == 3:
-                    seg_entry["language_code"] = msg
-                elif code == 4:
-                    seg_entry["language"] = msg
-                elif code == 19:
-                    seg_entry["resolution"] = msg
-                elif code == 20:
-                    seg_entry["aspect_ratio"] = msg
-                continue
+    for line in text.splitlines():
+        line = line.strip()
+        m = pat_saved.match(line)
+        if m:
+            fn, tid = m.groups()
+            titles.append({"index": int(tid), "source_file": fn})
+            continue
+        m = pat_tinfo.match(line)
+        if m:
+            idx = int(m.group(1))
+            code = int(m.group(2))
+            message = m.group(4)
+            entry = tinfo_map.setdefault(idx, {})
+            entry.setdefault("index", idx)
+            match code:
+                case 8:
+                    entry["chapters"] = entry.get("chapters") or []
+                    try:
+                        entry["chapter_count"] = int(message)
+                    except Exception:
+                        pass
+                case 9:
+                    entry["duration"] = message
+                case 10:
+                    entry["display_size"] = message
+                case 11:
+                    try:
+                        entry["size"] = int(message)
+                    except Exception:
+                        entry["size"] = message
+                case 16:
+                    entry["playlist"] = message
+                case 26:
+                    entry["segment_map"] = message
+                case 27:
+                    entry["comment"] = message
+                case 49:
+                    entry["java_comment"] = message
+                case 24:
+                    entry["playlist"] = message
+            continue
+        m = pat_sinfo.match(line)
+        if m:
+            track_idx = int(m.group(1))
+            code = int(m.group(3))
+            msg = m.group(5)
+            segs = sinfo_map.setdefault(track_idx, [])
+            seg_entry: Dict[str, Any] = segs[-1] if segs else {}
+            if code == 1:
+                seg_entry = {"index": int(m.group(2)), "type": msg}
+                segs.append(seg_entry)
+            elif code == 7:
+                seg_entry["name"] = msg
+            elif code == 2:
+                seg_entry["audio_type"] = msg
+            elif code == 3:
+                seg_entry["language_code"] = msg
+            elif code == 4:
+                seg_entry["language"] = msg
+            elif code == 19:
+                seg_entry["resolution"] = msg
+            elif code == 20:
+                seg_entry["aspect_ratio"] = msg
+            continue
 
-            m = pat_total.match(line)
-            if m:
-                try:
-                    data["total_titles_saved"] = int(m.group(1))
-                except ValueError:
-                    pass
-                continue
+        m = pat_total.match(line)
+        if m:
+            try:
+                data["total_titles_saved"] = int(m.group(1))
+            except ValueError:
+                pass
+            continue
 
-            m = pat_skipped.match(line)
-            if m:
-                skipped.append(m.group(2))
-                continue
+        m = pat_skipped.match(line)
+        if m:
+            skipped.append(m.group(2))
+            continue
 
-            m = pat_drive.match(line)
-            if m and not data["mount_point"]:
-                label, mount = m.groups()
-                data["disc_label"] = label or None
-                data["mount_point"] = mount or None
+        m = pat_drive.match(line)
+        if m and not data["mount_point"]:
+            label, mount = m.groups()
+            data["disc_label"] = label or None
+            data["mount_point"] = mount or None
 
     # merge tinfo/sinfo into titles
     merged: List[Dict[str, Any]] = []

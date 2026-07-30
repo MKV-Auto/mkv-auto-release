@@ -431,6 +431,39 @@ def backfill_tmdb_suggestions_for_unlabeled_discs(db, max_discs: int = 50) -> Di
     return {"scanned": scanned, "updated": updated, "seeded": seeded}
 
 
+def extract_upstream_coords(raw_db_query: dict, content_hash: str) -> dict | None:
+    """Pull TheDiscDB's own location for the matched disc out of the hit query.
+
+    Returns ``{film_title, film_year, release_slug, disc_index}`` — enough to
+    reconstruct ``data/movie/{Film (Year)}/{release_slug}/disc{NN}`` — or None
+    when the shape is unexpected. ``global_disc_id`` rides along when upstream
+    has one, so an update from a record that predates AACS-ID capture keeps
+    their value instead of deleting it. Best-effort by design: a miss here only
+    means an update exports the old way (as a new release directory).
+    """
+    try:
+        nodes = (raw_db_query or {}).get("mediaItems", {}).get("nodes") or []
+        for node in nodes:
+            for release in node.get("releases") or []:
+                for disc in release.get("discs") or []:
+                    if (disc.get("contentHash") or "").upper() == (content_hash or "").upper():
+                        idx = disc.get("index")
+                        if idx is None or not release.get("slug") or not node.get("title"):
+                            return None
+                        coords = {
+                            "film_title": node["title"],
+                            "film_year": node.get("year"),
+                            "release_slug": release["slug"],
+                            "disc_index": int(idx),
+                        }
+                        if disc.get("globalDiscId"):
+                            coords["global_disc_id"] = disc["globalDiscId"]
+                        return coords
+    except Exception as exc:  # noqa: BLE001 - shape drift must not break scans
+        logger.warning("Could not extract upstream coords: %s", exc)
+    return None
+
+
 def query_discdb(content_hash: str) -> Dict[str, Any]:
     """
     Query DiscDB API for disc metadata.
@@ -517,6 +550,13 @@ def query_discdb(content_hash: str) -> Dict[str, Any]:
             result["discdb_boxset"] = discdb_boxset
         if matched_disc_index is not None:
             result["discdb_disc_num"] = matched_disc_index
+        # #753: upstream coordinates, captured while the lookup has them in
+        # hand. An update export must overwrite TheDiscDB's existing files —
+        # data/movie/{their film dir}/{their release slug}/disc{their index} —
+        # or it lands as a duplicate sibling release instead of a correction.
+        coords = extract_upstream_coords(raw_db_query, content_hash)
+        if coords:
+            result["discdb_upstream"] = coords
         app_settings.apply_discdb_miss_workflow_prefill_to_payload(result)
         return result
     except Exception as exc:

@@ -48,8 +48,50 @@
         (click)="selectTab('boxsets')">
         Boxsets ({{ tabCounts.boxsets }})
       </button>
+      <!-- #741: appears only while something is exportable — no dead chrome
+           when the library is fully contributed. -->
+      <button
+        *ngIf="eligibleCount > 0"
+        type="button"
+        class="library-tab library-tab--contrib"
+        [class.is-active]="activeTab === 'contribute'"
+        (click)="selectTab('contribute')">
+        ⬆ Contribute ({{ eligibleCount }})
+      </button>
     </nav>
   </header>
+
+  <!-- #741: contribution strip. Count comes from the same endpoint the export
+       uses, so what it says is what "Export all" will do. Hidden while on the
+       Contribute tab (the tab IS the strip's content there) and after dismiss. -->
+  <div *ngIf="eligibleCount > 0 && !stripDismissed && activeTab !== 'contribute' && !exportJob"
+       class="library-contrib-strip">
+    <span class="library-contrib-strip__icon" aria-hidden="true">⬆</span>
+    <p class="library-contrib-strip__text">{{ stripText }}</p>
+    <button type="button" class="library-contrib-strip__btn" (click)="startExport()">
+      Export all {{ eligibleCount }}
+    </button>
+    <button type="button" class="library-contrib-strip__dismiss" (click)="stripDismissed = true"
+            aria-label="Dismiss">✕</button>
+  </div>
+
+  <!-- Export progress: shown for any running export, scoped or full. -->
+  <div *ngIf="exportJob" class="library-contrib-strip library-contrib-strip--busy">
+    <span class="library-contrib-strip__icon" aria-hidden="true">⬆</span>
+    <p class="library-contrib-strip__text">
+      Exporting to TheDiscDB…
+      <ng-container *ngIf="exportJob.total > 0">{{ exportJob.done }} of {{ exportJob.total }}</ng-container>
+      <span *ngIf="exportJob.current" class="library-contrib-strip__current"> — {{ exportJob.current }}</span>
+    </p>
+    <button type="button" class="library-contrib-strip__dismiss" (click)="cancelExport()"
+            aria-label="Cancel export">Cancel</button>
+  </div>
+  <div *ngIf="exportResult" class="library-contrib-strip library-contrib-strip--done">
+    <span class="library-contrib-strip__icon" aria-hidden="true">✓</span>
+    <p class="library-contrib-strip__text">{{ exportResult }}</p>
+    <button type="button" class="library-contrib-strip__dismiss" (click)="exportResult = null"
+            aria-label="Dismiss">✕</button>
+  </div>
 
   <section class="library-content">
     <!-- Loading / error / empty states. -->
@@ -70,6 +112,9 @@
         [boxset]="bs"
         [releases]="getReleasesForBoxset(bs.id)"
         [releaseDiscs]="releaseDiscs"
+        [eligibleDiscIds]="eligibleDiscIds"
+        [updateDiscIds]="updateDiscIds"
+        (exportDiscs)="startExport($event)"
         (updated)="onBoxsetUpdated($event)"
         (deleted)="onBoxsetDeleted($event)"
         (releaseUpdated)="onReleaseUpdated($event)"
@@ -81,6 +126,9 @@
         *ngFor="let rel of visibleReleases; trackBy: trackByReleaseId"
         [release]="rel"
         [discs]="getReleaseDiscs(rel)"
+        [eligibleDiscIds]="eligibleDiscIds"
+        [updateDiscIds]="updateDiscIds"
+        (exportDiscs)="startExport($event)"
         (updated)="onReleaseUpdated($event)"
         (deleted)="onReleaseDeleted($event)"
         (discOpen)="onDiscOpen($event)">
@@ -94,6 +142,49 @@
     </div>
     <div *ngIf="loading && releases.length > 0" class="library-status">Loading more…</div>
   </section>
+</div>
+
+<!-- Shown once a finished export contained updates: the zip's files land on
+     top of files TheDiscDB already has, and nobody should discover that from
+     a surprise git diff. Mirrors the zip README's update section. -->
+<div *ngIf="exportUpdates" class="library-export-updates-backdrop" (click)="dismissExportUpdates()">
+  <div class="library-export-updates" role="dialog" aria-modal="true"
+       aria-label="This export updates existing TheDiscDB entries"
+       (click)="$event.stopPropagation()">
+    <header class="library-export-updates__head">
+      <h2>This export updates existing TheDiscDB entries</h2>
+      <button type="button" class="library-export-updates__close"
+              (click)="dismissExportUpdates()" aria-label="Close">✕</button>
+    </header>
+    <p class="library-export-updates__intro">
+      The files below <strong>replace copies that already exist</strong> in
+      TheDiscDb/data — after unzipping, <code>git status</code> shows them as
+      <em>modified</em>, which is what a correction should look like.
+    </p>
+    <div class="library-export-updates__entry" *ngFor="let u of exportUpdates">
+      <p class="library-export-updates__target">{{ u.target }}</p>
+      <p class="library-export-updates__files">replaces {{ u.files.join(', ') }}</p>
+      <div class="library-export-updates__commit-wrap">
+        <button type="button" class="library-export-updates__copy"
+                (click)="copyCommitMessage(u)"
+                [attr.aria-label]="'Copy commit message for ' + u.target"
+                title="Copy commit message">
+          {{ copiedCommitTarget === u.target ? '✓ copied' : '⧉ copy' }}
+        </button>
+        <pre class="library-export-updates__commit">{{ commitMessageFor(u) }}</pre>
+      </div>
+    </div>
+    <p class="library-export-updates__warn">
+      Merge, don't replace: <code>unzip</code> and Windows Explorer merge
+      folders into place, but macOS Finder replaces a folder's entire contents
+      when you drag one onto another. On a Mac, unzip from a terminal. The
+      zip's README repeats all of this, with the commit message ready to paste.
+    </p>
+    <footer class="library-export-updates__foot">
+      <button type="button" class="library-export-updates__ok"
+              (click)="dismissExportUpdates()">Got it</button>
+    </footer>
+  </div>
 </div>
 
 <!-- Phase 4: disc drawer overlay. Hosted at page root so it floats above

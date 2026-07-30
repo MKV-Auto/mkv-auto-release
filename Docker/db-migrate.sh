@@ -67,8 +67,29 @@ done
 [ "$ready" = "1" ] || log "pg_isready never succeeded; attempting migration anyway"
 
 # 2) Determine current vs head revision.
+#
+# "alembic current" exits 0 with EMPTY output on a genuinely fresh database,
+# and non-zero when it cannot read the revision at all (auth failure, missing
+# table privileges, Postgres mid-start). Those two must never be conflated:
+# treating "unreadable" as "fresh" skips the backup and migrates a database we
+# could not even read — found live in the 1.2.0-rc.1 rehearsal (#757).
 rev_token() { grep -viE 'INFO|WARNING|ERROR|^[[:space:]]*$' | tail -1 | awk '{print $1}'; }
-CUR="$("$ALEMBIC" current 2>/dev/null | rev_token)"
+CUR=""
+CUR_OK=0
+for _ in 1 2 3 4 5; do
+  if CUR_RAW="$("$ALEMBIC" current 2>/tmp/db-migrate-current.err)"; then
+    CUR="$(printf '%s\n' "$CUR_RAW" | rev_token)"
+    CUR_OK=1
+    break
+  fi
+  sleep 2
+done
+if [ "$CUR_OK" != "1" ]; then
+  log "ERROR: cannot read the current DB revision — refusing to guess:"
+  tail -3 /tmp/db-migrate-current.err 2>/dev/null | sed 's/^/[db-migrate]   /'
+  printf 'could not read the current DB revision; refused to migrate.\nSee /tmp/db-migrate-current.err inside the container.\n' > "$SENTINEL"
+  exit 1
+fi
 HEAD="$("$ALEMBIC" heads 2>/dev/null | rev_token)"
 log "current=${CUR:-<none>} head=${HEAD:-<unknown>}"
 
@@ -100,13 +121,16 @@ else
   log "fresh database (no prior revision) — migrating without backup"
 fi
 
-# 4) Migrate.
-if "$ALEMBIC" upgrade head; then
+# 4) Migrate. Capture the exit status directly: `rc=$?` after an `if` whose
+# body did not run is 0 by definition, which turned every failure into a clean
+# supervisor exit (#757). Only the API sentinel gate caught it.
+"$ALEMBIC" upgrade head
+rc=$?
+if [ "$rc" -eq 0 ]; then
   log "migration succeeded (${CUR:-base} -> ${HEAD:-head})"
   rm -f "$SENTINEL" 2>/dev/null || true
   exit 0
 fi
-rc=$?
 log "MIGRATION FAILED (rc=$rc)."
 {
   printf 'alembic upgrade head FAILED (rc=%s) from=%s to=%s.\n' "$rc" "${CUR:-base}" "${HEAD:-head}"

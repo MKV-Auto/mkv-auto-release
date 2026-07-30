@@ -47,7 +47,7 @@ function makeSystemServiceSpy(): jasmine.SpyObj<SystemService> {
   return spy;
 }
 
-describe('SettingsPageComponent (#741 DiscDB submission export)', () => {
+describe('SettingsPageComponent (#741 DiscDB submission export — own section)', () => {
   let fixture: ComponentFixture<SettingsPageComponent>;
   let component: SettingsPageComponent;
   let spy: jasmine.SpyObj<SystemService>;
@@ -71,7 +71,7 @@ describe('SettingsPageComponent (#741 DiscDB submission export)', () => {
     }).compileComponents();
     fixture = TestBed.createComponent(SettingsPageComponent);
     component = fixture.componentInstance;
-    component.activeTab = 'export';
+    component.activeTab = 'discdb';
     fixture.detectChanges();
     spyOn(URL, 'createObjectURL').and.returnValue('blob:x');
     spyOn(URL, 'revokeObjectURL');
@@ -79,6 +79,22 @@ describe('SettingsPageComponent (#741 DiscDB submission export)', () => {
   });
 
   afterEach(() => component.ngOnDestroy());
+
+  it('lives in its own section, not inside Export / Import', () => {
+    // Sandwiched between backup-export and import, a contribution tool read as
+    // part of user-data backup. It is not: it produces a public submission.
+    expect(fixture.nativeElement.textContent).toContain('TheDiscDB submissions');
+
+    component.activeTab = 'export';
+    fixture.detectChanges();
+    const exportTab = fixture.nativeElement.textContent;
+    expect(exportTab).not.toContain('Export DiscDB submissions');
+  });
+
+  it('has its own sidebar entry', () => {
+    expect(component.nav.some(n => n.id === 'discdb' && n.label === 'TheDiscDB')).toBe(true);
+  });
+
 
   it('shows progress against a total while the export runs', fakeAsync(() => {
     spy.startDiscDbExport.and.returnValue(of(job() as any));

@@ -71,9 +71,9 @@
           PATCH path; they fail-soft if the server rejects them.
         </p>
 
-        <!-- #86: manual contribution export — misses only (hits came from
-             TheDiscDB, nothing new to contribute). Downloads the JSON
-             bundle; submission itself stays manual in v1. -->
+        <!-- #741: manual contribution export for ANY disc, hits included —
+             the drawer is the human override for upstream data that is stale
+             in ways dirty-detection cannot see. Downloads the submission zip. -->
         <div *ngIf="canExportDiscDbBundle" class="library-disc-drawer__field">
           <button type="button"
                   class="library-disc-drawer__export"

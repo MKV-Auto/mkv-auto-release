@@ -1509,6 +1509,9 @@ def _extract_disc_scan_info(payload: dict) -> dict:
         # a re-query. label_draft_seed is consumed by persist_disc_scan_with_discdb
         # to seed disc.label_draft on first insert; it is NOT stored on disc_info.
         'tmdb_suggestion',
+        # #753: TheDiscDB's own location for a matched disc, so an update
+        # export can overwrite their entry instead of duplicating it.
+        'discdb_upstream',
     ]
     
     disc_info = {}

@@ -31,7 +31,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Subject, debounceTime, takeUntil } from 'rxjs';
+import { Subject, Subscription, debounceTime, interval, switchMap, takeUntil } from 'rxjs';
 
 import {
   MetadataService,
@@ -42,11 +42,12 @@ import {
   LibraryPageResponse,
 } from '../../services/metadata.service';
 import { LoggerService } from '../../services/logger.service';
+import { DiscDbExportJob, DiscDbExportUpdate, SystemService } from '../../services/system.service';
 import { LibraryReleaseCardComponent } from '../../components/library-release-card/library-release-card.component';
 import { LibraryBoxsetCardComponent } from '../../components/library-boxset-card/library-boxset-card.component';
 import { LibraryDiscDrawerComponent } from '../../components/library-disc-drawer/library-disc-drawer.component';
 
-type LibraryTab = 'all' | 'movies' | 'series' | 'boxsets';
+type LibraryTab = 'all' | 'movies' | 'series' | 'boxsets' | 'contribute';
 
 @Component({
   selector: 'app-library-page',
@@ -59,6 +60,7 @@ type LibraryTab = 'all' | 'movies' | 'series' | 'boxsets';
 export class LibraryPageComponent implements OnInit, OnDestroy {
   private readonly metadataSvc = inject(MetadataService);
   private readonly logger = inject(LoggerService);
+  private readonly systemSvc = inject(SystemService);
   private readonly destroy$ = new Subject<void>();
   private readonly searchInput$ = new Subject<string>();
 
@@ -103,13 +105,28 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
         const t = (rel.type ?? '').toLowerCase();
         return t === 'series' || t === 'tv';
       }
+      // #741: Contribute shows only entries with something left to export.
+      if (this.activeTab === 'contribute') {
+        return this.releaseHasEligibleDisc(rel);
+      }
       return this.activeTab !== 'boxsets';
     });
   }
 
   get visibleBoxsets(): BoxsetSummary[] {
+    if (this.activeTab === 'contribute') {
+      return this.boxsets.filter((bs) =>
+        this.getReleasesForBoxset(bs.id).some((rel) => this.releaseHasEligibleDisc(rel)),
+      );
+    }
     if (this.activeTab !== 'all' && this.activeTab !== 'boxsets') return [];
     return this.boxsets;
+  }
+
+  private releaseHasEligibleDisc(rel: ReleaseSummary): boolean {
+    return (this.releaseDiscs[String(rel.id)] ?? []).some(
+      (d) => d.id && this.eligibleDiscIds.has(String(d.id)),
+    );
   }
 
   ngOnInit(): void {
@@ -120,15 +137,185 @@ export class LibraryPageComponent implements OnInit, OnDestroy {
         this.resetAndLoad();
       });
     this.resetAndLoad();
+    this.loadEligible();
   }
 
   ngOnDestroy(): void {
+    this.exportPollSub?.unsubscribe();
     this.destroy$.next();
     this.destroy$.complete();
   }
 
   onSearchInput(term: string): void {
     this.searchInput$.next(term);
+  }
+
+  // ── #741: TheDiscDB contribution surface ────────────────────────────────
+  // The count and the chips come from the same endpoint the export uses, so
+  // what the UI offers is by construction what "Export all" will do.
+  eligibleDiscIds: ReadonlySet<string> = new Set();
+  /** Dirty hits: already in TheDiscDB, but the user corrected data locally —
+   *  exported as updates. Subset of eligibleDiscIds. */
+  updateDiscIds: ReadonlySet<string> = new Set();
+  eligibleCount = 0;
+  newCount = 0;
+  updateCount = 0;
+
+  get stripText(): string {
+    const news = this.newCount;
+    const ups = this.updateCount;
+    const newPart = news > 0
+      ? `${news} disc${news === 1 ? " isn't" : "s aren't"} in TheDiscDB yet`
+      : '';
+    const upPart = ups > 0
+      ? `${ups} ${ups === 1 ? 'has' : 'have'} local changes TheDiscDB doesn't`
+      : '';
+    const both = newPart && upPart ? `${newPart} and ${upPart}` : newPart || upPart;
+    return `${both} — export ${this.eligibleCount === 1 ? 'it' : 'them'} so other users get accurate identification`;
+  }
+  stripDismissed = false;
+  exportJob: DiscDbExportJob | null = null;
+  exportResult: string | null = null;
+  /** Set when a finished export overwrote upstream entries: the dialog tells
+   *  the user which files get replaced and hands them a commit message,
+   *  mirroring the zip README's update section. */
+  exportUpdates: DiscDbExportUpdate[] | null = null;
+  private exportPollSub?: Subscription;
+
+  private loadEligible(): void {
+    this.systemSvc.getDiscDbEligible().subscribe({
+      next: (res) => {
+        this.eligibleDiscIds = new Set(res.disc_ids);
+        this.updateDiscIds = new Set(res.update_disc_ids ?? []);
+        this.eligibleCount = res.count;
+        this.newCount = res.new_count ?? res.count;
+        this.updateCount = res.update_count ?? 0;
+        // The tab vanishes when its content does; do not strand the user on it.
+        if (this.eligibleCount === 0 && this.activeTab === 'contribute') {
+          this.activeTab = 'all';
+        }
+      },
+      // Failure costs the strip and chips, never the library itself.
+      error: () => {
+        this.eligibleDiscIds = new Set();
+        this.eligibleCount = 0;
+      },
+    });
+  }
+
+  /** Start an export — scoped to disc ids from a card menu, or the whole
+   *  library from the strip. The page owns the one poller. */
+  startExport(discIds?: string[]): void {
+    if (this.exportJob) return; // serialized server-side; do not stack requests
+    this.exportResult = null;
+    this.systemSvc.startDiscDbExport(discIds).subscribe({
+      next: (job) => {
+        this.exportJob = job;
+        this.pollExport(job.job_id);
+      },
+      error: (err) => {
+        this.exportResult = err?.error?.detail || 'Export failed to start';
+      },
+    });
+  }
+
+  cancelExport(): void {
+    if (!this.exportJob) return;
+    this.systemSvc.cancelDiscDbExport(this.exportJob.job_id).subscribe({
+      next: () => {},
+      error: () => {},
+    });
+  }
+
+  private pollExport(jobId: string): void {
+    this.exportPollSub?.unsubscribe();
+    this.exportPollSub = interval(1000)
+      .pipe(switchMap(() => this.systemSvc.getDiscDbExportStatus(jobId)))
+      .subscribe({
+        next: (job) => {
+          this.exportJob = job;
+          if (job.status === 'completed') {
+            this.exportPollSub?.unsubscribe();
+            this.downloadExport(job);
+          } else if (job.status === 'failed') {
+            this.exportPollSub?.unsubscribe();
+            this.exportJob = null;
+            this.exportResult = job.error || 'Export failed';
+          }
+        },
+        error: () => {
+          this.exportPollSub?.unsubscribe();
+          this.exportJob = null;
+          this.exportResult = 'Export failed';
+        },
+      });
+  }
+
+  private downloadExport(job: DiscDbExportJob): void {
+    this.systemSvc.downloadDiscDbExport(job.job_id).subscribe({
+      next: ({ blob, filename }) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        this.exportJob = null;
+        this.exportResult =
+          `${job.included} disc${job.included === 1 ? '' : 's'} exported` +
+          (job.skipped ? ` — ${job.skipped} skipped, see README.txt in the zip` : '') +
+          '. Unzip it over your fork of TheDiscDb/data and open a pull request.';
+        this.exportUpdates = job.updates?.length ? job.updates : null;
+        // Exported discs are stamped, and the eligible set may have changed.
+        this.loadEligible();
+      },
+      error: (err) => {
+        this.exportJob = null;
+        this.exportResult = err?.error?.detail || 'Download failed — the archive is still on the server (Settings → TheDiscDB).';
+      },
+    });
+  }
+
+  dismissExportUpdates(): void {
+    this.exportUpdates = null;
+    this.copiedCommitTarget = null;
+  }
+
+  /** The same suggested commit message the zip's README carries: attribution,
+   *  what gets replaced, and every correction with the prior value. Must stay
+   *  in step with core/discdb_export.py::_suggested_commit_message. */
+  commitMessageFor(u: DiscDbExportUpdate): string {
+    const bullets = u.changes.map((c) =>
+      c.startsWith('  ') ? `      ${c.trimStart()}` : `  - ${c}`,
+    );
+    const lines = [
+      u.subject,
+      '',
+      'Update provided by MKV-Auto (https://github.com/MKV-Auto/mkv-auto-release)',
+      '',
+      `Replacing: ${u.target}`,
+      `  ${u.files.join(', ')}`,
+    ];
+    if (bullets.length) lines.push('', 'Corrections:', ...bullets);
+    return lines.join('\n');
+  }
+
+  /** Which update's commit message was just copied — drives the ✓ flash. */
+  copiedCommitTarget: string | null = null;
+
+  copyCommitMessage(u: DiscDbExportUpdate): void {
+    const text = this.commitMessageFor(u);
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        this.copiedCommitTarget = u.target;
+        setTimeout(() => {
+          if (this.copiedCommitTarget === u.target) this.copiedCommitTarget = null;
+        }, 2000);
+      },
+      () => {},
+    );
   }
 
   selectTab(tab: LibraryTab): void {

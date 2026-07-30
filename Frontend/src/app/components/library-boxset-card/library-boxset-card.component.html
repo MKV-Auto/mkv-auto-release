@@ -19,6 +19,14 @@
         {{ releaseCount }} release{{ releaseCount === 1 ? '' : 's' }}
         · {{ discCount }} disc{{ discCount === 1 ? '' : 's' }}
       </div>
+      <!-- #741: the set-level split — a mixed set shows all three states. -->
+      <div class="library-boxset-card__chips">
+        <span *ngIf="readyCount > 0" class="library-boxset-card__chip library-boxset-card__chip--amber">⬆ {{ readyCount }} ready</span>
+        <span *ngIf="changedCount > 0" class="library-boxset-card__chip library-boxset-card__chip--amber"
+              title="In TheDiscDB, but your local edits differ — exporting submits updates">↻ {{ changedCount }} changed</span>
+        <span *ngIf="inDbCount > 0 && changedCount === 0" class="library-boxset-card__chip library-boxset-card__chip--teal">✓ {{ inDbCount }} in DiscDB</span>
+      </div>
+
     </div>
 
     <!-- EDIT MODE -->
@@ -71,19 +79,17 @@
       </div>
     </form>
 
+    <!-- #741 UI: same kebab treatment as release cards. The export item is
+         count-aware and skips discs already in TheDiscDB, so a mixed set never
+         surprises. -->
     <div *ngIf="!editing" class="library-boxset-card__actions">
       <button type="button"
-              class="library-boxset-card__btn"
-              (click)="startEdit()"
-              aria-label="Edit boxset">
-        ✎ Edit
-      </button>
-      <button type="button"
-              class="library-boxset-card__btn library-boxset-card__btn--danger"
-              (click)="confirmDelete()"
-              aria-label="Delete boxset">
-        🗑 Delete
-      </button>
+              class="library-boxset-card__kebab"
+              [class.is-open]="menuOpen"
+              (click)="toggleMenu($event)"
+              [attr.aria-expanded]="menuOpen"
+              aria-haspopup="menu"
+              aria-label="Boxset actions">⋯</button>
       <button type="button"
               class="library-boxset-card__expand"
               (click)="toggleExpanded()"
@@ -91,6 +97,25 @@
               [attr.aria-label]="(expanded ? 'Collapse' : 'Expand') + ' release list'">
         <span class="library-boxset-card__chev" [class.is-open]="expanded">▾</span>
       </button>
+
+      <div *ngIf="menuOpen" class="library-boxset-card__menu" role="menu">
+        <button type="button" class="library-boxset-card__menu-item"
+                (click)="onMenuEdit($event)" role="menuitem">
+          <span aria-hidden="true">✎</span> Edit boxset
+        </button>
+        <button *ngIf="exportableDiscCount > 0" type="button"
+                class="library-boxset-card__menu-item"
+                (click)="onMenuExport($event)" role="menuitem">
+          <span aria-hidden="true">⬆</span>
+          Export set to TheDiscDB ({{ exportableDiscCount }} {{ exportableDiscCount === 1 ? 'disc' : 'discs' }})
+        </button>
+        <div class="library-boxset-card__menu-div" aria-hidden="true"></div>
+        <button type="button"
+                class="library-boxset-card__menu-item library-boxset-card__menu-item--danger"
+                (click)="onMenuDelete($event)" role="menuitem">
+          <span aria-hidden="true">🗑</span> Delete boxset…
+        </button>
+      </div>
     </div>
   </div>
 
@@ -104,6 +129,9 @@
       [release]="rel"
       [discs]="getDiscsForRelease(rel)"
       [nested]="true"
+      [eligibleDiscIds]="eligibleDiscIds"
+      [updateDiscIds]="updateDiscIds"
+      (exportDiscs)="exportDiscs.emit($event)"
       (updated)="onReleaseUpdated($event)"
       (deleted)="onReleaseDeleted($event)"
       (discOpen)="onDiscOpen($event)">

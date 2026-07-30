@@ -221,44 +221,21 @@ class TestEndToEndRipFlow:
 class TestConcurrentOperationsE2E:
     """Test concurrent operations end-to-end."""
     
-    def test_concurrent_rip_requests_e2e(self, client, e2e_test_environment):
-        """Test concurrent rip requests with full mocking."""
-        import threading
-        
-        db = e2e_test_environment["db"]
-        results = []
-        errors = []
-        
-        def make_request():
-            try:
-                response = client.post(
-                    "/jobs/rip",
-                    json={
-                        "disc_num": "1",
-                        "mount_point": "/dev/sr0",
-                        "mode": "copy"
-                    }
-                )
-                if response.status_code == 200:
-                    results.append(response.json()["jobId"])
-                else:
-                    errors.append(response.status_code)
-            except Exception as e:
-                errors.append(str(e))
-        
-        # Start 5 concurrent requests
-        threads = [threading.Thread(target=make_request) for _ in range(5)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        
-        # All requests should complete
-        assert len(results) + len(errors) == 5
-        
-        # Results should have valid job IDs when present
-        if results:
-            assert all(results)
+    @pytest.mark.asyncio
+    async def test_concurrent_rip_requests_e2e(self, client, e2e_test_environment):
+        """Concurrent rip requests with full mocking: every request completes,
+        and successes carry valid job ids. (#748 rewrite: bounded event-loop
+        gather instead of threads over the sync TestClient.)"""
+        from tests.async_requests import gather_requests
+
+        body = {"disc_num": "1", "mount_point": "/dev/sr0", "mode": "copy"}
+        responses = await gather_requests(
+            client.app, [("POST", "/jobs/rip", {"json": body})] * 5
+        )
+
+        assert len(responses) == 5
+        job_ids = [r.json()["jobId"] for r in responses if r.status_code == 200]
+        assert all(job_ids)
 
 
 class TestStateManagementE2E:

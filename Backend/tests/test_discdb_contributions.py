@@ -157,8 +157,49 @@ def test_bundle_defaults_to_a_zip_laid_out_for_upstream(client, test_db):
     assert data_files, names
     assert all(n.startswith("data/") for n in data_files), names
     assert {n.rsplit("/", 1)[1] for n in data_files} == {
+        "metadata.json",  # film-level, since this film is new to TheDiscDB
         "release.json", "disc01.json", "disc01-summary.txt",
     }
+
+
+def test_bundle_parses_tracks_from_the_stored_scan_log(client, test_db):
+    """Job artifacts get cleaned up, but the scan's log copy on the disc row
+    outlives them. Without this fallback every title exported with an empty
+    Tracks list — which, on an update, deletes the track data upstream has
+    (found live on the Predators overlay)."""
+    stored_log = "\n".join([
+        'MSG:3307,0,2,"File 00800.mpls was added as title #0","%1","00800.mpls","0"',
+        'TINFO:0,9,0,"1:46:53"',
+        'TINFO:0,26,0,"800"',
+        'SINFO:0,0,1,6201,"Video"',
+        'SINFO:0,0,7,0,"Mpeg4 AVC High@L4.1"',
+        'SINFO:0,0,19,0,"1920x1080"',
+        'SINFO:0,1,1,6202,"Audio"',
+        'SINFO:0,1,7,0,"DTS-HD Master Audio"',
+        'SINFO:0,1,3,0,"eng"',
+        'SINFO:0,1,4,0,"English"',
+        # An angle copy — MakeMKV suffixes the source file. The Predators disc
+        # proved the old regex never parsed these, so the title lost its tracks.
+        'MSG:3307,0,2,"File 00312.mpls(2) was added as title #1","%1","00312.mpls(2)","1"',
+        'SINFO:1,0,1,6201,"Video"',
+        'SINFO:1,0,7,0,"Mpeg2"',
+    ])
+    with test_db() as session:
+        disc_id, _ = _seed_labeled_disc(session)
+        disc = session.get(models.Disc, disc_id)
+        disc.disc_info = {"raw_info_log": stored_log}
+        session.query(models.DiscTitle).filter_by(disc_id=disc_id).update({"index": 0})
+        session.commit()
+
+    resp = client.get(f"/discdb/contributions/{disc_id}/bundle?format=json")
+    assert resp.status_code == 200, resp.text
+    titles = resp.json()["disc"]["Titles"]
+    main = next(t for t in titles if t.get("SourceFile") == "00800.mpls")
+    types = {tr.get("Type") for tr in main["Tracks"]}
+    assert {"Video", "Audio"} <= types, main["Tracks"]
+    assert any(tr.get("Language") == "English" for tr in main["Tracks"])
+    angle = next(t for t in titles if t.get("SourceFile") == "00312.mpls(2)")
+    assert [tr.get("Type") for tr in angle["Tracks"]] == ["Video"]
 
 
 def test_bundle_400_without_a_finished_job(client, test_db):
@@ -310,6 +351,48 @@ def test_export_reports_progress_against_a_total(client, test_db):
     assert status["done"] == status["total"]
 
 
+def test_export_all_readme_separates_updates_from_new_entries(client, test_db):
+    """A dirty hit's files land on top of files that already exist in the
+    fork. The README must say exactly which ones get replaced — and warn that
+    macOS Finder's drag-and-drop replaces folder contents, which would delete
+    the rest of upstream's entry."""
+    from datetime import datetime, timezone
+
+    with test_db() as session:
+        _seed_labeled_disc(session)                       # new entry
+        disc_id, _ = _seed_labeled_disc(session)          # dirty hit
+        disc = session.query(models.Disc).filter(models.Disc.id == disc_id).first()
+        disc.discdb_disc_num = 2
+        disc.user_edited_at = datetime.now(timezone.utc)
+        disc.disc_info = {"discdb_upstream": {
+            "film_title": "Midway", "film_year": 2019,
+            "release_slug": "midway-4k-collection", "disc_index": 2}}
+        session.commit()
+
+    with patch("core.discdb_export._fetch_upstream_disc_json", return_value=None):
+        job_id, status = _run_export(client)
+    assert status["status"] == "completed", status
+    assert status["included"] == 2
+
+    resp = client.get(f"/discdb/contributions/export-all/{job_id}/download")
+    names, readme = _read_zip(resp.content)
+    assert "New entries" in readme
+    assert "Updates — these files REPLACE upstream's copies" in readme
+    assert "data/movie/Midway (2019)/midway-4k-collection" in readme
+    assert "replaces: disc02.json" in readme
+    assert "macOS Finder" in readme
+    # The update itself landed on upstream's path, beside the new entry.
+    assert "data/movie/Midway (2019)/midway-4k-collection/disc02.json" in names
+    assert "data/movie/Midway (2019)/midway-4k/disc01.json" in names
+    # The job payload carries the same material, so the page can tell the
+    # user what will be replaced without making them open the zip.
+    upd = status["updates"]
+    assert len(upd) == 1
+    assert upd[0]["target"] == "data/movie/Midway (2019)/midway-4k-collection"
+    assert "disc02.json" in upd[0]["files"]
+    assert upd[0]["subject"].startswith("Update Midway (2019)/midway-4k-collection")
+
+
 def test_export_all_skips_discs_that_are_already_upstream(client, test_db):
     """discdb_disc_num is only ever set on a TheDiscDB match — re-submitting
     those would open duplicate pull requests."""
@@ -452,7 +535,7 @@ def test_a_running_export_takes_precedence_over_a_finished_one(client, test_db):
 
     release = threading.Event()
 
-    def slow(db, dest=None, progress=None, should_cancel=None):
+    def slow(db, dest=None, progress=None, should_cancel=None, disc_ids=None):
         release.wait(5)
         return "f.zip", None, {"included": 0, "skipped": 0, "disc_ids": [],
                                "total": 0, "cancelled": False}
@@ -480,3 +563,239 @@ def test_the_archive_is_gone_after_retention_and_410s(client, test_db):
     assert "run it again" in resp.json()["detail"]
     # And it stops being offered.
     assert client.get("/discdb/contributions/export-all/active").json()["status"] == "idle"
+
+
+# ── Scoped export + eligibility (library page, #741) ─────────────────────
+
+
+def _poll_export(client, job_id, timeout=15.0):
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        st = client.get(f"/discdb/contributions/export-all/{job_id}").json()
+        if st["status"] in ("completed", "failed"):
+            return st
+        time.sleep(0.05)
+    raise AssertionError("export did not settle")
+
+
+def test_eligible_endpoint_matches_what_export_all_would_do(client, test_db):
+    """The strip's count and the export must agree by construction."""
+    with test_db() as session:
+        a, _ = _seed_labeled_disc(session)
+        _seed_labeled_disc(session, job_status="running")   # not finished -> out
+        c, _ = _seed_labeled_disc(session)
+        disc = session.query(models.Disc).filter(models.Disc.id == c).first()
+        disc.discdb_disc_num = 2                            # already upstream -> out
+        session.commit()
+
+    body = client.get("/discdb/contributions/export-all/eligible").json()
+    assert body["count"] == 1
+    assert body["disc_ids"] == [a]
+
+
+def test_scoped_export_includes_only_the_requested_discs(client, test_db):
+    with test_db() as session:
+        a, _ = _seed_labeled_disc(session)
+        b, _ = _seed_labeled_disc(session)
+
+    started = client.post("/discdb/contributions/export-all", json={"disc_ids": [a]})
+    assert started.status_code == 202
+    st = _poll_export(client, started.json()["job_id"])
+    assert st["status"] == "completed"
+    assert st["included"] == 1
+
+    with test_db() as session:
+        exported = {d.id for d in session.query(models.Disc)
+                    .filter(models.Disc.discdb_exported_at.isnot(None)).all()}
+    assert exported == {a}
+
+
+def test_scoping_cannot_bypass_eligibility(client, test_db):
+    """An ineligible id in the scope is ignored, never exported."""
+    with test_db() as session:
+        a, _ = _seed_labeled_disc(session)
+        ineligible, _ = _seed_labeled_disc(session, job_status="running")
+
+    started = client.post("/discdb/contributions/export-all",
+                          json={"disc_ids": [a, ineligible]})
+    st = _poll_export(client, started.json()["job_id"])
+    assert st["included"] == 1
+
+
+def test_unscoped_export_still_takes_everything(client, test_db):
+    """The plain POST (settings page) must be unchanged by the new body."""
+    with test_db() as session:
+        _seed_labeled_disc(session)
+        _seed_labeled_disc(session)
+
+    started = client.post("/discdb/contributions/export-all")
+    assert started.status_code == 202
+    st = _poll_export(client, started.json()["job_id"])
+    assert st["included"] == 2
+
+
+# ── Dirty-hit detection (#741: export hits whose data the user corrected) ─
+
+
+def test_a_clean_hit_stays_excluded_from_the_automatic_set(client, test_db):
+    with test_db() as session:
+        hit_id, _ = _seed_labeled_disc(session)
+        disc = session.query(models.Disc).filter(models.Disc.id == hit_id).first()
+        disc.discdb_disc_num = 1
+        session.commit()
+
+    body = client.get("/discdb/contributions/export-all/eligible").json()
+    assert body["count"] == 0
+
+
+def test_a_user_edit_makes_a_hit_eligible_as_an_update(client, test_db):
+    """The whole point: upstream was wrong, the user fixed it locally, so the
+    corrected copy flows back as an update submission."""
+    from datetime import datetime, timezone
+
+    with test_db() as session:
+        hit_id, _ = _seed_labeled_disc(session)
+        disc = session.query(models.Disc).filter(models.Disc.id == hit_id).first()
+        disc.discdb_disc_num = 1
+        disc.user_edited_at = datetime.now(timezone.utc)
+        session.commit()
+
+    body = client.get("/discdb/contributions/export-all/eligible").json()
+    assert body["count"] == 1
+    assert body["update_disc_ids"] == [hit_id]
+    assert body["new_count"] == 0 and body["update_count"] == 1
+
+
+def test_title_patch_stamps_the_disc_as_user_edited(client, test_db):
+    """Dirty detection hangs off this stamp — a title edit must set it."""
+    with test_db() as session:
+        disc_id, _ = _seed_labeled_disc(session)
+        title = session.query(models.DiscTitle).filter(
+            models.DiscTitle.disc_id == disc_id).first()
+        title_id = title.id
+        assert session.query(models.Disc).get(disc_id).user_edited_at is None
+
+    resp = client.patch(f"/discs/{disc_id}/titles",
+                        json={"title_id": title_id, "title": "Corrected name"})
+    assert resp.status_code == 200, resp.text
+
+    with test_db() as session:
+        assert session.query(models.Disc).get(disc_id).user_edited_at is not None
+
+
+def test_disc_metadata_patch_stamps_the_disc(client, test_db):
+    with test_db() as session:
+        disc_id, _ = _seed_labeled_disc(session)
+
+    resp = client.patch(f"/releases/disc/{disc_id}", json={"disc_name": "Corrected"})
+    assert resp.status_code == 200, resp.text
+
+    with test_db() as session:
+        assert session.query(models.Disc).get(disc_id).user_edited_at is not None
+
+
+def test_technical_title_edits_do_not_dirty_the_disc(client, test_db):
+    """The filename (comment) and other technical values differ between any
+    two rips without upstream being wrong — they are not corrections, and a
+    re-save of the same value is not an edit at all."""
+    with test_db() as session:
+        disc_id, _ = _seed_labeled_disc(session)
+        title = session.query(models.DiscTitle).filter(
+            models.DiscTitle.disc_id == disc_id).first()
+        title_id = title.id
+
+    resp = client.patch(f"/discs/{disc_id}/titles",
+                        json={"title_id": title_id, "comment": "Midway_t00.mkv"})
+    assert resp.status_code == 200, resp.text
+    with test_db() as session:
+        assert session.query(models.Disc).get(disc_id).user_edited_at is None
+
+    resp = client.patch(f"/discs/{disc_id}/titles",
+                        json={"title_id": title_id, "title": "Midway"})
+    assert resp.status_code == 200, resp.text
+    with test_db() as session:
+        assert session.query(models.Disc).get(disc_id).user_edited_at is None
+
+    # An actual correction on a user surface still stamps.
+    resp = client.patch(f"/discs/{disc_id}/titles",
+                        json={"title_id": title_id, "season": 1})
+    assert resp.status_code == 200, resp.text
+    with test_db() as session:
+        assert session.query(models.Disc).get(disc_id).user_edited_at is not None
+
+
+def test_organizational_disc_edits_do_not_dirty_the_disc(client, test_db):
+    """Renumbering or re-slugging is local organization, not 'TheDiscDB has
+    this wrong' — and saving the same name back is a no-op."""
+    with test_db() as session:
+        disc_id, _ = _seed_labeled_disc(session)
+
+    resp = client.patch(f"/releases/disc/{disc_id}",
+                        json={"disc_number": 3, "disc_slug": "midway-4k-d3"})
+    assert resp.status_code == 200, resp.text
+    with test_db() as session:
+        assert session.query(models.Disc).get(disc_id).user_edited_at is None
+
+    resp = client.patch(f"/releases/disc/{disc_id}", json={"disc_name": "MIDWAY_4K"})
+    assert resp.status_code == 200, resp.text
+    with test_db() as session:
+        assert session.query(models.Disc).get(disc_id).user_edited_at is None
+
+
+def test_export_all_skips_updates_that_match_upstream(client, test_db):
+    """A dirty hit whose merged content equals TheDiscDB's committed file is
+    churn, not a correction — nothing ships, nothing is stamped exported, and
+    the job says why instead of a generic 'nothing eligible'."""
+    from datetime import datetime, timezone
+
+    with test_db() as session:
+        disc_id, _ = _seed_labeled_disc(session)
+        disc = session.query(models.Disc).filter(models.Disc.id == disc_id).first()
+        disc.discdb_disc_num = 2
+        disc.user_edited_at = datetime.now(timezone.utc)
+        disc.disc_info = {"discdb_upstream": {
+            "film_title": "Midway", "film_year": 2019,
+            "release_slug": "midway-4k-collection", "disc_index": 2}}
+        session.commit()
+
+    with patch("core.discdb_export._fetch_upstream_disc_json",
+               return_value={"Titles": []}), \
+         patch("core.discdb_export._update_change_summary", return_value=[]):
+        _, status = _run_export(client)
+
+    assert status["status"] == "failed"
+    assert "already match" in (status["error"] or "")
+    with test_db() as session:
+        assert session.get(models.Disc, disc_id).discdb_contribution_status is None
+
+
+def test_scoping_allows_a_clean_hit_when_a_human_picked_it(client, test_db):
+    """Detection must not override judgement — 'upstream is stale in ways we
+    cannot detect' is a call only the user can make."""
+    with test_db() as session:
+        hit_id, _ = _seed_labeled_disc(session)
+        disc = session.query(models.Disc).filter(models.Disc.id == hit_id).first()
+        disc.discdb_disc_num = 1
+        session.commit()
+
+    # A hit without stored coordinates live-resolves against TheDiscDB and,
+    # resolved, fetches their committed file — keep the test off the network.
+    with patch("core.discdb_export._resolve_upstream_coords", return_value=None), \
+         patch("core.discdb_export._fetch_upstream_disc_json", return_value=None):
+        started = client.post("/discdb/contributions/export-all",
+                              json={"disc_ids": [hit_id]})
+        st = _poll_export(client, started.json()["job_id"])
+    assert st["status"] == "completed"
+    assert st["included"] == 1
+
+
+def test_scoping_still_refuses_an_unfinished_job(client, test_db):
+    """Human selection bypasses the hit rule, never the finished-job rule."""
+    with test_db() as session:
+        unfinished, _ = _seed_labeled_disc(session, job_status="running")
+
+    started = client.post("/discdb/contributions/export-all",
+                          json={"disc_ids": [unfinished]})
+    st = _poll_export(client, started.json()["job_id"])
+    assert st["status"] == "failed"          # nothing eligible -> failed job

@@ -188,6 +188,9 @@ export interface DiscSummary {
   latest_job_progress?: number | null;
   transfer_state?: string | null;
   discdb_hit?: boolean | null;
+  /** TheDiscDB matched disc index — persisted, unlike discdb_hit which only
+   *  survives scan payload projections. Non-null means the disc is upstream. */
+  discdb_disc_num?: number | null;
   titles_completed?: number | null;
   total_titles?: number | null;
   per_title_progress?: Record<string, number> | null;

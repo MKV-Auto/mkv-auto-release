@@ -47,7 +47,14 @@ test.describe('Library — edit release', () => {
 
     await gotoLibrary(page);
 
-    await page.getByRole('button', { name: 'Edit release' }).click();
+    // Edit/Delete live behind the card's kebab menu since the contribution
+    // surface landed (#756). Scope to the card: the library shell can render
+    // more than one card, and every kebab shares the same accessible name.
+    const card = page.locator('app-library-release-card', { hasText: 'Test Movie' });
+    await card.getByRole('button', { name: 'Release actions' }).click();
+    // The entries carry role="menuitem", which overrides the implicit
+    // button role — getByRole('button') never matches them.
+    await card.getByRole('menuitem', { name: 'Edit release' }).click();
 
     const yearInput = page.getByRole('spinbutton', { name: 'Year' });
     await yearInput.fill('2025');

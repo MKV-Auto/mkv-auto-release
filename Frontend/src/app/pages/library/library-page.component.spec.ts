@@ -10,7 +10,7 @@
  *
  * Drawer / inline-edit / DiscDB-chip behaviour belongs to later phases.
  */
-import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { HttpClientTestingModule } from '@angular/common/http/testing';
 import { of } from 'rxjs';
 
@@ -209,4 +209,190 @@ describe('LibraryPageComponent (Phase 2)', () => {
     // new state without a refetch.
     expect(component.drawerDisc?.disc_name).toBe('New Name');
   });
+});
+
+// ── #741: TheDiscDB contribution surface ─────────────────────────────────
+
+import { SystemService } from '../../services/system.service';
+
+describe('LibraryPageComponent (#741 contribution surface)', () => {
+  let fixture: ComponentFixture<LibraryPageComponent>;
+  let component: LibraryPageComponent;
+  let sysSpy: jasmine.SpyObj<SystemService>;
+
+  const page: LibraryPageResponse = {
+    items: [
+      makeRelease({ id: 'rel-a', name: 'Exportable' }),
+      makeRelease({ id: 'rel-b', name: 'Contributed' }),
+    ],
+    release_discs: {
+      'rel-a': [makeDisc({ id: 'd-a', content_hash: 'h-a', transfer_state: 'completed' })],
+      'rel-b': [makeDisc({ id: 'd-b', content_hash: 'h-b', discdb_hit: true, transfer_state: 'completed' })],
+    },
+    boxsets: [],
+    boxset_details: [],
+    next_cursor: null,
+    has_more: false,
+  } as unknown as LibraryPageResponse;
+
+  beforeEach(async () => {
+    sysSpy = jasmine.createSpyObj<SystemService>('SystemService', [
+      'getDiscDbEligible', 'startDiscDbExport', 'getDiscDbExportStatus',
+      'cancelDiscDbExport', 'downloadDiscDbExport',
+    ]);
+    sysSpy.getDiscDbEligible.and.returnValue(of({ count: 1, disc_ids: ['d-a'], update_disc_ids: [], new_count: 1, update_count: 0 }));
+
+    const metaSpy = jasmine.createSpyObj<MetadataService>('MetadataService', ['getLibraryPage']);
+    metaSpy.getLibraryPage.and.returnValue(of(page));
+
+    await TestBed.configureTestingModule({
+      imports: [LibraryPageComponent, HttpClientTestingModule],
+      providers: [
+        { provide: MetadataService, useValue: metaSpy },
+        { provide: SystemService, useValue: sysSpy },
+        { provide: LoggerService, useValue: jasmine.createSpyObj('LoggerService', ['log', 'warn', 'error', 'debug']) },
+      ],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(LibraryPageComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
+
+  it('builds the strip from the same endpoint the export uses', () => {
+    // The count shown must be what "Export all" will act on — no client-side
+    // guessing from discdb_hit, which cannot see the finished-job rule.
+    expect(component.eligibleCount).toBe(1);
+    expect(component.eligibleDiscIds.has('d-a')).toBe(true);
+    const strip = fixture.nativeElement.querySelector('.library-contrib-strip');
+    expect(strip?.textContent).toContain("1 disc isn't in TheDiscDB yet");
+  });
+
+  it('the contribute tab shows only entries with something to export', () => {
+    component.selectTab('contribute');
+    const names = component.visibleReleases.map(r => r.name);
+    expect(names).toEqual(['Exportable']);
+  });
+
+  it('a card export request starts a scoped job', () => {
+    sysSpy.startDiscDbExport.and.returnValue(of({
+      job_id: 'j1', status: 'running', done: 0, total: 1, current: '',
+      error: null, included: 0, skipped: 0, cancelled: false, download_ready: false,
+    } as any));
+    sysSpy.getDiscDbExportStatus.and.returnValue(of({
+      job_id: 'j1', status: 'running', done: 0, total: 1, current: '',
+      error: null, included: 0, skipped: 0, cancelled: false, download_ready: false,
+    } as any));
+
+    component.startExport(['d-a']);
+
+    expect(sysSpy.startDiscDbExport).toHaveBeenCalledWith(['d-a']);
+    expect(component.exportJob?.job_id).toBe('j1');
+    component.ngOnDestroy();
+  });
+
+  it('a second export while one runs is ignored, not stacked', () => {
+    component.exportJob = { job_id: 'j1', status: 'running' } as any;
+    component.startExport(['d-a']);
+    expect(sysSpy.startDiscDbExport).not.toHaveBeenCalled();
+  });
+
+  it('leaving the contribute tab when it empties returns to All', () => {
+    component.selectTab('contribute');
+    sysSpy.getDiscDbEligible.and.returnValue(of({ count: 0, disc_ids: [], update_disc_ids: [], new_count: 0, update_count: 0 }));
+    (component as any).loadEligible();
+    expect(component.activeTab).toBe('all');
+    expect(component.eligibleCount).toBe(0);
+  });
+
+  it('a finished export with updates raises the replaces dialog', () => {
+    // Nobody should learn their zip overwrites upstream files from a
+    // surprise git diff — the page says so the moment the download lands.
+    sysSpy.downloadDiscDbExport.and.returnValue(of({
+      blob: new Blob(['zip']), filename: 'thediscdb-submissions.zip',
+    }));
+    const job = {
+      job_id: 'j1', status: 'completed', included: 1, skipped: 0,
+      updates: [{
+        target: 'data/movie/Predators (2010)/predator-4-movie-collection-4k',
+        files: ['disc02.json', 'disc02-summary.txt'],
+        subject: 'Update Predators (2010)/predator-4-movie-collection-4k disc02',
+        changes: ['Name: "Predators Blu-ray" -> "Corrected"'],
+      }],
+    } as any;
+
+    (component as any).downloadExport(job);
+    fixture.detectChanges();
+
+    expect(component.exportUpdates?.length).toBe(1);
+    const dialog = fixture.nativeElement.querySelector('.library-export-updates');
+    expect(dialog?.textContent).toContain('predator-4-movie-collection-4k');
+    expect(dialog?.textContent).toContain('replaces disc02.json, disc02-summary.txt');
+    expect(dialog?.textContent).toContain('Name: "Predators Blu-ray" -> "Corrected"');
+
+    component.dismissExportUpdates();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.library-export-updates')).toBeNull();
+  });
+
+  it('a finished export with only new entries shows no dialog', () => {
+    sysSpy.downloadDiscDbExport.and.returnValue(of({
+      blob: new Blob(['zip']), filename: 'thediscdb-submissions.zip',
+    }));
+    (component as any).downloadExport({
+      job_id: 'j1', status: 'completed', included: 2, skipped: 0, updates: [],
+    } as any);
+    expect(component.exportUpdates).toBeNull();
+  });
+
+  it('the dialog commit message matches the README shape', () => {
+    // Attribution, what gets replaced, and every correction with its prior
+    // value — continuation lines (leading spaces) nest under their bullet.
+    const text = component.commitMessageFor({
+      target: 'data/movie/Predators (2010)/x', files: ['disc02.json'],
+      subject: 'Update Predators (2010)/x disc02',
+      changes: [
+        'Name: "a" -> "b"',
+        '2 title comments corrected:',
+        '  title 0: "old.mkv" -> "new.mkv"',
+        '  title 1: "old1.mkv" -> "new1.mkv"',
+      ],
+    });
+    expect(text).toBe(
+      'Update Predators (2010)/x disc02\n\n' +
+      'Update provided by MKV-Auto (https://github.com/MKV-Auto/mkv-auto-release)\n\n' +
+      'Replacing: data/movie/Predators (2010)/x\n' +
+      '  disc02.json\n\n' +
+      'Corrections:\n' +
+      '  - Name: "a" -> "b"\n' +
+      '  - 2 title comments corrected:\n' +
+      '      title 0: "old.mkv" -> "new.mkv"\n' +
+      '      title 1: "old1.mkv" -> "new1.mkv"'
+    );
+  });
+
+  it('the copy button puts the commit message on the clipboard', fakeAsync(() => {
+    const writeText = jasmine.createSpy('writeText').and.returnValue(Promise.resolve());
+    // navigator.clipboard is a readonly accessor in headless Chrome — swap it
+    // via defineProperty, the same seam-level mocking localStorage needs.
+    const original = Object.getOwnPropertyDescriptor(Navigator.prototype, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText }, configurable: true,
+    });
+    try {
+      const update = {
+        target: 't', files: ['disc02.json'],
+        subject: 'Update t disc02', changes: [],
+      };
+      component.copyCommitMessage(update);
+      tick();
+      expect(writeText).toHaveBeenCalledWith(component.commitMessageFor(update));
+      expect(component.copiedCommitTarget).toBe('t');
+      tick(2000);
+      expect(component.copiedCommitTarget).toBeNull();
+    } finally {
+      delete (navigator as any).clipboard;
+      if (original) Object.defineProperty(Navigator.prototype, 'clipboard', original);
+    }
+  }));
 });

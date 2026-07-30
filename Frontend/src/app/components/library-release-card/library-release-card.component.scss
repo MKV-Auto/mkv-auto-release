@@ -206,12 +206,19 @@
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     padding-top: 0.75rem;
   }
+  // #741: the row hosts the open-drawer button plus an optional per-disc
+  // export button, so it is a flex row now — `display: contents` made any
+  // sibling wrap below the whole list.
   &__disc-row {
-    display: contents;
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
   }
   &__disc-btn {
+    flex: 1;
+    min-width: 0;
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: 1fr auto auto auto auto;
     align-items: center;
     gap: 0.5rem;
     width: 100%;
@@ -271,4 +278,70 @@
       -webkit-box-orient: vertical;
     }
   }
+}
+
+
+// #741 UI: quiet kebab replacing the labeled Edit/Delete pair, plus the
+// TheDiscDB affordances. The menu is card-scoped absolute; the card is the
+// positioning context (it already is, for the edit form).
+.library-release-card__actions { position: relative; }
+
+.library-release-card__kebab {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  border: none; background: none;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 15px; line-height: 1;
+  cursor: pointer;
+  &:hover { background: rgba(255, 255, 255, 0.07); color: rgba(255, 255, 255, 0.8); }
+  &.is-open { border: 1px solid rgba(99, 102, 241, 0.5); background: rgba(99, 102, 241, 0.16); color: #c7d2fe; }
+}
+
+.library-release-card__menu {
+  position: absolute; top: 32px; right: 0;
+  width: 238px; z-index: 20;
+  background: #161b26;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 10px; padding: 5px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.library-release-card__menu-item {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 8px 10px;
+  border: none; background: none; border-radius: 7px;
+  font-size: 13px; text-align: left;
+  color: rgba(255, 255, 255, 0.87);
+  cursor: pointer;
+  &:hover { background: rgba(255, 255, 255, 0.06); }
+  &--danger { color: #f09595; }
+  // Locked items stay visible and say why; they do nothing on click.
+  &.is-locked { color: rgba(255, 255, 255, 0.35); cursor: default;
+    &:hover { background: none; } }
+}
+
+.library-release-card__menu-lock {
+  margin-left: auto; font-size: 11px; color: rgba(255, 255, 255, 0.35);
+}
+
+.library-release-card__menu-div {
+  height: 1px; background: rgba(255, 255, 255, 0.09); margin: 4px 8px;
+}
+
+.library-release-card__disc-chip {
+  font-size: 10.5px; padding: 2px 7px; border-radius: 9px; flex: none;
+  &--amber { background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.4); color: #fcd34d; }
+  &--teal { background: rgba(94, 234, 212, 0.08); border: 1px solid rgba(94, 234, 212, 0.3); color: #5eead4; }
+}
+
+
+
+.library-release-card__chips {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px;
+}
+.library-release-card__chip {
+  font-size: 11.5px; padding: 3px 9px; border-radius: 11px;
+  display: inline-flex; align-items: center; gap: 4px;
+  &--amber { background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.4); color: #fcd34d; }
+  &--teal { background: rgba(94, 234, 212, 0.08); border: 1px solid rgba(94, 234, 212, 0.3); color: #5eead4; }
 }

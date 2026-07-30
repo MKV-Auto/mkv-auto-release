@@ -33,8 +33,11 @@ JOB_RETENTION_HOURS = 6
 class ExportJob:
     """One bulk export. ``status`` is pending → running → completed | failed."""
 
-    def __init__(self) -> None:
+    def __init__(self, disc_ids: "list[str] | None" = None) -> None:
         self.id = str(uuid4())
+        # None = the whole library; a list scopes to those discs (library page
+        # export of one release or boxset).
+        self.disc_ids = disc_ids
         self.status = "pending"
         self.done = 0
         self.total = 0
@@ -61,6 +64,9 @@ class ExportJob:
             "current": self.current,
             "error": self.error,
             "included": self.summary.get("included", 0),
+            # Entries that overwrite files upstream already has, with their
+            # change summaries — the UI surfaces these when the export lands.
+            "updates": self.summary.get("updates", []),
             "skipped": self.summary.get("skipped", 0),
             "cancelled": self.summary.get("cancelled", False),
             "download_ready": (
@@ -146,18 +152,20 @@ def cancel_job(job_id: str) -> bool:
     return True
 
 
-def start_export_job() -> ExportJob:
+def start_export_job(disc_ids: "list[str] | None" = None) -> ExportJob:
     """Start a bulk export, or return the one already running.
 
     Serialised deliberately: two concurrent exports would duplicate every
     cover-art fetch and race each other stamping the same discs as exported.
+    A scoped request while another export runs joins the running one — the
+    caller can see its scope in the returned job and decide to wait.
     """
     with _lock:
         active = get_active_job()
         if active:
             return active
         _sweep()
-        job = ExportJob()
+        job = ExportJob(disc_ids=disc_ids)
         _jobs[job.id] = job
         job.thread = threading.Thread(target=_run, args=(job,), daemon=True,
                                       name=f"discdb-export-{job.id[:8]}")
@@ -189,6 +197,7 @@ def _run(job: ExportJob) -> None:
         filename, _, summary = build_discdb_bulk_zip(
             db, dest=dest, progress=on_progress,
             should_cancel=lambda: job.cancel_requested,
+            disc_ids=job.disc_ids,
         )
         job.summary = summary
         job.filename = filename
@@ -198,10 +207,18 @@ def _run(job: ExportJob) -> None:
             # a "completed" job with nothing in it reads as success.
             dest.unlink(missing_ok=True)
             job.status = "failed"
-            job.error = (
-                "No discs are ready to export — a disc needs a finished job, a linked "
-                "release, and must not already be in TheDiscDB."
-            )
+            details = summary.get("skipped_detail") or []
+            if details and all("already matches TheDiscDB" in d for d in details):
+                job.error = (
+                    "Nothing to submit — the selected discs already match "
+                    "TheDiscDB's current entries; there are no corrections "
+                    "upstream doesn't have."
+                )
+            else:
+                job.error = (
+                    "No discs are ready to export — a disc needs a finished job, a linked "
+                    "release, and must not already be in TheDiscDB."
+                )
             return
 
         _mark_exported(db, summary["disc_ids"])
