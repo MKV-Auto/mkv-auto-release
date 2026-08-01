@@ -2353,40 +2353,83 @@ def build_drive_api_dict(disc_idx: str, mount_point: str) -> dict:
         "bus": identity.bus,
     }
 
+# Linux cdrom API (uapi/linux/cdrom.h). CDROM_DRIVE_STATUS is the kernel's own
+# answer to "is there usable media in this optical drive?" — no extra package,
+# and correct on drives that lie about their size (see _drive_has_media).
+CDROM_DRIVE_STATUS = 0x5326
+CDS_NO_INFO = 0
+CDS_NO_DISC = 1
+CDS_TRAY_OPEN = 2
+CDS_DRIVE_NOT_READY = 3
+CDS_DISC_OK = 4
+
+# Devices already warned about, so an unanswerable probe is reported once per
+# device rather than on every registry snapshot.
+_media_probe_warned: set[str] = set()
+
+
 def _drive_has_media(dev: str, timeout: float = 1.5) -> bool:
+    """Return True when *dev* has usable media loaded.
+
+    Probes in order of authority:
+
+    1. ``sg_turs`` (TEST UNIT READY) — definitive when sg3-utils is installed.
+    2. ``CDROM_DRIVE_STATUS`` — the kernel's cdrom API. Definitive and always
+       available on Linux for ``/dev/sr*``.
+
+    **Device size is deliberately not consulted.** The previous fallback read
+    ``BLKGETSIZE64`` and treated any nonzero size as media-present; a USB
+    Blu-ray drive (Pioneer BD-RW BDR-XD06U) reports a phantom 1073741312 bytes
+    with an *empty* tray, so every empty drive looked loaded — and because
+    ``sg_turs`` was missing from the container image, that unreliable fallback
+    was the only probe that ever ran (#766).
+
+    Only a genuinely unanswerable probe falls back to ``True``, so an
+    unrecognised drive stays usable instead of vanishing from the UI. That case
+    is logged once per device: the original bug was a probe degrading in
+    silence, and an optimistic default must never be indistinguishable from a
+    real answer.
     """
-    Best-effort media-present check:
-      1) sg_turs (if available)
-      2) BLKGETSIZE64 ioctl > 0
-    If all checks fail, assume True to avoid false negatives.
-    """
-    # sg_turs returns status GOOD when media is present/ready
+    # sg_turs returns status GOOD when media is present/ready.
     if SG_TURS_BIN and os.path.exists(dev):
         try:
-            proc = subprocess.run([SG_TURS_BIN, dev], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
-            if proc.returncode == 0:
-                return True
-            return False
+            proc = subprocess.run(
+                [SG_TURS_BIN, dev],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+            return proc.returncode == 0
         except subprocess.TimeoutExpired:
             return False
-        except Exception as exc:
+        except Exception:
             pass
 
-    BLKGETSIZE64 = 0x80081272
     try:
         fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
         try:
-            buf = fcntl.ioctl(fd, BLKGETSIZE64, b"\0" * 8)
-            size = struct.unpack("Q", buf)[0]
-            if size > 0:
-                return True
-            return False
+            status = fcntl.ioctl(fd, CDROM_DRIVE_STATUS)
         finally:
             os.close(fd)
-    except Exception as exc:
+        if status == CDS_DISC_OK:
+            return True
+        # NO_DISC / TRAY_OPEN are definitive. DRIVE_NOT_READY is a disc still
+        # spinning up: no usable media *yet*, and the next poll sees DISC_OK.
+        if status in (CDS_NO_DISC, CDS_TRAY_OPEN, CDS_DRIVE_NOT_READY):
+            return False
+        # CDS_NO_INFO: the drive declined to answer — fall through to unknown.
+    except Exception:
         pass
 
-    # If detection fails, err on the side of allowing the drive.
+    if dev not in _media_probe_warned:
+        _media_probe_warned.add(dev)
+        logger.warning(
+            "Media presence for %s is unknown: sg_turs is %s and CDROM_DRIVE_STATUS "
+            "gave no answer. Treating the drive as loaded so it stays usable — "
+            "install sg3-utils if this persists.",
+            dev,
+            "unavailable" if not SG_TURS_BIN else "inconclusive",
+        )
     return True
 
 

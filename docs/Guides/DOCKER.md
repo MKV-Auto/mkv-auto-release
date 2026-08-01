@@ -1,6 +1,8 @@
 # MKV-Auto Docker Guide
 
-Comprehensive Docker deployment guide for MKV-Auto.
+How the MKV-Auto image is put together and the ways to run it: deployment
+options, disc detection, security, and production setups. Volumes and
+networking live in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## Table of Contents
 

@@ -65,6 +65,12 @@ RUN apt-get update && apt-get install -y \
     tini \
     # Udev for automatic disc detection
     udev \
+    # sg3-utils provides sg_turs, the media-presence probe core.utils
+    # ._drive_has_media() prefers. Without it that check silently degrades to
+    # BLKGETSIZE64, which reports a phantom ~1GiB on an empty USB Blu-ray
+    # drive — so the app believes a disc is loaded whenever the tray is
+    # empty (#766). Not optional despite the code's `if SG_TURS_BIN` guard.
+    sg3-utils \
     # Utilities (wget needed for MakeMKV download in entrypoint)
     wget git rsync \
     && rm -rf /var/lib/apt/lists/*
