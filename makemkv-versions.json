@@ -1,31 +1,6 @@
 {
   "generated_at": "2026-08-05T23:55:33+00:00",
-  "known_incompatible": [
-    {
-      "detail": "Missing build dependencies: libs=x264. Install via: sudo apt-get install -y build-essential yasm nasm pkg-config cmake libfdk-aac-dev libx264-dev liblzma-dev",
-      "ffmpeg_version": "8.1.2",
-      "makemkv_version": "1.18.4",
-      "reason": "build_failed"
-    },
-    {
-      "detail": "Missing build dependencies: libs=x264. Install via: sudo apt-get install -y build-essential yasm nasm pkg-config cmake libfdk-aac-dev libx264-dev liblzma-dev",
-      "ffmpeg_version": "8.1.1",
-      "makemkv_version": "1.18.4",
-      "reason": "build_failed"
-    },
-    {
-      "detail": "Missing build dependencies: libs=x264. Install via: sudo apt-get install -y build-essential yasm nasm pkg-config cmake libfdk-aac-dev libx264-dev liblzma-dev",
-      "ffmpeg_version": "8.1",
-      "makemkv_version": "1.18.4",
-      "reason": "build_failed"
-    },
-    {
-      "detail": "Missing build dependencies: libs=x264. Install via: sudo apt-get install -y build-essential yasm nasm pkg-config cmake libfdk-aac-dev libx264-dev liblzma-dev",
-      "ffmpeg_version": "8.0.3",
-      "makemkv_version": "1.18.4",
-      "reason": "build_failed"
-    }
-  ],
+  "known_incompatible": [],
   "latest_validated": null,
   "schema": 1,
   "validated": {}
