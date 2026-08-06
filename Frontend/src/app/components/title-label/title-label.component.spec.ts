@@ -42,17 +42,95 @@ describe('TitleLabelComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  it('emits labelChanged and titlePatched when onTitleChange is called', () => {
+  it('typing updates the model immediately but does NOT write per keystroke', () => {
+    // Every keystroke used to PATCH. The responses echoed the server value
+    // back into the ngModel-bound input, so late echoes visibly re-typed the
+    // field and could drop the last characters typed.
     const title = { title_id: 'tid1', title: 'Old' };
     setTitles([title]);
     spyOn(component.labelChanged, 'emit');
     spyOn(component.titlePatched, 'emit');
     fixture.detectChanges();
-    component.onTitleChange(title, 'New Name');
-    expect(title.title).toBe('New Name');
-    expect(component.labelChanged.emit).toHaveBeenCalledWith(component.titles);
+
+    for (const v of ['N', 'Ne', 'New', 'New Name']) {
+      component.onTitleChange(title, v);
+    }
+
+    expect(title.title).toBe('New Name');           // model is live
+    expect(component.labelChanged.emit).toHaveBeenCalled();
+    expect(component.titlePatched.emit).not.toHaveBeenCalled();  // no writes yet
+  });
+
+  it('blur flushes the typed value exactly once', () => {
+    const title = { title_id: 'tid1', title: 'Old' };
+    setTitles([title]);
+    fixture.detectChanges();
+    for (const v of ['N', 'Ne', 'New Name']) component.onTitleChange(title, v);
+
+    spyOn(component.titlePatched, 'emit');
+    component.onBlur();
+
+    expect(component.titlePatched.emit).toHaveBeenCalledTimes(1);
     expect(component.titlePatched.emit).toHaveBeenCalledWith(
       jasmine.objectContaining({ title_id: 'tid1', title: 'New Name' })
+    );
+  });
+
+  it('a second blur with nothing new sends nothing', () => {
+    const title = { title_id: 'tid1', title: 'Old' };
+    setTitles([title]);
+    fixture.detectChanges();
+    component.onTitleChange(title, 'Typed');
+    component.onBlur();
+
+    spyOn(component.titlePatched, 'emit');
+    spyOn(component.titleBatchPatched, 'emit');
+    component.onBlur();
+
+    expect(component.titlePatched.emit).not.toHaveBeenCalled();
+    expect(component.titleBatchPatched.emit).not.toHaveBeenCalled();
+  });
+
+  it('changing the type carries the pending name in the SAME write', () => {
+    // The reported sequence: type a name, then change the type. Flushing the
+    // buffered name as a separate write raced the type write — both left
+    // with the same base_seq, so one always lost (measured on rc.3: 7/7
+    // same-tick pairs collided). One request can't race itself.
+    const title = { title_id: 'tid1', title: 'Old', type: null };
+    setTitles([title]);
+    fixture.detectChanges();
+    component.onTitleChange(title, 'Renamed');
+
+    const seen: any[] = [];
+    spyOn(component.titlePatched, 'emit').and.callFake((p: any) => {
+      seen.push(p);
+      return true as any;
+    });
+    spyOn(component.titleBatchPatched, 'emit');
+    component.onTypeChange(title, 'Featurette');
+
+    expect(seen.length).toBe(1);
+    expect(seen[0]).toEqual(jasmine.objectContaining({
+      title_id: 'tid1', title: 'Renamed', type: 'Featurette',
+    }));
+    expect(component.titleBatchPatched.emit).not.toHaveBeenCalled();
+
+    // Nothing buffered survives to flush late and re-race the type write.
+    component.onBlur();
+    expect(seen.length).toBe(1);
+  });
+
+  it('teardown never strands an unsaved edit', () => {
+    const title = { title_id: 'tid1', title: 'Old' };
+    setTitles([title]);
+    fixture.detectChanges();
+    component.onTitleChange(title, 'Unsaved when leaving');
+
+    spyOn(component.titlePatched, 'emit');
+    component.ngOnDestroy();
+
+    expect(component.titlePatched.emit).toHaveBeenCalledWith(
+      jasmine.objectContaining({ title_id: 'tid1', title: 'Unsaved when leaving' })
     );
   });
 

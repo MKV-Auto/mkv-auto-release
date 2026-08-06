@@ -1,5 +1,5 @@
 // src/app/components/title-modal/title-modal.component.ts
-import { Component, Input, Output, EventEmitter } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { PreviewViewerComponent } from '../preview-viewer/preview-viewer.component';
@@ -13,8 +13,14 @@ import { TitlePatchRequest } from '../../services/workflow.service';
   templateUrl: './title-modal.component.html',
   styleUrls: ['./title-modal.component.scss'],
 })
-export class TitleModalComponent {
+export class TitleModalComponent implements OnDestroy {
   readonly titleTypeOptions = TITLE_TYPE_SELECT_OPTIONS;
+
+  /** Last line of defence: closing the modal mid-edit must not strand a
+   *  buffered typed field unsaved. */
+  ngOnDestroy(): void {
+    this.flushPendingFieldEdits();
+  }
 
   @Input() title: any = null;
   @Input() isSeries = false;
@@ -63,20 +69,24 @@ export class TitleModalComponent {
     this.title.description = value;
     this.title.note = value; // keep legacy field in sync
     const normalized = value === '' ? null : value;
-    this.emitFieldPatch({ description: normalized });
+    this.bufferFieldPatch({ description: normalized });
     this.titleChanged.emit();
   }
 
   markAsIgnore(): void {
     if (!this.title) return;
+    // Buffered typed fields ride in this write; see takePendingFieldsFor.
+    const pending = this.takePendingFieldsFor(this.title.title_id);
     const currentType = (this.title.type || '').toString().toLowerCase();
     if (currentType === 'ignore') {
       this.title.type = '';
-      this.emitFieldPatch({ type: null });
+      this.emitFieldPatch({ ...pending, type: null });
     } else {
       this.title.type = 'ignore';
       this.clearIgnoredFields();
+      // Nulls intentionally override pending text: ignore clears.
       this.emitFieldPatch({
+        ...pending,
         type: 'ignore',
         title: null,
         description: null,
@@ -89,12 +99,20 @@ export class TitleModalComponent {
   }
 
   onTypeChange(value: any): void {
+    // Picked, not typed — saves immediately. A name typed just before may
+    // still be buffered; it rides in THIS write rather than flushing as a
+    // separate one (two same-tick writes to one row carry the same
+    // base_seq — one of them always loses).
     if (!this.title) return;
+    const pending = this.takePendingFieldsFor(this.title.title_id);
+    this.flushPendingFieldEdits(); // other rows' leftovers, if any
     this.title.type = value;
     const normalizedType = value === '' ? null : value;
     if (this.isIgnored()) {
       this.clearIgnoredFields();
+      // Nulls intentionally override pending text: ignore clears.
       this.emitFieldPatch({
+        ...pending,
         type: normalizedType,
         title: null,
         description: null,
@@ -103,16 +121,22 @@ export class TitleModalComponent {
         edition: null,
       });
     } else {
-      this.emitFieldPatch({ type: normalizedType });
+      this.emitFieldPatch({ ...pending, type: normalizedType });
     }
     this.titleChanged.emit();
   }
 
-  /** Directly-bound field ngModelChange handlers — persist to backend. */
+  /** Typed-field ngModelChange handlers. These used to PATCH per keystroke
+   *  (this modal missed the #781/#782 buffering that title-editor and
+   *  title-label got) — every response echo re-rendered the bound input,
+   *  which is the phantom-typing / dropped-characters class of bug, worst
+   *  on mobile where this modal is the primary editing surface. Typed
+   *  fields now buffer and flush on idle/blur/teardown, exactly like
+   *  title-editor. */
   onTitleNameChange(value: any): void {
     if (!this.title) return;
     const normalized = value === '' ? null : value;
-    this.emitFieldPatch({ title: normalized });
+    this.bufferFieldPatch({ title: normalized });
     this.titleChanged.emit();
   }
 
@@ -120,7 +144,7 @@ export class TitleModalComponent {
     if (!this.title) return;
     const num = value === null || value === '' ? null : Number(value);
     const normalized = Number.isFinite(num) ? num : null;
-    this.emitFieldPatch({ season: normalized as number | null });
+    this.bufferFieldPatch({ season: normalized as number | null });
     this.titleChanged.emit();
   }
 
@@ -128,14 +152,14 @@ export class TitleModalComponent {
     if (!this.title) return;
     const num = value === null || value === '' ? null : Number(value);
     const normalized = Number.isFinite(num) ? num : null;
-    this.emitFieldPatch({ episode: normalized as number | null });
+    this.bufferFieldPatch({ episode: normalized as number | null });
     this.titleChanged.emit();
   }
 
   onEditionChange(value: any): void {
     if (!this.title) return;
     const normalized = value === '' ? null : value;
-    this.emitFieldPatch({ edition: normalized });
+    this.bufferFieldPatch({ edition: normalized });
     this.titleChanged.emit();
   }
 
@@ -143,6 +167,60 @@ export class TitleModalComponent {
     const titleId = this.title?.title_id;
     if (!titleId) return;
     this.titlePatched.emit({ title_id: titleId, ...fields });
+  }
+
+  /** Typed-field edits awaiting flush, keyed by title id. Same machinery as
+   *  TitleEditorComponent (#782): buffer per keystroke, one write per pause. */
+  private pendingFieldEdits = new Map<string, Partial<TitlePatchRequest>>();
+  private autosaveTimer: any = null;
+  private static readonly AUTOSAVE_IDLE_MS = 700;
+
+  private bufferFieldPatch(fields: Partial<TitlePatchRequest>): void {
+    const titleId = this.title?.title_id;
+    if (!titleId) return;
+    const existing = this.pendingFieldEdits.get(titleId) || {};
+    this.pendingFieldEdits.set(titleId, { ...existing, ...fields });
+    this.scheduleAutosave();
+  }
+
+  /** Restart the idle timer so a typing burst produces one write. */
+  private scheduleAutosave(): void {
+    if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = setTimeout(() => {
+      this.autosaveTimer = null;
+      this.flushPendingFieldEdits();
+    }, TitleModalComponent.AUTOSAVE_IDLE_MS);
+  }
+
+  /** Send everything buffered. Safe to call repeatedly — a flush with
+   *  nothing pending is a no-op. Wired to blur in the template. */
+  flushPendingFieldEdits(): void {
+    if (this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+    if (this.pendingFieldEdits.size === 0) return;
+    const pending = this.pendingFieldEdits;
+    this.pendingFieldEdits = new Map();
+    pending.forEach((fields, titleId) => {
+      this.titlePatched.emit({ title_id: titleId, ...fields } as TitlePatchRequest);
+    });
+  }
+
+  /** Remove and return the buffered edits for one title so an immediate
+   *  write (type pick, ignore) carries them in the SAME request — users
+   *  don't wait for autosave, and two same-tick writes to one row race
+   *  each other (same base_seq). See TitleEditorComponent. */
+  private takePendingFieldsFor(titleId: string | null | undefined): Partial<TitlePatchRequest> {
+    if (!titleId) return {};
+    const pending = this.pendingFieldEdits.get(titleId);
+    if (!pending) return {};
+    this.pendingFieldEdits.delete(titleId);
+    if (this.pendingFieldEdits.size === 0 && this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+    return pending;
   }
 
   onClose(): void {

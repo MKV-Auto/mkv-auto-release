@@ -622,6 +622,65 @@ def apply_obfuscation_reason_from_dedupe(
     return (cleared, set_sibling)
 
 
+def apply_path_b_marks_for_disc(db: Any, disc_id: str) -> tuple[int, int, int, int]:
+    """Run the persisting half of Path B — obfuscation_reason for dedupe
+    siblings/representatives and m2ts⊆mpls subsumption marks — against the
+    disc's current rows.
+
+    This used to run inside GET /jobs/{id}/workflow-context: a read that
+    wrote (and committed) mid-request. Consequences, both measured on the
+    rc test rig: the GET's response was serialized *before* its own side
+    effects committed, so clients cached state stale relative to the very
+    request that returned it; and read traffic caused write churn (the
+    first GET after a container restart re-stamped ~300 rows). The marks
+    depend only on segment maps and scan metadata — which change at
+    scan/detect time — so they now apply there, and reads stay reads.
+
+    Ordering matters and mirrors the old GET block: obfuscation_reason
+    first against the UNFOLDED groups, subsumption after — so component
+    clips never receive obfuscation_reason='segment_set_sibling' (they
+    aren't decoys; see fold_subsumption_into_groups).
+
+    Does NOT commit — the caller owns the transaction, so the marks ride
+    the same commit as the scan/detect changes that made them stale.
+    Returns (reason_cleared, reason_set_sibling, subsumption_marked_ignore,
+    subsumption_set_subsumed_by) for caller logging.
+    """
+    if not disc_id:
+        return (0, 0, 0, 0)
+    from api import models as db_models
+    rows = (
+        db.query(db_models.DiscTitle)
+        .filter(db_models.DiscTitle.disc_id == disc_id)
+        .all()
+    )
+    if not rows:
+        return (0, 0, 0, 0)
+    titles_by_id: dict[str, dict] = {}
+    for r in rows:
+        rid = str(getattr(r, "id", "") or "")
+        if not rid:
+            continue
+        titles_by_id[rid] = {
+            "title_id": rid,
+            "source_file": getattr(r, "source_file", None),
+            "segment_map": getattr(r, "segment_map", None),
+            "type": getattr(r, "type", None),
+            "size": getattr(r, "size", None),
+            "mkv_size": getattr(r, "mkv_size", None),
+            "metadata_scan": getattr(r, "metadata_scan", None),
+            "duration": getattr(r, "duration", None),
+            "index": getattr(r, "index", None),
+            "force_independent_group": bool(getattr(r, "force_independent_group", False)),
+            "obfuscation_flag": bool(getattr(r, "obfuscation_flag", False)),
+        }
+    clip_index = compute_mpls_clip_index(titles_by_id)
+    groups = compute_dedupe_groups(titles_by_id)
+    cleared, set_sibling = apply_obfuscation_reason_from_dedupe(db, disc_id, groups)
+    marked, set_sub = apply_subsumption_marks(db, disc_id, clip_index)
+    return (cleared, set_sibling, marked, set_sub)
+
+
 def invalidate_dedupe_apply_memo(disc_id: str | None = None) -> None:
     """Clear the per-disc apply-state memo. Call when the title set is known
     to have changed in a way the signature wouldn't catch (re-scan, title

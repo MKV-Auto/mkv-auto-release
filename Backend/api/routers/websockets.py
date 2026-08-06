@@ -796,6 +796,37 @@ async def _emit_disc_updated_from_info(disc_info: dict, disc_num: str, mount_poi
         logger.warning(f"Failed to emit disc_updated for disc {disc_id}: {exc}")
 
 
+async def emit_titles_changed(
+    disc_id: str,
+    titles: List[Dict[str, Any]],
+    titles_version: Optional[int] = None,
+) -> None:
+    """Emit a titles delta: the rows a write just changed, fully serialized
+    (id, new title_seq, resolved fields, provenance).
+
+    Area 4 of the title-state redesign: events carry FACTS, not doorbells.
+    `context_changed` tells clients "something changed, refetch" — and the
+    workflow-context GET is ~1MB on a 300-title disc, served from a
+    snapshot that races any in-flight write (#778's read-after-write
+    class). A delta is a few KB, and per-row seq gating makes applying it
+    idempotent: the tab that made the write folds its own echo as a
+    no-op, every other tab converges without a refetch. Title PATCHes
+    previously emitted NOTHING — a second tab never learned about edits
+    until some unrelated refetch.
+    """
+    message = {
+        "type": "titles_changed",
+        "disc_id": disc_id,
+        "titles": titles,
+        "titles_version": titles_version,
+    }
+    sent_count = await _emit_unified(message)
+    if sent_count > 0:
+        logger.info(
+            f"Emitted titles_changed ({len(titles)} row(s)) to {sent_count} unified connections for disc: {disc_id}"
+        )
+
+
 async def _emit_to_disc_workflow(disc_id: str, changed_fields: Optional[List[str]] = None) -> None:
     """
     Emit context change notification to all unified workflow connections.

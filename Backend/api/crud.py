@@ -166,6 +166,68 @@ def set_title_type(
     title.type = title.user_type if title.user_type is not None else title.auto_type
 
 
+# Label fields carrying the user_/auto_ provenance split (plus `type`,
+# which has its own helper above and predates the generalization).
+PROVENANCED_TITLE_FIELDS = ("title", "edition", "description", "season", "episode")
+
+
+def set_title_field(
+    title,  # models.DiscTitle (untyped to avoid forward-ref import order issues)
+    field: str,
+    value,
+    source: str,
+) -> None:
+    """Single chokepoint for writing any user-editable disc_titles label
+    field, generalizing `set_title_type` to title/edition/description/
+    season/episode (title-state redesign, area 1).
+
+    Each field is stored three ways: `user_<field>` (a human said this),
+    `auto_<field>` (automation concluded this — DiscDB import, scan,
+    detector, group propagation), and the legacy resolved column that
+    every reader consumes. Resolution: `resolved = user ?? auto`.
+
+    Because automated writers touch only `auto_<field>`, an automated
+    pass can NEVER overwrite a human's value — the collision class that
+    produced the labeling data-loss bugs (#775/#778) is gone by
+    construction, not by client-side defense.
+
+    A user write of ``None`` RETRACTS the user value: the resolved
+    column falls back to the automatic one. This matches `user_type`
+    semantics (un-ignore clears user_type and the auto opinion shows
+    through) — "the user removed their correction" restores automation's
+    answer rather than pinning an empty value forever.
+
+    `field='type'` delegates to `set_title_type` so callers can route
+    every label field through one function.
+    """
+    if field == "type":
+        set_title_type(title, value, source)
+        return
+    if field not in PROVENANCED_TITLE_FIELDS:
+        raise ValueError(
+            f"set_title_field: field must be one of {PROVENANCED_TITLE_FIELDS + ('type',)}, got {field!r}"
+        )
+    if source not in ("user", "auto"):
+        raise ValueError(f"set_title_field: source must be 'user' or 'auto', got {source!r}")
+    setattr(title, f"{source}_{field}", value)
+    user_val = getattr(title, f"user_{field}", None)
+    setattr(title, field, user_val if user_val is not None else getattr(title, f"auto_{field}", None))
+
+
+def title_provenance_payload(title) -> dict:
+    """The user_/auto_ source-split for every provenanced label field, as
+    serializer-ready keys. One definition so the five title serializers
+    (workflow-context GET, disc titles list, patch echo, …) can't drift."""
+    payload: dict = {
+        "auto_type": getattr(title, "auto_type", None),
+        "user_type": getattr(title, "user_type", None),
+    }
+    for f in PROVENANCED_TITLE_FIELDS:
+        payload[f"auto_{f}"] = getattr(title, f"auto_{f}", None)
+        payload[f"user_{f}"] = getattr(title, f"user_{f}", None)
+    return payload
+
+
 def _format_rank(fmt: str | None) -> int:
     if not fmt:
         return 0
@@ -1610,16 +1672,15 @@ def _apply_discdb_metadata_to_titles(disc, db_mapping: dict):
             resolved = _canonical_disc_title_type(type_val)
             if not (prefill_miss and resolved == "ignore"):
                 set_title_type(title, resolved, source="auto")
-        if hasattr(title, "title"):
-            title.title = track_data.get("episode_name") or track_data.get("title")
-        if hasattr(title, "season"):
-            title.season = _normalize_optional_int(track_data.get("season"))
-        if hasattr(title, "episode"):
-            title.episode = _normalize_optional_int(track_data.get("episode"))
-        if hasattr(title, "description"):
-            desc = track_data.get("description")
-            if desc is not None:
-                title.description = desc
+        # DiscDB overlay is automation: it writes the auto columns only, so
+        # a user's hand-typed label on a re-looked-up disc survives the
+        # overlay by construction (set_title_field resolves user ?? auto).
+        set_title_field(title, "title", track_data.get("episode_name") or track_data.get("title"), source="auto")
+        set_title_field(title, "season", _normalize_optional_int(track_data.get("season")), source="auto")
+        set_title_field(title, "episode", _normalize_optional_int(track_data.get("episode")), source="auto")
+        desc = track_data.get("description")
+        if desc is not None:
+            set_title_field(title, "description", desc, source="auto")
 
     # Any title that still has no type (not in db_mapping or blank in payload) should be ignore
     if not prefill_miss:
@@ -1662,20 +1723,26 @@ def _apply_discdb_tracks(disc, db_mapping: dict):
         type_val = _canonical_disc_title_type(type_val)
         if prefill_miss and type_val == "ignore":
             type_val = None
+        imported_title = track_data.get("episode_name") or track_data.get("title")
+        imported_season = _normalize_optional_int(track_data.get("season"))
+        imported_episode = _normalize_optional_int(track_data.get("episode"))
         title_row = models.DiscTitle(
             id=str(uuid.uuid4()),
             disc_id=disc.id,
             index=None,
             order_index=idx,
             source_file=str(source_file),
-            title=track_data.get("episode_name") or track_data.get("title"),
-            # DiscDB import → auto provenance. Mirror the helper's
-            # resolution rule here at construction time (no user_type
-            # yet, so the cache = auto_type).
+            # DiscDB import → auto provenance for every label field.
+            # Mirror the helper's resolution rule at construction time
+            # (no user_* yet, so each resolved cache = its auto column).
+            title=imported_title,
+            auto_title=imported_title,
             type=type_val,
             auto_type=type_val,
-            season=_normalize_optional_int(track_data.get("season")),
-            episode=_normalize_optional_int(track_data.get("episode")),
+            season=imported_season,
+            auto_season=imported_season,
+            episode=imported_episode,
+            auto_episode=imported_episode,
         )
         disc.titles.append(title_row)
 
@@ -1916,8 +1983,10 @@ def _reconcile_disc_title_from_scan_track(disc, title_row: models.DiscTitle, t: 
     title_row.duration_raw = t.get("duration_raw") or t.get("duration")
     title_row.size = t.get("size")
     title_row.display_size = t.get("display_size")
-    title_row.season = _normalize_optional_int(t.get("season"))
-    title_row.episode = _normalize_optional_int(t.get("episode"))
+    # Scan-derived season/episode are automation's opinion; a user's
+    # values on a reconciled row survive through resolution.
+    set_title_field(title_row, "season", _normalize_optional_int(t.get("season")), source="auto")
+    set_title_field(title_row, "episode", _normalize_optional_int(t.get("episode")), source="auto")
     title_row.chapters = t.get("chapters") or t.get("chapters_info")
     title_row.streams = t.get("streams") or []
     title_row.language_code = t.get("language_code")
@@ -1943,6 +2012,34 @@ def _sync_duplicate_groups_for_disc_safe(disc) -> None:
     except Exception:
         logger.exception(
             "_sync_duplicate_groups_for_disc_safe failed disc_id=%s",
+            getattr(disc, "id", None),
+        )
+
+
+def _apply_path_b_marks_for_disc_safe(disc) -> None:
+    """Persist Path B obfuscation/subsumption marks after title rows change.
+
+    Runs at scan time so GET workflow-context stays a pure read (it used to
+    perform these writes mid-GET — see apply_path_b_marks_for_disc). The
+    rows must be flushed first so the apply pass sees them. Logs on
+    failure; a failed mark pass must never fail the scan itself."""
+    try:
+        from sqlalchemy import inspect
+        from core.path_b_dedupe import apply_path_b_marks_for_disc
+
+        sess = inspect(disc).session
+        disc_id = getattr(disc, "id", None)
+        if sess is not None and disc_id is not None:
+            sess.flush()
+            cleared, set_sibling, marked, set_sub = apply_path_b_marks_for_disc(sess, str(disc_id))
+            if cleared or set_sibling or marked or set_sub:
+                logger.info(
+                    "Path B (scan-time): disc %s reason cleared=%d set=%d; subsumption ignore=%d set=%d",
+                    disc_id, cleared, set_sibling, marked, set_sub,
+                )
+    except Exception:
+        logger.exception(
+            "_apply_path_b_marks_for_disc_safe failed disc_id=%s",
             getattr(disc, "id", None),
         )
 
@@ -2011,6 +2108,7 @@ def _apply_scan_tracks(disc, scan_tracks: list[dict]):
                 existing_sf.add(sk)
                 added += 1
         _sync_duplicate_groups_for_disc_safe(disc)
+        _apply_path_b_marks_for_disc_safe(disc)
         return
 
     if has_incorrect_source_files:
@@ -2049,6 +2147,7 @@ def _apply_scan_tracks(disc, scan_tracks: list[dict]):
     for idx, sf in enumerate(ordered_sf):
         _append_disc_title_from_scan_track(disc, scan_by_sf_replace[sf], idx)
     _sync_duplicate_groups_for_disc_safe(disc)
+    _apply_path_b_marks_for_disc_safe(disc)
 
 
 def create_job(

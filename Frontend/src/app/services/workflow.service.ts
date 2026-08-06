@@ -10,6 +10,7 @@ import { MovieSummary, BoxsetSummary, ReleaseSummary, MetadataService } from './
 import { LoggerService } from './logger.service';
 import { SystemService } from './system.service';
 import { ToastService, formatHttpErrorDetail } from './toast.service';
+import { TitleStore } from './title-store.service';
 import { LabelForm, isReleaseSufficientlyComplete } from '../pages/ripper/services/label-form.service';
 import { sortTitlesForDisplay } from '../utils/title-display-sort.util';
 import { areLabelTitlesComplete, isTitleIgnoredForStats } from '../utils/title-label-stats.util';
@@ -427,6 +428,9 @@ export interface TitlePatchRequest {
 }
 
 export interface TitlePatchResult {
+  /** On a stale_seq conflict: the row as it now is, so the client can
+   *  reconcile in place instead of refetching every title (#778 stage 2). */
+  current_title?: any;
   title_id: string;
   success: boolean;
   error?: string | null;
@@ -437,11 +441,16 @@ export interface TitlePatchResult {
 export interface TitlePatchResponse {
   titles_version: number;
   result: TitlePatchResult;
+  /** Rows the server's duplicate-group sync modified as a side effect,
+   *  each carrying its bumped title_seq (#775). */
+  synced_titles?: any[];
 }
 
 export interface TitlePatchBatchResponse {
   titles_version: number;
   results: TitlePatchResult[];
+  /** See TitlePatchResponse.synced_titles (#775). */
+  synced_titles?: any[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -513,24 +522,15 @@ export class WorkflowService implements OnDestroy {
     return typeof seq === 'number' ? seq : 0;
   }
 
-  private nextTitleSeq(titleId: string): number {
-    const current = this.latestTitleSeqById.get(titleId) ?? this.getTitleSeqFromContext(titleId);
-    const next = current + 1;
-    this.latestTitleSeqById.set(titleId, next);
-    return next;
+  /** The version we last observed for this title. Read-only on purpose:
+   *  the server owns version assignment (#778 stage 2). Area 5: the cache
+   *  lives in the TitleStore. */
+  private knownTitleSeq(titleId: string): number {
+    return this.titleStore.knownSeq(titleId) || this.getTitleSeqFromContext(titleId);
   }
 
   private syncTitleSeqsFromTitles(titles: any[] | null | undefined): void {
-    if (!titles || titles.length === 0) return;
-    for (const t of titles) {
-      const titleId = t?.title_id;
-      const seq = t?.title_seq;
-      if (!titleId || typeof seq !== 'number') continue;
-      const current = this.latestTitleSeqById.get(titleId) ?? 0;
-      if (seq > current) {
-        this.latestTitleSeqById.set(titleId, seq);
-      }
-    }
+    this.titleStore.learnRowSeqs(titles);
   }
 
   private getContextDiscKey(context: WorkflowContext | null): string | null {
@@ -544,11 +544,7 @@ export class WorkflowService implements OnDestroy {
     const discKey = this.getContextDiscKey(context);
     const version = versionOverride ?? context.titlesVersion;
     if (!discKey || typeof version !== 'number') return;
-    const current = this.titlesVersionAckByDisc.get(discKey) ?? 0;
-    if (version > current) {
-      this.titlesVersionAckByDisc.set(discKey, version);
-    }
-    context.titlesVersionAck = this.titlesVersionAckByDisc.get(discKey);
+    context.titlesVersionAck = this.titleStore.ackVersion(discKey, version);
   }
   private readonly apiUrl = environment.apiBase ?? 'http://localhost:8000';
   private readonly wsBase = this.apiUrl.replace(/^http/, 'ws');
@@ -627,9 +623,8 @@ export class WorkflowService implements OnDestroy {
   private activeDiscContextRequests = new Map<string, Observable<WorkflowContext | null>>();
   private activeJobContextRequests = new Map<string, Observable<WorkflowContext | null>>();
   private failedJobIds = new Set<string>();
-  private titlesVersionAckByDisc = new Map<string, number>();
-  private latestTitlePatchById = new Map<string, string>();
-  private latestTitleSeqById = new Map<string, number>();
+  // Area 5: the three title-state shadow caches (seq, pending text,
+  // version acks) moved into TitleStore — one home, one spec.
   
   // Initial load suppression (prevent redundant refetch from WebSocket sync right after HTTP load)
   private _initialLoadSuppressUntil = new Map<string, number>();
@@ -808,6 +803,10 @@ export class WorkflowService implements OnDestroy {
   
   private metadataSvc = inject(MetadataService);
   private toastSvc = inject(ToastService);
+  /** Area 5: single owner of title-state machinery (seq/pending caches,
+   *  per-title write queue, merge rules). The service is the glue between
+   *  the store and the active context — see the bridge in the ctor. */
+  private titleStore = inject(TitleStore);
 
   constructor(
     private http: HttpClient,
@@ -816,6 +815,16 @@ export class WorkflowService implements OnDestroy {
     private logger: LoggerService,
     private systemService: SystemService
   ) {
+    // Give the TitleStore its one window into the active context. The
+    // dependency stays one-directional (service → store); the store owns
+    // title-state logic, the context stays the single rendering source.
+    this.titleStore.attach({
+      getActiveDiscKey: () => this.getContextDiscKey(this._activeContext$.value),
+      getActiveTitles: () => this._activeContext$.value?.titles ?? null,
+      applyTitles: (update) => this.updateContext(update as Partial<WorkflowContext>),
+      titleKey: (row, context) => this.getTitleKey(row, context),
+    });
+
     // Subscribe to drives from DriveService
     this.driveSvc.drives$.subscribe(drives => {
       this.drives$.next(drives || []);
@@ -2206,19 +2215,13 @@ export class WorkflowService implements OnDestroy {
     }
   }
 
+  /** Persist a single-title patch. Area 5: the TitleStore owns the write —
+   *  per-title queue (later edits to an in-flight title coalesce and send
+   *  with the acked version, so one title's writes can never race each
+   *  other), If-Match stamping, the one-shot user-wins stale retry, and
+   *  applying the ack to the context. */
   patchDiscTitle(discId: string, patch: TitlePatchRequest): Observable<TitlePatchResponse> {
-    const url = `${this.apiUrl}/discs/${discId}/titles`;
-    const patchWithSeq = { ...patch };
-    if (patchWithSeq?.title_id && typeof patchWithSeq.title_seq !== 'number') {
-      patchWithSeq.title_seq = this.nextTitleSeq(patchWithSeq.title_id);
-    }
-    if (patchWithSeq?.title_id && typeof patchWithSeq.title === 'string') {
-      this.latestTitlePatchById.set(patchWithSeq.title_id, patchWithSeq.title);
-    }
-    return this.http.patch<TitlePatchResponse>(url, patchWithSeq).pipe(
-      tap(response => {
-        this.applyTitlePatchResults(discId, [response.result], response.titles_version);
-      }),
+    return this.titleStore.enqueuePatch(discId, patch).pipe(
       catchError(err => {
         this.toastPipelineLockIfAny(err);
         return throwError(() => err);
@@ -2237,23 +2240,10 @@ export class WorkflowService implements OnDestroy {
     }
   }
 
+  /** Persist a batch of title patches. Area 5: delegated to the TitleStore
+   *  (cache stamping, per-row one-shot stale retry, ack application). */
   patchDiscTitlesBatch(discId: string, patches: TitlePatchRequest[]): Observable<TitlePatchBatchResponse> {
-    const url = `${this.apiUrl}/discs/${discId}/titles/batch`;
-    const patched = patches.map(patch => {
-      const nextPatch = { ...patch };
-      if (nextPatch?.title_id && typeof nextPatch.title_seq !== 'number') {
-        nextPatch.title_seq = this.nextTitleSeq(nextPatch.title_id);
-      }
-      if (nextPatch?.title_id && typeof nextPatch.title === 'string') {
-        this.latestTitlePatchById.set(nextPatch.title_id, nextPatch.title);
-      }
-      return nextPatch;
-    });
-    return this.http.patch<TitlePatchBatchResponse>(url, { patches: patched }).pipe(
-      tap(response => {
-        this.applyTitlePatchResults(discId, response.results || [], response.titles_version);
-      })
-    );
+    return this.titleStore.patchBatch(discId, patches);
   }
 
   /**
@@ -2300,16 +2290,7 @@ export class WorkflowService implements OnDestroy {
     }
     if (byId.size === 0) return;
 
-    for (const row of returnedTitles) {
-      const id = row?.title_id;
-      if (id != null && typeof row.title_seq === 'number') {
-        const sid = String(id);
-        const cur = this.latestTitleSeqById.get(sid) ?? 0;
-        if (row.title_seq > cur) {
-          this.latestTitleSeqById.set(sid, row.title_seq);
-        }
-      }
-    }
+    this.titleStore.learnRowSeqs(returnedTitles);
 
     const nextTitles = current.titles.map((t) => {
       let key: string;
@@ -2352,190 +2333,12 @@ export class WorkflowService implements OnDestroy {
     );
   }
 
-  private applyTitlePatchResults(discId: string, results: TitlePatchResult[], titlesVersion: number): void {
-    if (typeof titlesVersion === 'number') {
-      const currentAck = this.titlesVersionAckByDisc.get(discId) ?? 0;
-      this.titlesVersionAckByDisc.set(discId, Math.max(currentAck, titlesVersion));
-    }
-    const current = this._activeContext$.value;
-    if (!current) return;
-    const sampleResult = results.find(r => !!(r?.updated_title?.title || '').toString());
-    const currentDiscKey = this.getContextDiscKey(current);
-    if (currentDiscKey !== discId) return;
-
-    // #383: detect stale_seq conflicts. Backend returns success=false with
-    // error_code='stale_seq' when a write loses to a newer concurrent edit.
-    // Surface a toast and refresh the local title state so the user knows
-    // their write didn't land and so the local title_seq catches up — without
-    // this the per-result drop below silently swallowed lost writes.
-    const staleSeqConflicts = results.filter(r => !r?.success && r?.error_code === 'stale_seq');
-    if (staleSeqConflicts.length > 0) {
-      this.handleStaleSeqConflicts(discId, staleSeqConflicts);
-    }
-
-    // #363 H1: batch responses report pipeline-guard rejections as soft
-    // per-title results — toast once so the user knows the edits were dropped.
-    const lockedResults = results.filter(
-      r => !r?.success && (r?.error_code === 'labels_locked' || r?.error_code === 'type_change_locked'),
-    );
-    if (lockedResults.length > 0) {
-      const msg = (lockedResults[0] as any)?.error || 'Title edits are locked at this pipeline stage';
-      this.toastSvc.show(msg, 'error', 5000);
-    }
-
-    let changed = false;
-    const nextTitles = current.titles ? [...current.titles] : [];
-    results.forEach(result => {
-      if (!result?.success || !result.updated_title) return;
-      const updated = result.updated_title;
-      let updatedKey: string;
-      try {
-        updatedKey = this.getTitleKey(updated, 'applyTitlePatchResults:updated');
-      } catch {
-        return;
-      }
-      const responseSeq = typeof updated.title_seq === 'number' ? updated.title_seq : null;
-      const localSeq = updatedKey ? this.latestTitleSeqById.get(updatedKey) : undefined;
-      if (typeof responseSeq === 'number' && typeof localSeq === 'number' && responseSeq < localSeq) {
-        return;
-      }
-      if (typeof responseSeq === 'number' && updatedKey) {
-        const currentSeq = this.latestTitleSeqById.get(updatedKey) ?? 0;
-        if (responseSeq > currentSeq) {
-          this.latestTitleSeqById.set(updatedKey, responseSeq);
-        }
-      }
-      const idx = nextTitles.findIndex(t => {
-        try {
-          return this.getTitleKey(t, 'applyTitlePatchResults:existing') === updatedKey;
-        } catch {
-          return false;
-        }
-      });
-      if (idx >= 0) {
-        const existingTitle = nextTitles[idx];
-        const pendingTitle = updatedKey ? this.latestTitlePatchById.get(updatedKey) : undefined;
-        const shouldSkipTitle = typeof pendingTitle === 'string' &&
-          typeof updated.title === 'string' &&
-          updated.title !== pendingTitle;
-        if (shouldSkipTitle) {
-        }
-        if (!shouldSkipTitle && typeof updated.title === 'string') {
-          const existingTitleText = (existingTitle?.title ?? '').toString();
-          const updatedTitleText = updated.title.toString();
-          if (existingTitleText && updatedTitleText && existingTitleText !== updatedTitleText) {
-          }
-        }
-        const mergedUpdate = shouldSkipTitle
-          ? { ...updated, title: existingTitle?.title }
-          : updated;
-        if (!shouldSkipTitle && updatedKey) {
-          this.latestTitlePatchById.delete(updatedKey);
-        }
-        nextTitles[idx] = { ...existingTitle, ...mergedUpdate };
-      } else {
-        nextTitles.push(updated);
-      }
-      changed = true;
-    });
-
-    if (changed || typeof titlesVersion === 'number') {
-      this.updateContext({
-        titles: changed ? nextTitles : current.titles,
-        titlesVersion: titlesVersion,
-        titlesVersionAck: this.titlesVersionAckByDisc.get(discId),
-      });
-    }
-  }
-
-  /**
-   * #383: handle stale_seq results from a title PATCH response.
-   *
-   * Stale_seq means: between the user's read and write, someone else
-   * wrote a newer version of the same title. Backend rejected the write
-   * to avoid clobbering. Without explicit handling the result silently
-   * disappears, and the user's edit just doesn't take.
-   *
-   * Strategy (V1):
-   *   1. Toast the user so they know their edit didn't land.
-   *   2. Refetch the disc's titles to refresh local title_seq and the
-   *      displayed values. The user can re-edit if they still want their
-   *      change with full knowledge of the conflicting state.
-   *
-   * Not implemented (deferred): transparent retry with bumped seq. We
-   * could re-PATCH with current_seq + 1 to "win" the second round, but
-   * that would clobber the concurrent edit the toast just warned about.
-   * If telemetry shows users routinely re-edit after a conflict toast,
-   * revisit and offer a "retry my change" affordance instead.
-   */
-  private handleStaleSeqConflicts(
-    discId: string,
-    conflicts: TitlePatchResult[],
-  ): void {
-    const count = conflicts.length;
-    const message = count === 1
-      ? "Your title edit conflicted with a newer change — refreshing."
-      : `${count} title edits conflicted with newer changes — refreshing.`;
-    try {
-      this.toastSvc.show(message, 'error', 5000);
-    } catch {
-      // Toast service failure shouldn't break the refresh.
-    }
-    this.refreshTitleSeqsAfterConflict(discId, conflicts).catch((err) => {
-      this.logger.warn('[WorkflowService] stale_seq refresh failed', err);
-    });
-  }
-
-  /** Refetch the conflicted titles' latest state so local title_seq catches
-   * up before the user's next edit. Uses the lightweight GET endpoint that
-   * was extended to project title_seq (#383 backend change). */
-  private async refreshTitleSeqsAfterConflict(
-    discId: string,
-    conflicts: TitlePatchResult[],
-  ): Promise<void> {
-    if (!discId || conflicts.length === 0) return;
-    const url = `${this.apiUrl}/discs/${encodeURIComponent(discId)}/titles?limit=500`;
-    try {
-      const response: any = await firstValueFrom(this.http.get<any>(url));
-      const items: any[] = Array.isArray(response?.items) ? response.items : [];
-      const seqByTitleId = new Map<string, number>();
-      for (const item of items) {
-        const id = item?.title_id;
-        const seq = typeof item?.title_seq === 'number' ? item.title_seq : null;
-        if (id && seq !== null) seqByTitleId.set(String(id), seq);
-      }
-      // Update local seq cache for every refreshed row — not just the
-      // conflicted ones — so a multi-conflict batch comes out aligned.
-      seqByTitleId.forEach((seq, id) => {
-        const current = this.latestTitleSeqById.get(id) ?? 0;
-        if (seq > current) this.latestTitleSeqById.set(id, seq);
-      });
-      // Patch the active context's title rows with the fresh values so the
-      // user sees the winning state.
-      const current = this._activeContext$.value;
-      const currentDiscKey = current ? this.getContextDiscKey(current) : null;
-      if (!current || currentDiscKey !== discId || !Array.isArray(current.titles)) {
-        return;
-      }
-      const titlesById = new Map<string, any>();
-      for (const item of items) {
-        if (item?.title_id) titlesById.set(String(item.title_id), item);
-      }
-      let changed = false;
-      const nextTitles = current.titles.map((t: any) => {
-        const id = t?.title_id ?? t?.id;
-        const fresh = id ? titlesById.get(String(id)) : null;
-        if (!fresh) return t;
-        changed = true;
-        return { ...t, ...fresh };
-      });
-      if (changed) {
-        this.updateContext({ titles: nextTitles });
-      }
-    } catch (err) {
-      this.logger.warn('[WorkflowService] refreshTitleSeqsAfterConflict fetch failed', err);
-    }
-  }
+  // Area 5: applyTitlePatchResults, applyServerTitleRows,
+  // handleStaleSeqConflicts and refreshTitleSeqsAfterConflict moved into
+  // TitleStore (title-store.service.ts) — write acks, delta folds and
+  // conflict reconciliation are the store's three inputs and live with
+  // their caches. The store reaches the context through the bridge
+  // attached in this service's constructor.
 
   /**
    * Convert API response to WorkflowContext format.
@@ -2887,6 +2690,17 @@ export class WorkflowService implements OnDestroy {
         });
         break;
         
+      case 'titles_changed':
+        // Area 4 of the title-state redesign: the event carries the changed
+        // rows themselves (id, new title_seq, resolved fields, provenance).
+        // Fold them per row — no debounce, no ~1MB context refetch, no
+        // timing windows. Per-row seq gating makes this idempotent: the tab
+        // that made the write already applied these values from its PATCH
+        // response (same seq), so its own echo is a no-op; other tabs
+        // converge immediately.
+        this.titleStore.foldServerRows(message.disc_id, message.titles || [], message.titles_version);
+        break;
+
       case 'context_changed':
         // Skip fetch during POST-driven transition ignore window (e.g. after /label/complete)
         if (message.job_id && this._postTransitionIgnore && this._postTransitionIgnore.jobId === message.job_id && Date.now() < this._postTransitionIgnore.until) {
@@ -3467,7 +3281,7 @@ export class WorkflowService implements OnDestroy {
                   });
                 }
               } else {
-                this.updateContext(context);
+                this.applyFetchedContext(context);
 
                 const determinedStep = this.determineWorkflowStep(context, {
                   respectUserNavigation: true,
@@ -3523,7 +3337,7 @@ export class WorkflowService implements OnDestroy {
             );
             
             if (shouldUpdate) {
-              this.updateContext(context);
+              this.applyFetchedContext(context);
               
               const determinedStep = this.determineWorkflowStep(context, {
                 respectUserNavigation: true,
@@ -3726,7 +3540,7 @@ export class WorkflowService implements OnDestroy {
 
         if (!shouldUpdate) return;
 
-        this.updateContext(context);
+        this.applyFetchedContext(context);
 
         const determinedStep = this.determineWorkflowStep(context, {
           respectUserNavigation: true,
@@ -3784,7 +3598,7 @@ export class WorkflowService implements OnDestroy {
 
           if (!shouldUpdate) return;
 
-          this.updateContext(context);
+          this.applyFetchedContext(context);
 
           const determinedStep = this.determineWorkflowStep(context, {
             respectUserNavigation: true,
@@ -4072,7 +3886,7 @@ export class WorkflowService implements OnDestroy {
                   const activeSource = activeContext.stepNavigationSource;
                   // Don't overwrite labelForm with a sparser one (e.g. after Start Copy, refetch can return before disc save)
                   context = this._mergeLabelFormFromActive(context, activeContext);
-                  this.updateContext(context);
+                  this.applyFetchedContext(context);
                   if (activeStep != null && activeStep !== undefined) {
                     this.updateContext({
                       workflowStep: activeStep,
@@ -4104,7 +3918,7 @@ export class WorkflowService implements OnDestroy {
                 const activeStep = activeContext.workflowStep;
                 const activeSource = activeContext.stepNavigationSource;
                 context = this._mergeLabelFormFromActive(context, activeContext);
-                this.updateContext(context);
+                this.applyFetchedContext(context);
                 if (activeStep != null && activeStep !== undefined) {
                   this.updateContext({
                     workflowStep: activeStep,
@@ -4328,7 +4142,7 @@ export class WorkflowService implements OnDestroy {
    */
   applyContextIfMatchesSelection(context: WorkflowContext): boolean {
     if (!this.contextMatchesSelection(context)) return false;
-    this.updateContext(context);
+    this.applyFetchedContext(context);
     return true;
   }
 
@@ -4826,11 +4640,9 @@ export class WorkflowService implements OnDestroy {
     if (updates.titlesVersion !== undefined) {
         const discKey = this.getContextDiscKey(current);
         if (discKey && typeof updates.titlesVersion === 'number') {
-          const currentAck = this.titlesVersionAckByDisc.get(discKey) ?? 0;
-          this.titlesVersionAckByDisc.set(discKey, Math.max(currentAck, updates.titlesVersion));
           nextUpdates = {
             ...nextUpdates,
-            titlesVersionAck: this.titlesVersionAckByDisc.get(discKey),
+            titlesVersionAck: this.titleStore.ackVersion(discKey, updates.titlesVersion),
           };
         }
       }
@@ -6723,6 +6535,90 @@ export class WorkflowService implements OnDestroy {
    * on a job-type active context, and the workflow surface stays stuck showing the previous state
    * (visible as "Finalizing…" persisting after the rip actually finished) until page reload.
    */
+  /**
+   * Apply a context that came from the SERVER — a refetch, a websocket-driven
+   * fetch, or a save response — reconciling titles per row instead of
+   * replacing the array.
+   *
+   * #778. A fetched context is a snapshot of server state at the moment the
+   * request was *served*, but it is applied whenever the response happens to
+   * *arrive*. Those are different instants. If the user edited a title in
+   * between, wholesale replacement silently reverts that edit: no error, no
+   * toast, the typing just undoes itself. Reconciling per row by version
+   * makes the outcome independent of arrival order, which is the only way
+   * this class of race stops needing timing windows to paper over it.
+   */
+  private applyFetchedContext(context: WorkflowContext): void {
+    this.updateContext(this.withReconciledTitles(context));
+  }
+
+  /**
+   * Merge fetched titles into the local array per row. Never used for local
+   * edits — those are authoritative by definition and go through
+   * updateContext directly.
+   */
+  private withReconciledTitles(context: WorkflowContext): WorkflowContext {
+    const incoming = context?.titles;
+    if (!Array.isArray(incoming)) return context;
+
+    const current = this._activeContext$.value;
+    const local = current?.titles;
+    if (!Array.isArray(local) || local.length === 0) return context;
+
+    // A fetch that returns no titles is not evidence that the titles were
+    // deleted — lightweight fetches (include: 'label,job') legitimately omit
+    // them. Treating "absent" as "empty" would wipe the table.
+    if (incoming.length === 0) {
+      return { ...context, titles: local };
+    }
+
+    const localByKey = new Map<string, any>();
+    for (const t of local) {
+      try {
+        localByKey.set(this.getTitleKey(t, 'withReconciledTitles:local'), t);
+      } catch {
+        continue;
+      }
+    }
+
+    // Server membership wins (a row genuinely removed upstream must vanish),
+    // but per-row CONTENT is decided by version.
+    const merged = incoming.map((row: any) => {
+      let key: string;
+      try {
+        key = this.getTitleKey(row, 'withReconciledTitles:incoming');
+      } catch {
+        return row;
+      }
+      const mine = localByKey.get(key);
+      if (!mine) return row;
+
+      // The version we know about is the highest of what we last read and
+      // what we have written since — latestTitleSeqById tracks in-flight
+      // writes the fetch cannot have seen.
+      const knownSeq = Math.max(
+        this.titleStore.cachedSeq(key),
+        typeof mine.title_seq === 'number' ? mine.title_seq : 0,
+      );
+      const incomingSeq = typeof row.title_seq === 'number' ? row.title_seq : 0;
+
+      // Older-or-equal snapshot: keep what we have. Equal counts as older
+      // because a fetch served before our write commits carries the same
+      // version as the row we read.
+      const base = incomingSeq > knownSeq ? row : mine;
+
+      // Text the user is still typing is never overwritten, at any version:
+      // its write has not resolved yet, so no server snapshot can contain it.
+      const pending = this.titleStore.pendingTextFor(key);
+      if (typeof pending === 'string' && base.title !== pending) {
+        return { ...base, title: mine.title };
+      }
+      return base;
+    });
+
+    return { ...context, titles: merged };
+  }
+
   private _discContextPatchForActiveJob(
     fetched: WorkflowContext,
     changedFields?: string[],

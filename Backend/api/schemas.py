@@ -1410,7 +1410,15 @@ class TitlePatchRequest(BaseModel):
     size: Optional[int] = None
     streams: Optional[Any] = None
     order_index: Optional[int] = None
+    # LEGACY (stage 2, #778): the version the client *claims to be writing*,
+    # computed client-side as cached+1. A guess, and wrong for any write the
+    # client did not observe — which then surfaces as a bogus "conflict".
+    # Kept so older clients keep working; prefer base_seq.
     title_seq: Optional[int] = None
+    # The version the client READ, If-Match style. The server compares it to
+    # the current row and assigns the next version itself. The client never
+    # computes a version, so it can never guess wrong.
+    base_seq: Optional[int] = None
     active: Optional[bool] = None
 
 
@@ -1426,18 +1434,29 @@ class TitlePatchResult(BaseModel):
     error: Optional[str] = None
     error_code: Optional[str] = None
     updated_title: Optional[Dict[str, Any]] = None
+    # On a stale_seq conflict: the row as it actually is now. Lets the client
+    # reconcile in place instead of refetching every title on the disc, which
+    # is what made a single conflict wipe an entire label form (#775/#778).
+    current_title: Optional[Dict[str, Any]] = None
 
 
 class TitlePatchResponse(BaseModel):
     """Response schema for a single title patch."""
     titles_version: int
     result: TitlePatchResult
+    # Rows the duplicate-group sync modified as a side effect of this patch —
+    # demoted siblings, primary adjustments — each with its bumped title_seq.
+    # Without these the client's per-title seq cache goes stale invisibly and
+    # the user's next edit to a sibling is rejected as a conflict (#775).
+    synced_titles: Optional[List[Dict[str, Any]]] = None
 
 
 class TitlePatchBatchResponse(BaseModel):
     """Response schema for a batch title patch."""
     titles_version: int
     results: List[TitlePatchResult]
+    # See TitlePatchResponse.synced_titles (#775).
+    synced_titles: Optional[List[Dict[str, Any]]] = None
 
 
 class WorkflowContextResponse(BaseModel):

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, EventEmitter, inject, Input, Output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, EventEmitter, inject, Input, OnDestroy, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Observable, of } from 'rxjs';
@@ -72,7 +72,13 @@ const STATUS_TOOLTIP: Record<string, string> = {
   templateUrl: './title-editor.component.html',
   styleUrls: ['./title-editor.component.scss'],
 })
-export class TitleEditorComponent {
+export class TitleEditorComponent implements OnDestroy {
+  /** Last line of defence: tearing down mid-edit (navigating away, switching
+   *  card) must not strand a buffered typed field unsaved. */
+  ngOnDestroy(): void {
+    this.flushPendingFieldEdits();
+  }
+
   readonly titleTypeOptions = TITLE_TYPE_SELECT_OPTIONS;
 
   @Input() title: any = null;
@@ -184,10 +190,15 @@ export class TitleEditorComponent {
     const idx = Number(indexValue);
     if (!Number.isInteger(idx) || idx < 0 || idx >= options.length) return;
     const ep = options[idx];
+    // Carry buffered edits in this write; the picker's season/episode/title
+    // override them (explicit pick wins over half-typed text, and a late
+    // idle-flush must not overwrite the picked name).
+    const pending = this.takePendingFieldsFor(this.title.title_id);
     this.title.season = ep.season_number;
     this.title.episode = ep.episode_number;
     this.title.title = ep.name;
     this.emitFieldPatch({
+      ...pending,
       season: ep.season_number,
       episode: ep.episode_number,
       title: ep.name || null,
@@ -263,24 +274,29 @@ export class TitleEditorComponent {
     this.title.description = value;
     this.title.note = value;
     const normalized = value === '' ? null : value;
-    this.emitFieldPatch({ description: normalized });
+    this.bufferFieldPatch({ description: normalized });
     this.titleChanged.emit();
   }
 
   markAsIgnore(): void {
     if (!this.title) return;
+    // Carry (or deliberately drop) any buffered typed fields in this same
+    // write — see takePendingFieldsFor.
+    const pending = this.takePendingFieldsFor(this.title.title_id);
     const currentType = (this.title.type || '').toString().toLowerCase();
     if (currentType === 'ignore') {
       this.title.type = '';
       // Un-ignore: clear only type. Row-level markAsIgnore matches this
       // (title-label.component.ts:733).
-      this.emitFieldPatch({ type: null });
+      this.emitFieldPatch({ ...pending, type: null });
     } else {
       this.title.type = 'ignore';
       this.clearIgnoredFields();
       // Ignore: mirror clearIgnoredFields() + edition null so the backend
       // matches what row-level markAsIgnore sends (title-label.component.ts:724-731).
+      // Nulls override pending text: ignore clears.
       this.emitFieldPatch({
+        ...pending,
         type: 'ignore',
         title: null,
         description: null,
@@ -311,12 +327,16 @@ export class TitleEditorComponent {
    * round-trip completes. */
   confirmAutoIgnore(): void {
     if (!this.title) return;
+    // Drop any buffered typed fields into this write (they're about to be
+    // cleared anyway — but they must not flush later as a separate write).
+    const pending = this.takePendingFieldsFor(this.title.title_id);
     this.title.user_type = 'ignore';
     this.title.type = 'ignore';
     // Same PATCH shape as markAsIgnore going TO ignore — backend routes
     // type-writes through set_title_type(source='user') which flips user_type
     // automatically, so we don't have to include it explicitly.
     this.emitFieldPatch({
+      ...pending,
       type: 'ignore',
       title: null,
       description: null,
@@ -328,12 +348,20 @@ export class TitleEditorComponent {
   }
 
   onTypeChange(value: any): void {
+    // Picked, not typed — saves immediately. A name typed just before may
+    // still be buffered; it rides in THIS write rather than flushing as a
+    // separate one (two same-tick writes to one row carry the same
+    // base_seq — one of them always loses).
     if (!this.title) return;
+    const pending = this.takePendingFieldsFor(this.title.title_id);
+    this.flushPendingFieldEdits(); // other rows' leftovers, if any
     this.title.type = value;
     const normalizedType = value === '' ? null : value;
     if (this.isIgnored()) {
       this.clearIgnoredFields();
+      // Nulls intentionally override any pending text: ignore clears.
       this.emitFieldPatch({
+        ...pending,
         type: normalizedType,
         title: null,
         description: null,
@@ -342,7 +370,7 @@ export class TitleEditorComponent {
         edition: null,
       });
     } else {
-      this.emitFieldPatch({ type: normalizedType });
+      this.emitFieldPatch({ ...pending, type: normalizedType });
     }
     this.titleChanged.emit();
   }
@@ -532,14 +560,91 @@ export class TitleEditorComponent {
     this.titlePatched.emit({ title_id: titleId, ...fields });
   }
 
-  /** ngModelChange handlers for direct-bound fields — the template used to
-   * call `titleChanged.emit()` inline, but that only nudged the in-memory
-   * context. Now each field also emits a `titlePatched` so the backend is
-   * kept in sync per keystroke (matches the pre-9cc142e4 row-editor path). */
+  /** Typed-field edits awaiting flush, keyed by title id.
+   *
+   *  These fields used to PATCH on every ngModelChange — literally per
+   *  keystroke, as the previous comment here proudly noted. Each response
+   *  echoed the server's value back into the ngModel-bound input, so a burst
+   *  of late echoes visibly re-typed the field character by character and
+   *  could drop the last few: the final keystrokes' write had not returned
+   *  when an older echo landed.
+   *
+   *  Typed fields now buffer and flush once on blur. Fields the user *picks*
+   *  (the type dropdown) still save immediately — one deliberate action, one
+   *  write. */
+  private pendingFieldEdits = new Map<string, Partial<TitlePatchRequest>>();
+  private autosaveTimer: any = null;
+
+  /** Idle delay before a buffered edit is written. Long enough that a normal
+   *  typing burst produces ONE write instead of one per character, short
+   *  enough that the edit is durable without the user doing anything.
+   *
+   *  Blur alone is not a sufficient trigger: if focus never leaves the field
+   *  — the editor re-renders, the user tabs away in a way that doesn't fire
+   *  blur, the pane closes — the edit is silently never saved, and the next
+   *  refresh shows the last value that did save. That regression is exactly
+   *  what a blur-only design produced. */
+  private static readonly AUTOSAVE_IDLE_MS = 700;
+
+  private bufferFieldPatch(fields: Partial<TitlePatchRequest>): void {
+    const titleId = this.title?.title_id;
+    if (!titleId) return;
+    const existing = this.pendingFieldEdits.get(titleId) || {};
+    this.pendingFieldEdits.set(titleId, { ...existing, ...fields });
+    this.scheduleAutosave();
+  }
+
+  /** Restart the idle timer. Each keystroke pushes the write out, so a burst
+   *  of typing collapses into a single request after the user pauses. */
+  private scheduleAutosave(): void {
+    if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = setTimeout(() => {
+      this.autosaveTimer = null;
+      this.flushPendingFieldEdits();
+    }, TitleEditorComponent.AUTOSAVE_IDLE_MS);
+  }
+
+  /** Send everything buffered. Safe to call repeatedly — a flush with nothing
+   *  pending is a no-op, so blur on an untouched field costs no request. */
+  flushPendingFieldEdits(): void {
+    if (this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+    if (this.pendingFieldEdits.size === 0) return;
+    const pending = this.pendingFieldEdits;
+    this.pendingFieldEdits = new Map();
+    pending.forEach((fields, titleId) => {
+      this.titlePatched.emit({ title_id: titleId, ...fields } as TitlePatchRequest);
+    });
+  }
+
+  /** Remove and return the buffered edits for one title so an immediate
+   *  write (type pick, ignore, episode pick) can carry them in the SAME
+   *  request. Users don't wait for autosave — they type a name and go
+   *  straight for the dropdown. Flushing the buffer as a *separate*
+   *  request races the immediate one: both leave with the same base_seq,
+   *  so one is guaranteed a stale-seq conflict. One request can't race
+   *  itself. Also stops a late idle-flush from resurrecting a typed name
+   *  onto a row the immediate write just cleared (ignore). */
+  private takePendingFieldsFor(titleId: string | null | undefined): Partial<TitlePatchRequest> {
+    if (!titleId) return {};
+    const pending = this.pendingFieldEdits.get(titleId);
+    if (!pending) return {};
+    this.pendingFieldEdits.delete(titleId);
+    if (this.pendingFieldEdits.size === 0 && this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+    return pending;
+  }
+
+  /** ngModelChange handlers for direct-bound fields. They update the bound
+   *  model (so typing stays responsive) and buffer the write for blur. */
   onTitleNameChange(value: any): void {
     if (!this.title) return;
     const normalized = value === '' ? null : value;
-    this.emitFieldPatch({ title: normalized });
+    this.bufferFieldPatch({ title: normalized });
     this.titleChanged.emit();
   }
 
@@ -547,7 +652,7 @@ export class TitleEditorComponent {
     if (!this.title) return;
     const num = value === null || value === '' ? null : Number(value);
     const normalized = Number.isFinite(num) ? num : null;
-    this.emitFieldPatch({ season: normalized as number | null });
+    this.bufferFieldPatch({ season: normalized as number | null });
     this.titleChanged.emit();
   }
 
@@ -555,14 +660,14 @@ export class TitleEditorComponent {
     if (!this.title) return;
     const num = value === null || value === '' ? null : Number(value);
     const normalized = Number.isFinite(num) ? num : null;
-    this.emitFieldPatch({ episode: normalized as number | null });
+    this.bufferFieldPatch({ episode: normalized as number | null });
     this.titleChanged.emit();
   }
 
   onEditionChange(value: any): void {
     if (!this.title) return;
     const normalized = value === '' ? null : value;
-    this.emitFieldPatch({ edition: normalized });
+    this.bufferFieldPatch({ edition: normalized });
     this.titleChanged.emit();
   }
 }

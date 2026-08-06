@@ -1,4 +1,4 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed, fakeAsync, tick, flush } from '@angular/core/testing';
 import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
 import { BehaviorSubject } from 'rxjs';
 import { TitleEditorComponent } from './title-editor.component';
@@ -396,4 +396,159 @@ describe('TitleEditorComponent', () => {
       expect(labels).toContain('Episode');
     });
   });
+
+  describe('typed fields write on blur, not per keystroke', () => {
+    /** The reported symptom: "I type, then it refetches, resets, and slowly
+     *  re-types everything I just typed, sometimes losing the last couple of
+     *  characters." Cause: every ngModelChange issued a PATCH, and each
+     *  response echoed the server value back into the ngModel-bound input,
+     *  so late echoes replayed the field character by character. */
+    const bindTitle = () => {
+      component.title = { title_id: 'tid-1', title: 'Original', type: null } as any;
+      fixture.detectChanges();
+    };
+
+    it('saves after an idle pause even if blur NEVER fires', fakeAsync(() => {
+      // The regression this replaces: writes happened only on blur, so if
+      // focus never left the field the edit was silently lost and the next
+      // refresh showed the last value that did save.
+      bindTitle();
+      const spy = spyOn(component.titlePatched, 'emit');
+      component.onTitleNameChange('Typed but never blurred');
+
+      tick(699);
+      expect(spy).not.toHaveBeenCalled();   // still coalescing
+      tick(1);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(
+        jasmine.objectContaining({ title: 'Typed but never blurred' }));
+      flush();
+    }));
+
+    it('a typing burst still collapses to ONE write, not one per keystroke', fakeAsync(() => {
+      bindTitle();
+      const spy = spyOn(component.titlePatched, 'emit');
+      const text = 'Behind The Scenes';
+      for (let i = 1; i <= text.length; i++) {
+        component.onTitleNameChange(text.slice(0, i));
+        tick(50);                            // fast typing, under the idle window
+      }
+      expect(spy).not.toHaveBeenCalled();
+      tick(700);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(jasmine.objectContaining({ title: text }));
+      flush();
+    }));
+
+    it('blur still saves immediately, without waiting out the idle timer', fakeAsync(() => {
+      bindTitle();
+      const spy = spyOn(component.titlePatched, 'emit');
+      component.onTitleNameChange('Quick');
+      component.flushPendingFieldEdits();
+      expect(spy).toHaveBeenCalledTimes(1);
+      tick(1000);
+      expect(spy).toHaveBeenCalledTimes(1);   // timer did not double-write
+      flush();
+    }));
+
+    it('typing a whole word issues ZERO writes', () => {
+      bindTitle();
+      const spy = spyOn(component.titlePatched, 'emit');
+      const text = 'Behind The Scenes';
+      for (let i = 1; i <= text.length; i++) {
+        component.onTitleNameChange(text.slice(0, i));
+      }
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('blur writes once, with the final value', () => {
+      bindTitle();
+      const text = 'Behind The Scenes';
+      for (let i = 1; i <= text.length; i++) component.onTitleNameChange(text.slice(0, i));
+
+      const spy = spyOn(component.titlePatched, 'emit');
+      component.flushPendingFieldEdits();
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(
+        jasmine.objectContaining({ title_id: 'tid-1', title: 'Behind The Scenes' }));
+    });
+
+    it('no keystroke is lost — the last character always makes it', () => {
+      bindTitle();
+      component.onTitleNameChange('abc');
+      component.onTitleNameChange('abcd');   // final keystroke
+      const spy = spyOn(component.titlePatched, 'emit');
+      component.flushPendingFieldEdits();
+      expect(spy).toHaveBeenCalledWith(jasmine.objectContaining({ title: 'abcd' }));
+    });
+
+    it('blurring an untouched field costs no request', () => {
+      bindTitle();
+      const spy = spyOn(component.titlePatched, 'emit');
+      component.flushPendingFieldEdits();
+      component.flushPendingFieldEdits();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('several typed fields coalesce into one write', () => {
+      bindTitle();
+      component.onTitleNameChange('A Name');
+      component.onEditionChange('Extended');
+      component.onSeasonChange(2);
+      const spy = spyOn(component.titlePatched, 'emit');
+      component.flushPendingFieldEdits();
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(jasmine.objectContaining({
+        title_id: 'tid-1', title: 'A Name', edition: 'Extended', season: 2,
+      }));
+    });
+
+    it('changing the type carries the pending name in the SAME write', () => {
+      // One gesture, one request. Flushing the buffered name as a separate
+      // write raced the type write — both left with the same base_seq, so
+      // one of them always lost (measured on rc.3: 7/7 same-tick pairs
+      // collided). Users don't wait for autosave; the next action must
+      // carry the pending edit with it.
+      bindTitle();
+      component.onTitleNameChange('Renamed');
+      const seen: any[] = [];
+      spyOn(component.titlePatched, 'emit').and.callFake((p: any) => { seen.push(p); return true as any; });
+      component.onTypeChange('Featurette');
+      expect(seen.length).toBe(1);
+      expect(seen[0]).toEqual(jasmine.objectContaining({
+        title_id: 'tid-1', title: 'Renamed', type: 'Featurette',
+      }));
+    });
+
+    it('a pending name never flushes late after the type write consumed it', () => {
+      bindTitle();
+      component.onTitleNameChange('Renamed');
+      component.onTypeChange('Featurette');
+      const spy = spyOn(component.titlePatched, 'emit');
+      component.flushPendingFieldEdits();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('ignoring with a pending name clears it in the same write (no resurrection)', () => {
+      bindTitle();
+      component.onTitleNameChange('Half Typed');
+      const seen: any[] = [];
+      spyOn(component.titlePatched, 'emit').and.callFake((p: any) => { seen.push(p); return true as any; });
+      component.markAsIgnore();
+      expect(seen.length).toBe(1);
+      expect(seen[0]).toEqual(jasmine.objectContaining({ type: 'ignore', title: null }));
+      component.flushPendingFieldEdits();
+      expect(seen.length).toBe(1); // nothing buffered survived to flush later
+    });
+
+    it('teardown mid-edit still saves', () => {
+      bindTitle();
+      component.onTitleNameChange('Unsaved');
+      const spy = spyOn(component.titlePatched, 'emit');
+      component.ngOnDestroy();
+      expect(spy).toHaveBeenCalledWith(jasmine.objectContaining({ title: 'Unsaved' }));
+    });
+  });
+
 });

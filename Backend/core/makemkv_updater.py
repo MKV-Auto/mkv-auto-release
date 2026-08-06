@@ -34,6 +34,26 @@ from core.utils import get_makemkvcon_path, get_mkvauto_tmp, hash_file
 
 FFMPEG_URL_TEMPLATE = "https://ffmpeg.org/releases/ffmpeg-{version}.tar.xz"
 
+# ─── FFmpeg compatibility ceiling ───────────────────────────────────────────
+# MakeMKV's libffabi is compiled against whatever FFmpeg we build here, and it
+# still uses AVCodec fields that FFmpeg deprecated in 7.1 (in favour of
+# avcodec_get_supported_config()) and REMOVED in 9.0: `ch_layouts`,
+# `sample_fmts`, `supported_samplerates`. Building MakeMKV against 9.x fails
+# with "error: 'AVCodec' has no member named 'ch_layouts'" and friends.
+#
+# This resolver used to take the newest tarball on ffmpeg.org unconditionally,
+# which made every install a hostage to upstream's release schedule: FFmpeg 9.0
+# was published 2026-08-03 and every fresh install broke that day, with no
+# change on our side. The ceiling is EXCLUSIVE and deliberately coarse — we
+# still track the newest release below it, so 8.x point releases (including
+# security fixes) roll in automatically; only the major bump is gated.
+#
+# Raise this when MakeMKV's ffabi moves onto avcodec_get_supported_config().
+# Verify first by building against the new major in a scratch container —
+# `mkv test makemkv` covers it — because the failure mode is a compile error
+# an hour into a user's first-run setup.
+FFMPEG_MAX_VERSION_EXCLUSIVE = (9, 0)
+
 # ─── Version cache (#343) ───────────────────────────────────────────────────
 # Cache installed version keyed by resolved path + st_size + st_mtime_ns.
 # Invalidated when the binary changes (stat differs) or explicitly via
@@ -63,10 +83,46 @@ MAKEMKV_DOWNLOAD_TIMEOUT = 30
 # Max seconds with no data received before treating connection as stalled (open but not downloading)
 MAKEMKV_DOWNLOAD_PROGRESS_TIMEOUT = 15
 WAYBACK_REQUEST_TIMEOUT = 15
-WAYBACK_DOWNLOAD_TIMEOUT = 120  # Archive.org can be slow; allow longer for fallback downloads
+# CDX is an index SCAN, not a lookup, and is routinely far slower than the
+# availability API this timeout was sized for. Measured from the ripper on
+# 2026-08-05: 32.5s, 8.2s, >60s for the same query. At 15s the primary
+# resolver timed out on most attempts and fell through to the availability
+# API — which is the endpoint that rate-limits — so a first-run install
+# failed with "archive.org could not be queried" while CDX itself was
+# perfectly healthy. Found by running the actual setup wizard; the unit
+# tests mock requests, so the timeout never showed up there.
+WAYBACK_CDX_TIMEOUT = 90
+# Archive.org is a slow mirror serving large files, and with makemkv.com down
+# it is the ONLY source — so a transient stall here fails a user's install
+# outright. Measured on a GitHub runner (2026-08-05): the 6.6MB oss tarball
+# timed out at 120s while the same fetch succeeded in ~60s from another host.
+WAYBACK_DOWNLOAD_TIMEOUT = 300
+# A capture that times out deserves another go before we write it off: a
+# popular tarball often has exactly ONE usable capture, so "move to the next
+# capture" is frequently not an option at all.
+WAYBACK_DOWNLOAD_ATTEMPTS = 3
+WAYBACK_DOWNLOAD_RETRY_BACKOFF_S = (5, 20)
 
 # Wayback Machine fallback when makemkv.com is unreachable
 WAYBACK_AVAILABLE_API = "https://archive.org/wayback/available"
+# CDX is the Wayback *index*: one row per capture, filterable and sortable,
+# where the availability API above returns a single "closest" snapshot and
+# nothing else. Both matter here — see _wayback_snapshot_urls_for.
+WAYBACK_CDX_API = "https://web.archive.org/cdx/search/cdx"
+# How many archived captures to try before giving up. Captures of one URL
+# are few (2 for the 1.18.4 tarballs), so this is a generous ceiling.
+WAYBACK_MAX_SNAPSHOTS = 5
+# A capture smaller than this is a crawl artifact, not a tarball — the
+# 1.18.4 captures from 2026-07-11 are 1,027-byte error pages recorded while
+# makemkv.com was already failing. Reject them from the index rather than
+# downloading and failing verification.
+WAYBACK_MIN_TARBALL_BYTES = 1_000_000
+# archive.org rate-limits its index aggressively and answers 429 with an HTML
+# body. That is a "come back shortly", not an answer, so retry a few times
+# with backoff before giving up. Bounded: an install already takes minutes,
+# but it must not hang here.
+WAYBACK_RATE_LIMIT_RETRIES = 3
+WAYBACK_RATE_LIMIT_BACKOFF_S = (5, 15, 30)
 WAYBACK_FORUM_FALLBACK_URL = (
     "https://web.archive.org/web/20260220053429/"
     "https://forum.makemkv.com/forum/viewtopic.php?t=224&f=3"
@@ -85,6 +141,19 @@ DOWNLOAD_HEADERS = {
 WAYBACK_DOWNLOAD_HEADERS = {**DOWNLOAD_HEADERS, "Accept-Encoding": "identity"}
 
 log = logging.getLogger("core.makemkv_updater")
+
+
+class BuildEnvironmentError(RuntimeError):
+    """The BUILD HOST is not equipped — missing compiler, headers, libraries.
+
+    Deliberately not a MakeMKVUpdateError subclass so callers cannot lump it
+    in with "this version pair does not work". It is a statement about the
+    machine, not about the software: the version-matrix job publishes
+    compatibility claims, and a misconfigured runner recording
+    "1.18.4 is incompatible with every FFmpeg" would tell users something
+    false about their software (observed 2026-08-05, when a runner missing
+    libx264-dev published exactly that).
+    """
 
 
 class MakeMKVUpdateError(RuntimeError):
@@ -367,21 +436,149 @@ def _download(
         log_cb(f"Downloaded {url}")
 
 
-def _wayback_url_for(original_url: str) -> Optional[str]:
-    """Resolve Wayback Machine snapshot URL for the given URL, or None if not archived."""
+class WaybackLookupError(Exception):
+    """The archive could not be *asked* (rate limit, network, bad response).
+
+    Distinct from "asked, and there are no captures". Conflating the two is
+    how a routine HTTP 429 from archive.org came to be reported to users as
+    "no Wayback snapshot for URL …" while the file was, in fact, archived.
+    """
+
+
+def _cdx_rows(original_url: str) -> list[list]:
+    """Query the Wayback CDX index for every capture of ``original_url``.
+
+    Returns CDX rows (timestamp/status/digest/length per capture), newest
+    first. Raises WaybackLookupError when the index cannot be reached or
+    answers with something that isn't the JSON we asked for — notably an
+    HTML 429 body, which archive.org serves freely under load.
+
+    ``collapse=digest`` drops consecutive captures with identical content,
+    so we try genuinely different bytes rather than the same file five
+    times.
+    """
+    params = {
+        "url": original_url,
+        "output": "json",
+        "filter": "statuscode:200",
+        "collapse": "digest",
+        "limit": str(-WAYBACK_MAX_SNAPSHOTS),  # negative = the LAST n (newest)
+    }
+    resp = None
+    for attempt in range(WAYBACK_RATE_LIMIT_RETRIES + 1):
+        try:
+            resp = requests.get(
+                WAYBACK_CDX_API,
+                params=params,
+                timeout=WAYBACK_CDX_TIMEOUT,
+                headers=DOWNLOAD_HEADERS,
+            )
+        except Exception as exc:
+            raise WaybackLookupError(f"CDX request failed: {exc}") from exc
+        if resp.status_code != 429:
+            break
+        if attempt >= WAYBACK_RATE_LIMIT_RETRIES:
+            break
+        # Honour Retry-After when archive.org sends it; otherwise back off.
+        delay = WAYBACK_RATE_LIMIT_BACKOFF_S[min(attempt, len(WAYBACK_RATE_LIMIT_BACKOFF_S) - 1)]
+        try:
+            delay = max(delay, int(resp.headers.get("Retry-After", 0)))
+        except (TypeError, ValueError):
+            pass
+        log.info("CDX rate-limited; retrying in %ss (attempt %d)", delay, attempt + 1)
+        time.sleep(delay)
+    if resp is None:
+        raise WaybackLookupError("CDX request produced no response")
+    if resp.status_code == 429:
+        raise WaybackLookupError("CDX rate-limited (HTTP 429) after retries")
+    if resp.status_code >= 400:
+        raise WaybackLookupError(f"CDX returned HTTP {resp.status_code}")
+    body = (resp.text or "").strip()
+    if not body:
+        return []  # asked successfully; genuinely no captures
+    try:
+        rows = json.loads(body)
+    except ValueError as exc:
+        # An HTML body here means an error page, not an empty index.
+        raise WaybackLookupError(f"CDX returned non-JSON body: {body[:120]!r}") from exc
+    if not isinstance(rows, list) or len(rows) < 2:
+        return []
+    return list(reversed(rows[1:]))  # drop header row; newest first
+
+
+def _wayback_snapshot_urls_for(
+    original_url: str, *, min_bytes: int = 0
+) -> list[str]:
+    """Candidate archive.org download URLs for ``original_url``, best first.
+
+    Every capture is a candidate, not just the "closest" one: the index
+    routinely holds duds alongside good copies (the 1.18.4 tarballs have a
+    good June capture and a 1 KB July error page each), so the caller walks
+    the list until a download verifies.
+
+    ``min_bytes`` filters obvious non-tarballs out of the index using the
+    CDX record length, which avoids spending a download on them.
+
+    Falls back to the availability API when CDX cannot answer, so a CDX
+    outage degrades to the previous single-snapshot behaviour rather than
+    to nothing.
+    """
+    urls: list[str] = []
+    cdx_answered = False
+    try:
+        rows = _cdx_rows(original_url)
+        cdx_answered = True
+        for row in rows:
+            # CDX row: [urlkey, timestamp, original, mimetype, statuscode, digest, length]
+            if len(row) < 7:
+                continue
+            timestamp = row[1]
+            try:
+                length = int(row[6])
+            except (TypeError, ValueError):
+                length = 0
+            if min_bytes and length and length < min_bytes:
+                log.info(
+                    "Skipping archive.org capture %s of %s: %d bytes is too small to be the tarball",
+                    timestamp, original_url, length,
+                )
+                continue
+            # id_ suffix returns raw content without Wayback rewriting
+            urls.append(f"https://web.archive.org/web/{timestamp}id_/{original_url}")
+    except WaybackLookupError as exc:
+        log.warning("CDX lookup failed for %s (%s); trying availability API", original_url, exc)
+
+    if urls:
+        return urls
+    if cdx_answered:
+        # CDX is the authoritative index and it answered: there is nothing
+        # usable here. Asking the availability API now would only surface a
+        # capture CDX already told us to reject.
+        return []
+
+    # Secondary: the availability API. One snapshot, no filtering, but a
+    # different endpoint — useful when CDX specifically is unhappy.
     try:
         api_url = f"{WAYBACK_AVAILABLE_API}?url={urllib.parse.quote(original_url, safe='')}"
-        resp = requests.get(api_url, timeout=WAYBACK_REQUEST_TIMEOUT)
+        resp = requests.get(api_url, timeout=WAYBACK_REQUEST_TIMEOUT, headers=DOWNLOAD_HEADERS)
+        if resp.status_code == 429:
+            raise WaybackLookupError("availability API rate-limited (HTTP 429)")
         resp.raise_for_status()
-        data = resp.json()
-        snap = (data.get("archived_snapshots") or {}).get("closest")
-        if not snap or not snap.get("available") or not snap.get("timestamp"):
-            return None
-        # id_ suffix returns raw content without Wayback toolbar
-        result = f"https://web.archive.org/web/{snap['timestamp']}id_/{original_url}"
-        return result
-    except Exception:
+        snap = (resp.json().get("archived_snapshots") or {}).get("closest")
+        if snap and snap.get("available") and snap.get("timestamp"):
+            return [f"https://web.archive.org/web/{snap['timestamp']}id_/{original_url}"]
+    except Exception as exc:
+        raise WaybackLookupError(f"availability API failed: {exc}") from exc
+    return []
+
+
+def _wayback_url_for(original_url: str) -> Optional[str]:
+    """Back-compat single-snapshot resolver. Prefer _wayback_snapshot_urls_for."""
+    try:
+        urls = _wayback_snapshot_urls_for(original_url)
+    except WaybackLookupError:
         return None
+    return urls[0] if urls else None
 
 
 def _download_with_fallback(
@@ -426,43 +623,106 @@ def _download_with_fallback(
             f"Primary and Wayback download failed for URL {url}"
         )
 
-    wayback_url = _wayback_url_for(url)
-    if not wayback_url:
-        raise MakeMKVUpdateError(
-            f"Primary download failed and no Wayback snapshot for URL {url}"
-        )
-
-    fallback_msg = f"Using Wayback Machine fallback for {url}"
-    logs.append(fallback_msg)
-    if log_cb:
-        log_cb(fallback_msg)
-    log.info("%s", fallback_msg)
-
     try:
-        _download(wayback_url, dest, logs, log_cb=log_cb, headers=WAYBACK_DOWNLOAD_HEADERS, timeout=WAYBACK_DOWNLOAD_TIMEOUT)
-    except (MakeMKVUpdateError, TimeoutError) as exc:
-        raise MakeMKVUpdateError(
-            f"Primary and Wayback download failed for URL {url}: {exc}"
-        ) from exc
-
-    # Archive.org sometimes returns double-gzipped content; unwrap one layer so we have normal .tar.gz
-    _unwrap_double_gzip_if_needed(dest, logs, log_cb)
-
-    # Verify the Wayback download is a valid archive; it can be HTML-wrapped or corrupt
-    if not _verify_tarball_gz(dest, logs, log_cb):
+        snapshot_urls = _wayback_snapshot_urls_for(
+            url, min_bytes=WAYBACK_MIN_TARBALL_BYTES
+        )
+    except WaybackLookupError as exc:
+        # We could not ASK the archive. Say that, rather than asserting the
+        # file isn't archived — the two need different actions from the user
+        # (retry later vs. fetch the tarball by hand).
         msg = (
-            "Archive.org download failed verification (file may be HTML-wrapped or corrupted). "
-            "Try the install again later or download the tarball manually from makemkv.com."
+            f"Primary download failed and archive.org could not be queried for {url} "
+            f"({exc}). This is usually a temporary rate limit — try the install again "
+            f"in a few minutes."
         )
         logs.append(msg)
         if log_cb:
             log_cb(msg)
-        log.warning("Wayback download failed verification: %s", url)
+        log.warning("%s", msg)
+        raise MakeMKVUpdateError(msg) from exc
+
+    if not snapshot_urls:
+        raise MakeMKVUpdateError(
+            f"Primary download failed and no Wayback snapshot for URL {url}"
+        )
+
+    # Walk captures newest-first: the index holds duds next to good copies,
+    # so "we found a snapshot" is not the same as "we found the file".
+    last_error: Optional[str] = None
+    for idx, wayback_url in enumerate(snapshot_urls, start=1):
+        fallback_msg = (
+            f"Using Wayback Machine fallback for {url} "
+            f"(capture {idx} of {len(snapshot_urls)})"
+        )
+        logs.append(fallback_msg)
+        if log_cb:
+            log_cb(fallback_msg)
+        log.info("%s -> %s", fallback_msg, wayback_url)
+
+        # Retry this capture before giving up on it. With one usable capture
+        # (the common case) the alternative is failing the whole install on a
+        # single slow read.
+        downloaded = False
+        for attempt in range(WAYBACK_DOWNLOAD_ATTEMPTS):
+            try:
+                _download(
+                    wayback_url, dest, logs, log_cb=log_cb,
+                    headers=WAYBACK_DOWNLOAD_HEADERS, timeout=WAYBACK_DOWNLOAD_TIMEOUT,
+                )
+                downloaded = True
+                break
+            except (MakeMKVUpdateError, TimeoutError) as exc:
+                last_error = str(exc)
+                log.warning(
+                    "Archive capture %s failed to download (attempt %d/%d): %s",
+                    wayback_url, attempt + 1, WAYBACK_DOWNLOAD_ATTEMPTS, exc,
+                )
+                try:
+                    dest.unlink(missing_ok=True)  # drop the partial before retrying
+                except OSError:
+                    pass
+                if attempt + 1 < WAYBACK_DOWNLOAD_ATTEMPTS:
+                    delay = WAYBACK_DOWNLOAD_RETRY_BACKOFF_S[
+                        min(attempt, len(WAYBACK_DOWNLOAD_RETRY_BACKOFF_S) - 1)
+                    ]
+                    retry_msg = f"Retrying that capture in {delay}s…"
+                    logs.append(retry_msg)
+                    if log_cb:
+                        log_cb(retry_msg)
+                    time.sleep(delay)
+        if not downloaded:
+            continue
+
+        # Archive.org sometimes returns double-gzipped content; unwrap one layer
+        # so we have a normal .tar.gz.
+        _unwrap_double_gzip_if_needed(dest, logs, log_cb)
+
+        if _verify_tarball_gz(dest, logs, log_cb):
+            return
+
+        last_error = "failed archive verification"
+        msg = f"Archive capture {idx} failed verification; trying an older capture"
+        logs.append(msg)
+        if log_cb:
+            log_cb(msg)
+        log.warning("Wayback capture failed verification: %s", wayback_url)
         try:
             dest.unlink(missing_ok=True)
         except OSError:
             pass
-        raise MakeMKVUpdateError(msg)
+
+    msg = (
+        f"Primary download failed and all {len(snapshot_urls)} archive.org capture(s) "
+        f"of {url} were unusable"
+        + (f" (last error: {last_error})" if last_error else "")
+        + ". Try the install again later, or download the tarball manually from makemkv.com."
+    )
+    logs.append(msg)
+    if log_cb:
+        log_cb(msg)
+    log.warning("%s", msg)
+    raise MakeMKVUpdateError(msg)
 
 def _has_lzma() -> bool:
     try:
@@ -512,7 +772,7 @@ def _check_build_deps(logs: List[str], log_cb=None) -> None:
         logs.append(msg)
         if log_cb:
             log_cb(msg)
-        raise MakeMKVUpdateError(msg)
+        raise BuildEnvironmentError(msg)
 
     if lzma_missing:
         warn = "liblzma-dev missing; will use system tar to extract .xz archives (install liblzma-dev to avoid this warning)"
@@ -1086,10 +1346,155 @@ def _fetch_versions_from_wayback() -> list[str]:
     return versions
 
 
-def fetch_latest_ffmpeg() -> Optional[str]:
+def _verify_against_manifest(
+    makemkv_version: str, files: "list[Path]", logs: List[str], log_cb=None
+) -> None:
+    """Check downloaded artifacts against their build-validated hashes.
+
+    A published hash exists only because those exact bytes compiled and
+    produced a working binary, so a match proves more than "not corrupted".
+    It is also what makes the archive.org fallback safe: an archived capture
+    is otherwise trusted on faith, and this is the step that stops a
+    substituted or subtly different tarball from being built and installed.
+
+    A MISMATCH is fatal — that is the whole point. An artifact we cannot
+    find a hash for is merely *unverified*: brand-new versions and offline
+    installs legitimately land here, and refusing them would gate users on
+    our CI for no security gain (we would have nothing to compare against
+    either way).
     """
-    Scrape the FFmpeg releases page for the latest tarball.
+    try:
+        from core import makemkv_manifest as mf
+
+        manifest = mf.load_cached(Path(get_mkvauto_tmp()) / "manifest-cache")
+    except Exception as exc:
+        log.warning("Could not load manifest for verification: %s", exc)
+        return
+
+    for path in files:
+        expected = mf.expected_sha256(manifest, makemkv_version, path.name)
+        if not expected:
+            msg = f"No published hash for {path.name}; installing unverified"
+            logs.append(msg)
+            log.info("%s", msg)
+            continue
+        actual = hash_file(str(path))
+        if actual == expected:
+            msg = f"Verified {path.name} against the validated build hash"
+            logs.append(msg)
+            if log_cb:
+                log_cb(msg)
+            continue
+        msg = (
+            f"{path.name} does not match the validated build hash "
+            f"(expected {expected[:12]}…, got {actual[:12]}…). Refusing to build "
+            f"an artifact we have not tested — this can mean a corrupted download "
+            f"or a substituted file."
+        )
+        logs.append(msg)
+        if log_cb:
+            log_cb(msg)
+        log.error("%s", msg)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise MakeMKVUpdateError(msg)
+
+
+def resolve_ffmpeg_for_build(makemkv_version: str) -> Optional[str]:
+    """Which FFmpeg to build this MakeMKV version against.
+
+    Precedence, strongest evidence first:
+
+    1. The manifest pairing — a combination CI actually compiled and
+       smoke-tested. This is real knowledge, per MakeMKV version.
+    2. The newest release under FFMPEG_MAX_VERSION_EXCLUSIVE — a single
+       global guess, correct today but blind to which MakeMKV version it
+       is building. It stays as the offline/no-manifest default.
+
+    The ceiling deliberately survives the manifest's arrival: an install
+    with no network path to GitHub still needs a sane answer, and "newest
+    below the last major we know broke" is a better guess than "newest".
     """
+    try:
+        from core import makemkv_manifest as mf
+
+        manifest = mf.load_cached(Path(get_mkvauto_tmp()) / "manifest-cache")
+        pinned = mf.ffmpeg_for(manifest, makemkv_version)
+        if pinned:
+            log.info(
+                "Building MakeMKV %s against validated FFmpeg %s (from manifest)",
+                makemkv_version, pinned,
+            )
+            return pinned
+        log.info(
+            "No validated FFmpeg pairing for MakeMKV %s; falling back to newest below the %s ceiling",
+            makemkv_version,
+            ".".join(str(p) for p in FFMPEG_MAX_VERSION_EXCLUSIVE),
+        )
+    except Exception as exc:
+        log.warning("Manifest lookup failed (%s); using the version ceiling", exc)
+    return fetch_latest_ffmpeg()
+
+
+def ffmpeg_version_key(version: str, *, width: int = 3) -> tuple:
+    """Sortable tuple for an ffmpeg version string ('8.1.2' → (8, 1, 2)).
+
+    Zero-padded to a fixed width so comparisons between differently-shaped
+    versions are well-defined: a bare '9' must not compare below '9.0'
+    (plain tuple comparison makes the shorter one smaller, which would let
+    an incompatible major slip past the ceiling).
+    """
+    parts = tuple(int(x) for x in version.split("."))
+    return (parts + (0,) * width)[:width]
+
+
+def is_ffmpeg_version_supported(version: str) -> bool:
+    """True when this FFmpeg version can build MakeMKV's libffabi.
+
+    Gate is `< FFMPEG_MAX_VERSION_EXCLUSIVE`. Unparseable versions are
+    rejected rather than assumed good — a version we cannot reason about
+    must not silently become the one we build against.
+    """
+    try:
+        key = ffmpeg_version_key(version)
+    except (ValueError, AttributeError):
+        return False
+    ceiling = (FFMPEG_MAX_VERSION_EXCLUSIVE + (0, 0, 0))[:3]
+    return key < ceiling
+
+
+def supported_ffmpeg_versions(limit: int = 0) -> list[str]:
+    """Every published FFmpeg release MakeMKV can build against, newest first.
+
+    The relationship tester walks this list downward to find the boundary
+    for a given MakeMKV version, which is how a real compatibility matrix
+    gets built instead of a single global guess.
+    """
+    versions = _fetch_ffmpeg_release_versions()
+    supported = [v for v in versions if is_ffmpeg_version_supported(v)]
+    if versions and supported and versions[0] != supported[0]:
+        log.info(
+            "Newest published ffmpeg %s is at/above the compatibility ceiling %s; "
+            "newest usable is %s",
+            versions[0],
+            ".".join(str(p) for p in FFMPEG_MAX_VERSION_EXCLUSIVE),
+            supported[0],
+        )
+    elif versions and not supported:
+        log.error(
+            "No ffmpeg release below the MakeMKV compatibility ceiling %s "
+            "(newest published: %s). MakeMKV cannot be built until the "
+            "ceiling is raised — see FFMPEG_MAX_VERSION_EXCLUSIVE.",
+            ".".join(str(p) for p in FFMPEG_MAX_VERSION_EXCLUSIVE),
+            versions[0],
+        )
+    return supported[:limit] if limit else supported
+
+
+def _fetch_ffmpeg_release_versions() -> list[str]:
+    """All version strings on the FFmpeg releases page, newest first."""
     url = "https://ffmpeg.org/releases/"
     try:
         resp = requests.get(url, timeout=10)
@@ -1102,20 +1507,85 @@ def fetch_latest_ffmpeg() -> Optional[str]:
             exc.response.status_code if exc.response else None,
             snippet,
         )
-        return None
+        return []
     except Exception as exc:
         log.warning("Failed to fetch ffmpeg releases page: url=%s error=%s", url, exc)
-        return None
+        return []
 
     matches = re.findall(r"ffmpeg-(\d+\.\d+(?:\.\d+)?)\.tar\.xz", resp.text)
     if not matches:
         log.warning("No ffmpeg tarballs found on releases page")
-        return None
+        return []
+    return sorted(set(matches), key=ffmpeg_version_key, reverse=True)
 
-    def _ffmpeg_key(v: str):
-        return tuple(int(x) for x in v.split("."))
-    latest = sorted(set(matches), key=_ffmpeg_key, reverse=True)[0]
-    return latest
+
+def fetch_latest_ffmpeg() -> Optional[str]:
+    """The newest FFmpeg release MakeMKV can build against, or None.
+
+    None means "could not resolve" — callers must not silently skip the
+    ffmpeg build and hand MakeMKV whatever the system has, which is a
+    subtler failure than saying so.
+    """
+    supported = supported_ffmpeg_versions()
+    return supported[0] if supported else None
+
+def resolve_offerable_version() -> tuple[Optional[str], Optional[str], str]:
+    """The newest MakeMKV version we may offer, and why.
+
+    Returns ``(version, note, source)``. ``source`` is ``manifest`` when the
+    answer came from the CI-validated manifest, ``upstream`` when we fell
+    back to scraping makemkv.com, or ``unavailable``.
+
+    Update detection prefers the manifest for two reasons. It gates
+    structurally — a version CI has not built successfully simply is not in
+    the manifest, so there is no policy check to get wrong. And it stops
+    detection from depending on makemkv.com being reachable, which today it
+    is not (Cloudflare 525) — the scrape currently limps along on a Wayback
+    copy of a forum thread.
+
+    ``note`` carries the user-facing explanation when a newer version
+    exists but is being held back; a silently-never-updating installer is
+    indistinguishable from a broken one.
+    """
+    from core import makemkv_manifest as mf
+
+    manifest, status = mf.fetch_manifest(Path(get_mkvauto_tmp()) / "manifest-cache")
+    validated = mf.latest_validated(manifest)
+    if validated:
+        note = None
+        if mf.is_stale(manifest):
+            note = (
+                "The validated-version list has not been refreshed recently, so a "
+                "newer MakeMKV release may not be listed yet."
+            )
+        # Surface a held-back version when upstream is ahead of us AND we
+        # know why. Cheap: no network, the reason is already published.
+        for row in (manifest or {}).get("known_incompatible") or []:
+            candidate = row.get("makemkv_version") if isinstance(row, dict) else None
+            if candidate and _version_gt(candidate, validated):
+                note = mf.incompatibility_note(manifest, candidate) or note
+                break
+        return validated, note, "manifest"
+
+    log.warning(
+        "No validated MakeMKV manifest available (%s); falling back to upstream scrape",
+        status,
+    )
+    try:
+        return fetch_latest_version(), None, "upstream"
+    except Exception as exc:
+        log.warning("Upstream version lookup failed too: %s", exc)
+        return None, None, "unavailable"
+
+
+def _version_gt(a: str, b: str) -> bool:
+    def key(v):
+        try:
+            return tuple(int(p) for p in str(v).split("."))
+        except (TypeError, ValueError):
+            return (0,)
+    return key(a) > key(b)
+
 
 def fetch_latest_version() -> str:
     """
@@ -1383,20 +1853,38 @@ def download_makemkv_sources(
             already_present=True, logs=logs,
         )
 
-    # Remove any stale/partial files before refetch.
-    for f in (bin_tar, oss_tar):
-        if f.exists():
+    # Fetch each artifact independently, keeping any that already verifies.
+    #
+    # This used to delete BOTH tarballs whenever either was missing, then
+    # refetch both. A partial success therefore threw away good bytes: on a
+    # fresh install with makemkv.com down (2026-08-05), the bin tarball
+    # downloaded from archive.org over ~2 minutes, then the oss fetch was
+    # rate-limited — and the next attempt deleted the 18MB it had just
+    # earned. That is exactly backwards when the network is the scarce
+    # resource, which is precisely when this fallback is load-bearing.
+    #
+    # Only a file that is absent or fails verification is refetched, so an
+    # install interrupted by a throttled archive resumes instead of
+    # restarting.
+    for tar, url_tpl in (
+        (bin_tar, MAKEMKV_BIN_URL),
+        (oss_tar, MAKEMKV_OSS_URL),
+    ):
+        if tar.exists() and _verify_tarball_gz(tar, logs, log_cb=log_cb):
+            msg = f"Reusing already-downloaded {tar.name}"
+            logs.append(msg)
+            if log_cb:
+                log_cb(msg)
+            continue
+        if tar.exists():
             try:
-                f.unlink()
+                tar.unlink()  # partial or corrupt — this one only
             except OSError:
                 pass
-
-    _download_with_fallback(
-        MAKEMKV_BIN_URL.format(version=clean_version), bin_tar, logs, log_cb=log_cb
-    )
-    _download_with_fallback(
-        MAKEMKV_OSS_URL.format(version=clean_version), oss_tar, logs, log_cb=log_cb
-    )
+        _download_with_fallback(
+            url_tpl.format(version=clean_version), tar, logs, log_cb=log_cb
+        )
+    _verify_against_manifest(clean_version, [bin_tar, oss_tar], logs, log_cb=log_cb)
 
     have_eula = _extract_eula_text(bin_tar, oss_tar, eula_path, logs, log_cb=log_cb)
 
@@ -1427,6 +1915,7 @@ def install_makemkv_from_sources(
     *,
     build_ffmpeg: bool = True,
     ffmpeg_advanced_features: bool = True,
+    ffmpeg_version: Optional[str] = None,
     install_prefix: Optional[str] = None,
     work_dir: Optional[str] = None,
     use_sudo_install: bool = False,
@@ -1478,7 +1967,14 @@ def install_makemkv_from_sources(
     bin_tar = dl.bin_tar
     oss_tar = dl.oss_tar
 
-    ffmpeg_version = fetch_latest_ffmpeg() if build_ffmpeg else None
+    # An explicit pin (the version matrix testing one candidate) wins over
+    # resolution; otherwise use the validated pairing, then the ceiling.
+    if not build_ffmpeg:
+        ffmpeg_version = None
+    elif ffmpeg_version:
+        log.info("Building against explicitly pinned ffmpeg %s", ffmpeg_version)
+    else:
+        ffmpeg_version = resolve_ffmpeg_for_build(clean_version)
     tmp_root = Path(tempfile.mkdtemp(prefix="makemkv-build-", dir=work_dir))
     ffmpeg_prefix = Path(tmp_root / "ffmpeg") if build_ffmpeg else None
 
@@ -1670,6 +2166,7 @@ def update_makemkv(
     *,
     build_ffmpeg: bool = True,
     ffmpeg_advanced_features: bool = True,
+    ffmpeg_version: Optional[str] = None,
     install_prefix: Optional[str] = None,
     work_dir: Optional[str] = None,
     use_sudo_install: bool = False,

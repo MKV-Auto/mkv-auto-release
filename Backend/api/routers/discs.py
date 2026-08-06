@@ -216,6 +216,7 @@ def _set_titles_version(disc: db_models.Disc, version: int) -> None:
 
 
 def _serialize_disc_title(title: db_models.DiscTitle) -> Dict[str, Any]:
+    from api.crud import title_provenance_payload
     src = title.source_file or f"title_{title.id}"
     return {
         "src": src,
@@ -228,6 +229,7 @@ def _serialize_disc_title(title: db_models.DiscTitle) -> Dict[str, Any]:
         "type": _normalize_title_type(title.type),
         "season": title.season,
         "episode": title.episode,
+        **title_provenance_payload(title),
         "duration": title.duration,
         "duration_raw": title.duration_raw,
         "size": title.size,
@@ -241,16 +243,45 @@ def _serialize_disc_title(title: db_models.DiscTitle) -> Dict[str, Any]:
     }
 
 
+def _emit_titles_changed_threadsafe(disc_id: str, titles: List[Dict[str, Any]], titles_version: int) -> None:
+    """Schedule the titles_changed WS delta from a sync endpoint.
+
+    The PATCH endpoints are sync `def`s running in the threadpool, so
+    there is no running loop here — mirror the run_coroutine_threadsafe
+    dance the relookup endpoint uses. Emission is best-effort: a failed
+    notification must never fail the write it describes."""
+    if not titles:
+        return
+    try:
+        from api.routers.websockets import emit_titles_changed
+        coro = emit_titles_changed(disc_id, titles, titles_version)
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(coro)
+        except RuntimeError:
+            from api.main import _app_instance
+            if _app_instance and hasattr(_app_instance, "state") and hasattr(_app_instance.state, "event_loop"):
+                asyncio.run_coroutine_threadsafe(coro, _app_instance.state.event_loop)
+            else:
+                coro.close()
+    except Exception as exc:
+        log.warning(f"Failed to emit titles_changed for disc {disc_id}: {exc}")
+
+
 def _apply_title_patch_fields(title: db_models.DiscTitle, fields: Dict[str, Any]) -> None:
-    """Apply a dict of fields to a DiscTitle. The `type` field routes
-    through `crud.set_title_type(source='user')` so the auto/user split
-    cache stays in sync — direct setattr would update only the legacy
-    cache and silently lose source provenance."""
-    from api.crud import set_title_type
+    """Apply a dict of fields to a DiscTitle. Every provenanced label
+    field (type, title, edition, description, season, episode) routes
+    through `crud.set_title_field(source='user')` so the user/auto split
+    and the resolved cache stay in sync — direct setattr would update
+    only the legacy cache and silently lose source provenance. This is
+    the single write path for all three UI editing surfaces."""
+    from api.crud import PROVENANCED_TITLE_FIELDS, set_title_field
     for key, value in fields.items():
         if key == "type":
-            value = _normalize_title_type(value)
-            set_title_type(title, value, source="user")
+            set_title_field(title, "type", _normalize_title_type(value), source="user")
+            continue
+        if key in PROVENANCED_TITLE_FIELDS:
+            set_title_field(title, key, value, source="user")
             continue
         if hasattr(title, key):
             setattr(title, key, value)
@@ -1774,11 +1805,10 @@ def get_disc_workflow_context_by_mount(
                     "detection_confidence": title.detection_confidence,
                     # metadata_scan omitted — summary only for lightweight display
                     "metadata_summary": metadata_scan_to_summary(meta) if meta else None,
-                    # Source-split for the titles-step chip system
-                    # (auto_type from automated detection; user_type from
-                    # direct user input; legacy `type` is the cache).
-                    "auto_type": getattr(title, "auto_type", None),
-                    "user_type": getattr(title, "user_type", None),
+                    # Source-split for the titles-step chip system (auto_*
+                    # from automated detection; user_* from direct user
+                    # input; the legacy resolved columns are the cache).
+                    **crud.title_provenance_payload(title),
                     "subsumed_by_title_id": getattr(title, "subsumed_by_title_id", None),
                     "obfuscation_flag": bool(getattr(title, "obfuscation_flag", False)),
                     "obfuscation_reason": getattr(title, "obfuscation_reason", None),
@@ -1792,8 +1822,7 @@ def get_disc_workflow_context_by_mount(
                     existing["description"] = title.description
                 existing["type"] = _normalize_title_type(title.type)
                 # Carry the source-split + subsumption from the DB row.
-                existing["auto_type"] = getattr(title, "auto_type", None)
-                existing["user_type"] = getattr(title, "user_type", None)
+                existing.update(crud.title_provenance_payload(title))
                 existing["subsumed_by_title_id"] = getattr(title, "subsumed_by_title_id", None)
                 existing["obfuscation_flag"] = bool(getattr(title, "obfuscation_flag", False))
                 existing["obfuscation_reason"] = getattr(title, "obfuscation_reason", None)
@@ -2262,8 +2291,7 @@ def get_disc_workflow_context_by_id(
             existing["metadata_summary"] = metadata_scan_to_summary(meta) if meta else None
             existing["segment_map"] = getattr(title, "segment_map", None)
             # Source-split + subsumption for the titles-step chip system.
-            existing["auto_type"] = getattr(title, "auto_type", None)
-            existing["user_type"] = getattr(title, "user_type", None)
+            existing.update(crud.title_provenance_payload(title))
             existing["subsumed_by_title_id"] = getattr(title, "subsumed_by_title_id", None)
             existing["obfuscation_flag"] = bool(getattr(title, "obfuscation_flag", False))
             existing["obfuscation_reason"] = getattr(title, "obfuscation_reason", None)
@@ -2294,8 +2322,7 @@ def get_disc_workflow_context_by_id(
                     "order_index": title.order_index,
                     "metadata_scan": meta,
                     "metadata_summary": metadata_scan_to_summary(meta) if meta else None,
-                    "auto_type": getattr(title, "auto_type", None),
-                    "user_type": getattr(title, "user_type", None),
+                    **crud.title_provenance_payload(title),
                     "subsumed_by_title_id": getattr(title, "subsumed_by_title_id", None),
                     "obfuscation_flag": bool(getattr(title, "obfuscation_flag", False)),
                     "obfuscation_reason": getattr(title, "obfuscation_reason", None),
@@ -2761,6 +2788,40 @@ def _changes_user_surface(title, fields: Dict[str, Any]) -> bool:
     return False
 
 
+
+def _resolve_patch_seq(patch, title) -> "tuple[int | None, int]":
+    """Decide the version this patch writes. Returns (new_seq, current_seq).
+
+    ``new_seq is None`` means the write is stale and must be rejected.
+
+    Stage 2 of the title-state redesign (#778). Two protocols:
+
+    - ``base_seq`` (preferred): the version the client READ. The server
+      compares it to the row and assigns ``current + 1`` itself. The client
+      never computes a version, so it cannot guess wrong — which is what
+      turned unobserved background writes into bogus "conflicts".
+    - ``title_seq`` (legacy): the version the client claims to write,
+      computed client-side as cached+1. Kept working for older clients.
+
+    Absent both, the write is unconditional (current + 1) — unchanged
+    behavior for callers that never versioned.
+    """
+    current_seq = getattr(title, "title_seq", 0) or 0
+    base_seq = getattr(patch, "base_seq", None)
+    if base_seq is not None:
+        # If-Match: anything other than an exact match means the row moved
+        # under us. Equal-or-newer is not "close enough" — a client holding
+        # a newer version than the server has read something we did not write.
+        if int(base_seq) != current_seq:
+            return None, current_seq
+        return current_seq + 1, current_seq
+    incoming_seq = getattr(patch, "title_seq", None)
+    if incoming_seq is None:
+        return current_seq + 1, current_seq
+    if int(incoming_seq) < current_seq:
+        return None, current_seq
+    return int(incoming_seq), current_seq
+
 @router.patch("/{disc_id}/titles", response_model=TitlePatchResponse)
 def patch_disc_title(
     disc_id: str,
@@ -2784,9 +2845,18 @@ def patch_disc_title(
     if release:
         _ensure_not_finalized(release, "Release")
 
+    # with_for_update(): the If-Match check below is read-then-write, and
+    # without a row lock two concurrent PATCHes both read the same
+    # title_seq, both "match", and both commit the same new seq — measured
+    # 7/7 on rc.3 (name-flush + type-change land in the same tick). A
+    # collided seq is worse than a lost write: two different row states
+    # share one version, so no client merge rule can ever repair it.
+    # The lock serializes the pair; the loser now sees the winner's seq
+    # and gets an honest stale_seq + current_title to reconcile with.
     title = (
         db.query(db_models.DiscTitle)
         .filter(db_models.DiscTitle.id == patch.title_id, db_models.DiscTitle.disc_id == disc_id)
+        .with_for_update()
         .first()
     )
     current_version = _get_titles_version(disc)
@@ -2803,10 +2873,9 @@ def patch_disc_title(
 
     fields = patch.model_dump(exclude_unset=True)
     fields.pop("title_id", None)
-    incoming_seq = fields.pop("title_seq", None)
-    current_seq = getattr(title, "title_seq", 0) or 0
-    if incoming_seq is None:
-        incoming_seq = current_seq + 1
+    fields.pop("title_seq", None)
+    fields.pop("base_seq", None)
+    incoming_seq, current_seq = _resolve_patch_seq(patch, title)
     if not fields:
         return TitlePatchResponse(
             titles_version=current_version,
@@ -2818,7 +2887,9 @@ def patch_disc_title(
             ),
         )
 
-    if incoming_seq < current_seq:
+    if incoming_seq is None:
+        # Hand back the row as it actually is, so the client reconciles this
+        # one row in place rather than refetching the whole disc (#775/#778).
         return TitlePatchResponse(
             titles_version=current_version,
             result=TitlePatchResult(
@@ -2826,6 +2897,7 @@ def patch_disc_title(
                 success=False,
                 error="Stale title update",
                 error_code="stale_seq",
+                current_title=_serialize_disc_title(title),
             ),
         )
 
@@ -2833,15 +2905,29 @@ def patch_disc_title(
 
     corrects_user_surface = _changes_user_surface(title, fields)
     _apply_title_patch_fields(title, fields)
-    from core.duplicate_group_sync import sync_duplicate_group_labels_for_disc
 
-    # Per-patch: do NOT consensus-fill NULL primary types from sibling 'ignore' state.
-    # A user toggling unignore on a primary clears type to NULL; if every sibling is still
-    # 'ignore', consensus-fill would immediately revert the user's change. Bulk paths
-    # (label save/complete, scan) keep the default fill_null_type_from_consensus=True.
-    sync_duplicate_group_labels_for_disc(
-        db, disc_id, fill_null_type_from_consensus=False
-    )
+    # Area 2 of the title-state redesign: the duplicate-group sweep runs
+    # only on GROUP-SHAPING writes. `type` shapes groups (ignore status
+    # feeds demotion/consensus); text fields never do — so a rename or
+    # description edit is one row write, no disc-wide sweep, no sibling
+    # seq churn, no synced_titles payload. The sweep still runs at scan
+    # ingest, label save/complete, and set-primary, which is where group
+    # shape actually changes.
+    synced_rows: list = []
+    if "type" in fields:
+        from core.duplicate_group_sync import sync_duplicate_group_labels_for_disc
+
+        # Per-patch: do NOT consensus-fill NULL primary types from sibling 'ignore' state.
+        # A user toggling unignore on a primary clears type to NULL; if every sibling is still
+        # 'ignore', consensus-fill would immediately revert the user's change. Bulk paths
+        # (label save/complete, scan) keep the default fill_null_type_from_consensus=True.
+        # Collect what the sync touches: it bumps siblings' title_seq, and a client
+        # that isn't told holds a stale seq cache — its next edit to that sibling
+        # is then rejected as a conflict and its recovery wipes the form (#775).
+        sync_duplicate_group_labels_for_disc(
+            db, disc_id, fill_null_type_from_consensus=False,
+            collect_modified=synced_rows,
+        )
     title.title_seq = incoming_seq
     new_version = max(_get_titles_version(disc), current_version + 1)
     _set_titles_version(disc, new_version)
@@ -2849,13 +2935,24 @@ def patch_disc_title(
         _stamp_user_edit(disc)
     db.commit()
 
+    updated_payload = _serialize_disc_title(title)
+    synced_payloads = [
+        _serialize_disc_title(t) for t in synced_rows
+        if str(t.id) != str(title.id)
+    ]
+    # Area 4: fan the changed rows out as a delta so other tabs converge
+    # without a ~1MB context refetch. Same serialized dicts as the
+    # response; per-row seq gating makes the writer's own echo a no-op.
+    _emit_titles_changed_threadsafe(disc_id, [updated_payload, *synced_payloads], new_version)
+
     return TitlePatchResponse(
         titles_version=new_version,
         result=TitlePatchResult(
             title_id=patch.title_id,
             success=True,
-            updated_title=_serialize_disc_title(title),
+            updated_title=updated_payload,
         ),
+        synced_titles=synced_payloads or None,
     )
 
 
@@ -2886,13 +2983,19 @@ def patch_disc_titles_batch(
     results: List[Dict[str, Any]] = []
     any_success = False
     any_correction = False
+    any_type_change = False
+    synced_rows: list = []
     active_job = get_active_job_for_disc(db, disc_id)
 
     for patch in batch.patches:
         try:
+            # Same row lock as the single-title endpoint: the seq check is
+            # read-then-write and must be serialized against concurrent
+            # writers (see patch_disc_title).
             title = (
                 db.query(db_models.DiscTitle)
                 .filter(db_models.DiscTitle.id == patch.title_id, db_models.DiscTitle.disc_id == disc_id)
+                .with_for_update()
                 .first()
             )
             if not title:
@@ -2906,10 +3009,9 @@ def patch_disc_titles_batch(
 
             fields = patch.model_dump(exclude_unset=True)
             fields.pop("title_id", None)
-            incoming_seq = fields.pop("title_seq", None)
-            current_seq = getattr(title, "title_seq", 0) or 0
-            if incoming_seq is None:
-                incoming_seq = current_seq + 1
+            fields.pop("title_seq", None)
+            fields.pop("base_seq", None)
+            incoming_seq, current_seq = _resolve_patch_seq(patch, title)
             if not fields:
                 results.append({
                     "title_id": patch.title_id,
@@ -2919,12 +3021,13 @@ def patch_disc_titles_batch(
                 })
                 continue
 
-            if incoming_seq < current_seq:
+            if incoming_seq is None:
                 results.append({
                     "title_id": patch.title_id,
                     "success": False,
                     "error": "Stale title update",
                     "error_code": "stale_seq",
+                    "current_title": _serialize_disc_title(title),
                 })
                 continue
 
@@ -2942,6 +3045,8 @@ def patch_disc_titles_batch(
 
             if _changes_user_surface(title, fields):
                 any_correction = True
+            if "type" in fields:
+                any_type_change = True
             _apply_title_patch_fields(title, fields)
             title.title_seq = incoming_seq
             results.append({
@@ -2960,12 +3065,19 @@ def patch_disc_titles_batch(
             })
 
     if any_success:
-        from core.duplicate_group_sync import sync_duplicate_group_labels_for_disc
+        # Area 2: sweep only when the batch shaped groups (a type write).
+        # See patch_disc_title for the rationale; text-only batches are
+        # plain row writes with no disc-wide side effects.
+        if any_type_change:
+            from core.duplicate_group_sync import sync_duplicate_group_labels_for_disc
 
-        # See patch_disc_title: per-patch sync must not consensus-fill NULL primary types.
-        sync_duplicate_group_labels_for_disc(
-            db, disc_id, fill_null_type_from_consensus=False
-        )
+            # See patch_disc_title: per-patch sync must not consensus-fill NULL primary types.
+            # See the single-patch endpoint: report what the sync touches so the
+            # client's per-title seq cache stays truthful (#775).
+            sync_duplicate_group_labels_for_disc(
+                db, disc_id, fill_null_type_from_consensus=False,
+                collect_modified=synced_rows,
+            )
         new_version = max(_get_titles_version(disc), current_version + 1)
         _set_titles_version(disc, new_version)
         if any_correction:
@@ -2988,11 +3100,25 @@ def patch_disc_titles_batch(
                 success=False,
                 error=item.get("error"),
                 error_code=item.get("error_code"),
+                current_title=item.get("current_title"),
             ))
 
+    patched_ids = {str(item.get("title_obj").id) for item in results
+                   if item.get("success") and item.get("title_obj") is not None}
+    synced_payloads = [
+        _serialize_disc_title(t) for t in synced_rows
+        if str(t.id) not in patched_ids
+    ]
+    updated_payloads = [
+        r.updated_title for r in response_results
+        if r.success and r.updated_title is not None
+    ]
+    # Area 4: same delta fan-out as the single-title endpoint.
+    _emit_titles_changed_threadsafe(disc_id, [*updated_payloads, *synced_payloads], current_version)
     return TitlePatchBatchResponse(
         titles_version=current_version,
         results=response_results,
+        synced_titles=synced_payloads or None,
     )
 
 

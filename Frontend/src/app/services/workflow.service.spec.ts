@@ -412,7 +412,7 @@ describe('WorkflowService', () => {
       (service as any)._activeContext$.next(context);
       (service as any).syncTitleSeqsFromTitles(context.titles);
 
-      (service as any).applyTitlePatchResults('disc-1', [
+      (service as any).titleStore.applyPatchResults('disc-1', [
         {
           title_id: 'title-1',
           success: true,
@@ -438,7 +438,7 @@ describe('WorkflowService', () => {
 
       const toastSpy = spyOn((service as any).toastSvc, 'show').and.callThrough();
 
-      (service as any).applyTitlePatchResults('disc-1', [
+      (service as any).titleStore.applyPatchResults('disc-1', [
         {
           title_id: 'title-1',
           success: false,
@@ -465,11 +465,449 @@ describe('WorkflowService', () => {
 
       // Allow the promise chain to settle before asserting context update.
       setTimeout(() => {
-        const seq = (service as any).latestTitleSeqById.get('title-1');
+        const seq = (service as any).titleStore.seqByTitleId.get('title-1');
         expect(seq).toBe(3);
         const updated = service.getCurrentContext()?.titles?.[0];
         expect(updated?.title).toBe('Winner');
         expect(updated?.title_seq).toBe(3);
+        done();
+      }, 0);
+    });
+  });
+
+  describe('#778: a server refetch must never revert a local edit', () => {
+    /** Stage 1 of the title-state redesign. A fetched context is a snapshot
+     *  from when the request was SERVED, applied whenever it ARRIVES. Those
+     *  differ, so wholesale replacement silently undoes edits made in
+     *  between — with no error shown. */
+    const seedLocal = () => {
+      const context = {
+        id: 'disc-1',
+        type: 'drive',
+        discInfo: { disc_id: 'disc-1' },
+        titles: [
+          { title_id: 'a', title: 'Local edit', title_seq: 5 },
+          { title_id: 'b', title: 'Untouched', title_seq: 2 },
+        ],
+        titleOrder: ['a', 'b'],
+        labelForm: {},
+        jobStatus: null,
+      } as unknown as WorkflowContext;
+      (service as any)._activeContext$.next(context);
+      (service as any).syncTitleSeqsFromTitles(context.titles);
+      return context;
+    };
+
+    it('a stale snapshot does not overwrite a newer local row', () => {
+      seedLocal();
+      // Served before the local edit committed: same id, older version.
+      (service as any).applyFetchedContext({
+        id: 'disc-1', type: 'drive', discInfo: { disc_id: 'disc-1' },
+        titles: [
+          { title_id: 'a', title: 'Server old value', title_seq: 4 },
+          { title_id: 'b', title: 'Untouched', title_seq: 2 },
+        ],
+      } as any);
+
+      const rows = service.getCurrentContext()?.titles ?? [];
+      expect(rows.find((t: any) => t.title_id === 'a')?.title).toBe('Local edit');
+    });
+
+    it('a genuinely newer server row IS applied', () => {
+      seedLocal();
+      (service as any).applyFetchedContext({
+        id: 'disc-1', type: 'drive', discInfo: { disc_id: 'disc-1' },
+        titles: [{ title_id: 'a', title: 'Newer from elsewhere', title_seq: 9 }],
+      } as any);
+
+      expect(service.getCurrentContext()?.titles?.[0]?.title).toBe('Newer from elsewhere');
+    });
+
+    it('text still being typed survives even a newer server version', () => {
+      seedLocal();
+      // An in-flight PATCH the server snapshot cannot possibly contain.
+      (service as any).titleStore.pendingTextByTitleId.set('a', 'Still typing thi');
+      (service as any).applyFetchedContext({
+        id: 'disc-1', type: 'drive', discInfo: { disc_id: 'disc-1' },
+        titles: [{ title_id: 'a', title: 'Server value', title_seq: 99 }],
+      } as any);
+
+      expect(service.getCurrentContext()?.titles?.[0]?.title).toBe('Local edit');
+    });
+
+    it('an in-flight write we know about outranks an equal-version snapshot', () => {
+      seedLocal();
+      // We wrote seq 6; the fetch was served at 5 and knows nothing of it.
+      (service as any).titleStore.seqByTitleId.set('a', 6);
+      (service as any).applyFetchedContext({
+        id: 'disc-1', type: 'drive', discInfo: { disc_id: 'disc-1' },
+        titles: [{ title_id: 'a', title: 'Pre-write value', title_seq: 5 }],
+      } as any);
+
+      expect(service.getCurrentContext()?.titles?.[0]?.title).toBe('Local edit');
+    });
+
+    it('a fetch that omits titles never empties the table', () => {
+      seedLocal();
+      // Lightweight fetches (include: 'label,job') legitimately carry none.
+      (service as any).applyFetchedContext({
+        id: 'disc-1', type: 'drive', discInfo: { disc_id: 'disc-1' }, titles: [],
+      } as any);
+
+      expect(service.getCurrentContext()?.titles?.length).toBe(2);
+    });
+
+    it('server row removal still propagates', () => {
+      seedLocal();
+      (service as any).applyFetchedContext({
+        id: 'disc-1', type: 'drive', discInfo: { disc_id: 'disc-1' },
+        titles: [{ title_id: 'a', title: 'Local edit', title_seq: 5 }],
+      } as any);
+
+      const rows = service.getCurrentContext()?.titles ?? [];
+      expect(rows.length).toBe(1);
+      expect(rows.find((t: any) => t.title_id === 'b')).toBeUndefined();
+    });
+
+    it('the user reproduction: name, then type, with a stale refetch landing between', () => {
+      seedLocal();
+      // 1. User renames row a -> local seq advances.
+      (service as any).titleStore.applyPatchResults('disc-1', [{
+        title_id: 'a', success: true,
+        updated_title: { title_id: 'a', title: 'My New Name', title_seq: 6 },
+      }], 6);
+      expect(service.getCurrentContext()?.titles?.[0]?.title).toBe('My New Name');
+
+      // 2. A context refetch, served BEFORE that rename committed, arrives now.
+      (service as any).applyFetchedContext({
+        id: 'disc-1', type: 'drive', discInfo: { disc_id: 'disc-1' },
+        titles: [
+          { title_id: 'a', title: 'Local edit', type: null, title_seq: 5 },
+          { title_id: 'b', title: 'Untouched', title_seq: 2 },
+        ],
+      } as any);
+
+      // 3. The name must NOT have reverted — the reported symptom.
+      expect(service.getCurrentContext()?.titles?.[0]?.title).toBe('My New Name');
+
+      // 4. The type change then lands on top, name still intact.
+      (service as any).titleStore.applyPatchResults('disc-1', [{
+        title_id: 'a', success: true,
+        updated_title: { title_id: 'a', title: 'My New Name', type: 'Featurette', title_seq: 7 },
+      }], 7);
+      const row = service.getCurrentContext()?.titles?.[0];
+      expect(row?.title).toBe('My New Name');
+      expect(row?.type).toBe('Featurette');
+    });
+  });
+
+  describe('#778 stage 2: server owns versions, conflicts reconcile in place', () => {
+    const seed = () => {
+      const context = {
+        id: 'disc-1', type: 'drive', discInfo: { disc_id: 'disc-1' },
+        titles: [
+          { title_id: 'a', title: 'Mine', title_seq: 4 },
+          { title_id: 'b', title: 'Bystander typing', title_seq: 1 },
+        ],
+        titleOrder: ['a', 'b'], labelForm: {}, jobStatus: null,
+      } as unknown as WorkflowContext;
+      (service as any)._activeContext$.next(context);
+      (service as any).syncTitleSeqsFromTitles(context.titles);
+      return context;
+    };
+
+    it('a patch sends the version we READ, never a computed next', () => {
+      seed();
+      service.patchDiscTitle('disc-1', { title_id: 'a', title: 'Renamed' } as any)
+        .subscribe({ next: () => {}, error: () => {} });
+
+      const req = httpTestingController.expectOne(r =>
+        r.method === 'PATCH' && r.url.includes('/discs/disc-1/titles'));
+      expect(req.request.body.base_seq).toBe(4);
+      expect(req.request.body.title_seq).toBeUndefined();
+      req.flush({ titles_version: 5, result: { title_id: 'a', success: true,
+        updated_title: { title_id: 'a', title: 'Renamed', title_seq: 5 } } });
+    });
+
+    it('a conflict reconciles from the response — no refetch, bystanders untouched', () => {
+      seed();
+      (service as any).titleStore.pendingTextByTitleId.set('a', 'Loser text');
+      spyOn((service as any).toastSvc, 'show').and.callThrough();
+
+      (service as any).titleStore.applyPatchResults('disc-1', [{
+        title_id: 'a', success: false, error_code: 'stale_seq',
+        current_title: { title_id: 'a', title: 'Winner', title_seq: 12 },
+      }], 12);
+
+      // The whole point: no GET is issued at all.
+      httpTestingController.expectNone(r => r.url.includes('limit=500'));
+
+      const rows = service.getCurrentContext()?.titles ?? [];
+      const byId = new Map(rows.map((t: any) => [t.title_id, t]));
+      expect(byId.get('a')?.title).toBe('Winner');
+      expect(byId.get('a')?.title_seq).toBe(12);
+      expect(byId.get('b')?.title).toBe('Bystander typing');
+      expect((service as any).titleStore.seqByTitleId.get('a')).toBe(12);
+      // Pending text dropped — the user was told their edit lost.
+      expect((service as any).titleStore.pendingTextByTitleId.get('a')).toBeUndefined();
+    });
+
+    it('a legacy conflict without current_title still falls back to a refetch', () => {
+      seed();
+      spyOn((service as any).toastSvc, 'show').and.callThrough();
+      (service as any).titleStore.applyPatchResults('disc-1', [
+        { title_id: 'a', success: false, error_code: 'stale_seq' },
+      ], 6);
+      const req = httpTestingController.expectOne(r => r.url.includes('limit=500'));
+      req.flush({ items: [{ title_id: 'a', title: 'Server', title_seq: 6 }] });
+    });
+
+    it('stage 2.5: a stale first attempt retries ONCE with the server version — user wins', () => {
+      // The routine case: our seq cache trails a background bump (duplicate-
+      // group sync, Path B marks). The rejected fields are what the user just
+      // typed — discarding them silently was the reported "name reverts".
+      seed();
+      const toastSpy = spyOn((service as any).toastSvc, 'show').and.callThrough();
+      let final: any = null;
+      service.patchDiscTitle('disc-1', { title_id: 'a', title: 'User Typed This' } as any)
+        .subscribe(r => (final = r));
+
+      const first = httpTestingController.expectOne(r =>
+        r.method === 'PATCH' && r.url.endsWith('/discs/disc-1/titles'));
+      expect(first.request.body.base_seq).toBe(4);
+      first.flush({ titles_version: 9, result: {
+        title_id: 'a', success: false, error: 'Stale title update', error_code: 'stale_seq',
+        current_title: { title_id: 'a', title: 'Background Value', title_seq: 9 },
+      } });
+
+      // Retry goes out against the version the server just told us about,
+      // carrying the SAME user fields.
+      const second = httpTestingController.expectOne(r =>
+        r.method === 'PATCH' && r.url.endsWith('/discs/disc-1/titles'));
+      expect(second.request.body.base_seq).toBe(9);
+      expect(second.request.body.title).toBe('User Typed This');
+      second.flush({ titles_version: 10, result: {
+        title_id: 'a', success: true,
+        updated_title: { title_id: 'a', title: 'User Typed This', title_seq: 10 },
+      } });
+
+      // The user's text lands; the interim conflict never touched the UI.
+      const row = service.getCurrentContext()?.titles?.find((t: any) => t.title_id === 'a');
+      expect(row?.title).toBe('User Typed This');
+      expect(row?.title_seq).toBe(10);
+      expect((service as any).titleStore.seqByTitleId.get('a')).toBe(10);
+      expect(final?.result?.success).toBe(true);
+      expect(toastSpy).not.toHaveBeenCalled();
+    });
+
+    it('stage 2.5: a retry that ALSO conflicts surfaces the loss (toast + winner shown)', () => {
+      // Two consecutive rejections means a genuine concurrent editor, not a
+      // trailing cache — now the honest thing is to show the winner and say so.
+      seed();
+      const toastSpy = spyOn((service as any).toastSvc, 'show').and.callThrough();
+      service.patchDiscTitle('disc-1', { title_id: 'a', title: 'User Typed This' } as any)
+        .subscribe();
+
+      const first = httpTestingController.expectOne(r => r.method === 'PATCH');
+      first.flush({ titles_version: 9, result: {
+        title_id: 'a', success: false, error_code: 'stale_seq',
+        current_title: { title_id: 'a', title: 'Other Editor v9', title_seq: 9 },
+      } });
+      const second = httpTestingController.expectOne(r => r.method === 'PATCH');
+      expect(second.request.body.base_seq).toBe(9);
+      second.flush({ titles_version: 11, result: {
+        title_id: 'a', success: false, error_code: 'stale_seq',
+        current_title: { title_id: 'a', title: 'Other Editor v11', title_seq: 11 },
+      } });
+      // No third attempt.
+      httpTestingController.expectNone(r => r.method === 'PATCH');
+
+      const row = service.getCurrentContext()?.titles?.find((t: any) => t.title_id === 'a');
+      expect(row?.title).toBe('Other Editor v11');
+      expect((service as any).titleStore.seqByTitleId.get('a')).toBe(11);
+      expect(toastSpy).toHaveBeenCalledWith(
+        jasmine.stringMatching(/conflicted with a newer change/), 'error', jasmine.any(Number));
+    });
+
+    it('area 4: a titles_changed delta folds newer rows without any refetch', () => {
+      seed();
+      (service as any).titleStore.foldServerRows('disc-1', [
+        { title_id: 'a', title: 'From Other Tab', type: 'Episode', title_seq: 9 },
+      ], 9);
+
+      httpTestingController.expectNone(r => r.url.includes('workflow-context'));
+      httpTestingController.expectNone(r => r.url.includes('limit=500'));
+      const row = service.getCurrentContext()?.titles?.find((t: any) => t.title_id === 'a');
+      expect(row?.title).toBe('From Other Tab');
+      expect(row?.title_seq).toBe(9);
+      expect((service as any).titleStore.seqByTitleId.get('a')).toBe(9);
+    });
+
+    it('area 4: the writing tab\'s own echo is a no-op (seq gate)', () => {
+      seed(); // row a at seq 4, cache seeded to 4
+      (service as any).titleStore.foldServerRows('disc-1', [
+        { title_id: 'a', title: 'Stale Echo', title_seq: 4 },
+      ], 4);
+      const row = service.getCurrentContext()?.titles?.find((t: any) => t.title_id === 'a');
+      expect(row?.title).toBe('Mine');
+    });
+
+    it('area 4: an inbound row never overwrites text still being typed', () => {
+      seed();
+      (service as any).titleStore.pendingTextByTitleId.set('a', 'Still typing thi');
+      (service as any).titleStore.foldServerRows('disc-1', [
+        { title_id: 'a', title: 'Server Value', type: 'Episode', title_seq: 12 },
+      ], 12);
+      const row = service.getCurrentContext()?.titles?.find((t: any) => t.title_id === 'a');
+      expect(row?.title).toBe('Mine');       // typed text protected
+      expect(row?.type).toBe('Episode');     // non-text facts still land
+      expect((service as any).titleStore.seqByTitleId.get('a')).toBe(12);
+    });
+
+    it('area 4: rows for a non-active disc update the seq cache only', () => {
+      seed(); // active context is disc-1
+      (service as any).titleStore.foldServerRows('disc-OTHER', [
+        { title_id: 'zzz', title: 'Elsewhere', title_seq: 7 },
+      ], 7);
+      expect((service as any).titleStore.seqByTitleId.get('zzz')).toBe(7);
+      const rows = service.getCurrentContext()?.titles ?? [];
+      expect(rows.length).toBe(2); // untouched
+    });
+
+    it('stage 2.5: batch — only stale rows retry, settled rows apply once', () => {
+      seed();
+      let final: any = null;
+      service.patchDiscTitlesBatch('disc-1', [
+        { title_id: 'a', title: 'A renamed' } as any,
+        { title_id: 'b', title: 'B renamed' } as any,
+      ]).subscribe(r => (final = r));
+
+      const first = httpTestingController.expectOne(r =>
+        r.method === 'PATCH' && r.url.endsWith('/titles/batch'));
+      first.flush({ titles_version: 6, results: [
+        { title_id: 'a', success: true,
+          updated_title: { title_id: 'a', title: 'A renamed', title_seq: 5 } },
+        { title_id: 'b', success: false, error_code: 'stale_seq',
+          current_title: { title_id: 'b', title: 'Bumped', title_seq: 7 } },
+      ] });
+
+      const second = httpTestingController.expectOne(r =>
+        r.method === 'PATCH' && r.url.endsWith('/titles/batch'));
+      expect(second.request.body.patches.length).toBe(1);
+      expect(second.request.body.patches[0].title_id).toBe('b');
+      expect(second.request.body.patches[0].base_seq).toBe(7);
+      expect(second.request.body.patches[0].title).toBe('B renamed');
+      second.flush({ titles_version: 8, results: [
+        { title_id: 'b', success: true,
+          updated_title: { title_id: 'b', title: 'B renamed', title_seq: 8 } },
+      ] });
+
+      const rows = service.getCurrentContext()?.titles ?? [];
+      const byId = new Map(rows.map((t: any) => [t.title_id, t]));
+      expect(byId.get('a')?.title).toBe('A renamed');
+      expect(byId.get('b')?.title).toBe('B renamed');
+      expect(final?.results?.length).toBe(2);
+      expect(final?.results?.every((r: any) => r.success)).toBe(true);
+    });
+  });
+
+  describe('#775: sibling seq sync and conflict recovery scope', () => {
+    const seed = () => {
+      const context = {
+        id: 'disc-1',
+        type: 'drive',
+        discInfo: { disc_id: 'disc-1' },
+        titles: [
+          { title_id: 'edited', title: 'Patched by me', title_seq: 1 },
+          { title_id: 'sibling', title: 'Sibling', title_seq: 0 },
+          { title_id: 'bystander', title: 'My unsaved typing', title_seq: 0 },
+        ],
+        titleOrder: ['edited', 'sibling', 'bystander'],
+        labelForm: {},
+        jobStatus: null,
+      } as unknown as WorkflowContext;
+      (service as any)._activeContext$.next(context);
+      (service as any).syncTitleSeqsFromTitles(context.titles);
+      return context;
+    };
+
+    it('synced_titles from a patch response updates the sibling seq cache and row', () => {
+      seed();
+      (service as any).titleStore.applyPatchResults('disc-1', [
+        {
+          title_id: 'edited',
+          success: true,
+          updated_title: { title_id: 'edited', title: 'Patched by me', title_seq: 2 },
+        },
+      ], 2, [
+        // The server's duplicate-group sync demoted the sibling and bumped
+        // its seq — without this the client's next sibling edit conflicts.
+        { title_id: 'sibling', title: null, type: 'ignore', active: false, title_seq: 1 },
+      ]);
+
+      expect((service as any).titleStore.seqByTitleId.get('sibling')).toBe(1);
+      const rows = service.getCurrentContext()?.titles ?? [];
+      const sibling = rows.find((t: any) => t.title_id === 'sibling');
+      expect(sibling?.type).toBe('ignore');
+      expect(sibling?.title_seq).toBe(1);
+      // The next local edit sends the synced version as base_seq — no
+      // stale_seq round-trip. (#778 stage 2: the client reports the version
+      // it read; the server assigns the next one.)
+      expect((service as any).knownTitleSeq('sibling')).toBe(1);
+    });
+
+    it('a synced row never clobbers text the user is still typing', () => {
+      seed();
+      // Simulate an in-flight PATCH for the sibling's text.
+      (service as any).titleStore.pendingTextByTitleId.set('sibling', 'Half-typed nam');
+
+      (service as any).titleStore.applyPatchResults('disc-1', [
+        {
+          title_id: 'edited',
+          success: true,
+          updated_title: { title_id: 'edited', title: 'Patched by me', title_seq: 2 },
+        },
+      ], 2, [
+        { title_id: 'sibling', title: 'Server value', type: 'ignore', title_seq: 1 },
+      ]);
+
+      const sibling = service.getCurrentContext()?.titles
+        ?.find((t: any) => t.title_id === 'sibling');
+      expect(sibling?.title).toBe('Sibling');
+      expect(sibling?.title_seq).toBe(1);
+      expect((service as any).titleStore.seqByTitleId.get('sibling')).toBe(1);
+    });
+
+    it('conflict recovery replaces only the conflicted row, never bystanders', (done) => {
+      seed();
+      spyOn((service as any).toastSvc, 'show').and.callThrough();
+
+      (service as any).titleStore.applyPatchResults('disc-1', [
+        { title_id: 'edited', success: false, error: 'Stale', error_code: 'stale_seq' },
+      ], 1);
+
+      const req = httpTestingController.expectOne((r) =>
+        r.url.includes('/discs/disc-1/titles') && r.url.includes('limit=500')
+      );
+      // Server returns rows for EVERYTHING — the old code overlaid them all,
+      // which was the reported "everything gets erased".
+      req.flush({
+        items: [
+          { title_id: 'edited', title: 'Winner', title_seq: 4 },
+          { title_id: 'sibling', title: 'Server sibling', title_seq: 2 },
+          { title_id: 'bystander', title: '', title_seq: 0 },
+        ],
+      });
+
+      setTimeout(() => {
+        const rows = service.getCurrentContext()?.titles ?? [];
+        const byId = new Map(rows.map((t: any) => [t.title_id, t]));
+        expect(byId.get('edited')?.title).toBe('Winner');
+        expect(byId.get('bystander')?.title).toBe('My unsaved typing');
+        expect(byId.get('sibling')?.title).toBe('Sibling');
+        // Seq caches still refreshed for every returned row.
+        expect((service as any).titleStore.seqByTitleId.get('edited')).toBe(4);
+        expect((service as any).titleStore.seqByTitleId.get('sibling')).toBe(2);
         done();
       }, 0);
     });

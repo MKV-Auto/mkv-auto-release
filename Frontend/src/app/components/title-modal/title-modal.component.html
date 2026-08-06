@@ -70,13 +70,13 @@
       <!-- Title Name -->
       <div class="form-group">
         <label class="form-label">{{ isSeries ? 'Episode Title' : 'Title Name' }}</label>
-        <input type="text" class="form-input" [(ngModel)]="title.title" [placeholder]="isSeries ? 'Episode title' : 'Enter title name...'" (ngModelChange)="onTitleNameChange($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()">
+        <input type="text" class="form-input" [(ngModel)]="title.title" [placeholder]="isSeries ? 'Episode title' : 'Enter title name...'" (ngModelChange)="onTitleNameChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
       </div>
 
       <!-- Type -->
       <div class="form-group">
         <label class="form-label">Type</label>
-        <select class="form-input form-select" [(ngModel)]="title.type" (ngModelChange)="onTypeChange($event)" (blur)="titleBlur.emit()">
+        <select class="form-input form-select" [(ngModel)]="title.type" (ngModelChange)="onTypeChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()">
           <option *ngFor="let opt of titleTypeOptions" [value]="opt.value" [disabled]="opt.value === ''">{{ opt.label }}</option>
         </select>
         <button type="button" class="ignore-toggle" (click)="markAsIgnore()" [class.ignored]="(title?.type || '').toLowerCase() === 'ignore'">
@@ -88,25 +88,25 @@
       <!-- Edition (non-series) -->
       <div class="form-group" *ngIf="!isSeries && !isIgnored()">
         <label class="form-label">Edition (Optional)</label>
-        <input type="text" class="form-input" [(ngModel)]="title.edition" placeholder="e.g., Extended, Director's Cut..." (ngModelChange)="onEditionChange($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()">
+        <input type="text" class="form-input" [(ngModel)]="title.edition" placeholder="e.g., Extended, Director's Cut..." (ngModelChange)="onEditionChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
       </div>
 
       <!-- Season/Episode (Series only) -->
       <div class="form-row" *ngIf="isSeries && !isIgnored()">
         <div class="form-group">
           <label class="form-label">Season</label>
-          <input type="number" class="form-input" [(ngModel)]="title.season" placeholder="Season #" min="1" (ngModelChange)="onSeasonChange($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()">
+          <input type="number" class="form-input" [(ngModel)]="title.season" placeholder="Season #" min="1" (ngModelChange)="onSeasonChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
         </div>
         <div class="form-group">
           <label class="form-label">Episode</label>
-          <input type="number" class="form-input" [(ngModel)]="title.episode" placeholder="Episode #" min="1" (ngModelChange)="onEpisodeChange($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()">
+          <input type="number" class="form-input" [(ngModel)]="title.episode" placeholder="Episode #" min="1" (ngModelChange)="onEpisodeChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
         </div>
       </div>
 
       <!-- Description -->
       <div class="form-group" *ngIf="!isIgnored()">
         <label class="form-label">Description (Optional)</label>
-        <textarea class="form-input form-textarea" [(ngModel)]="title.description" [placeholder]="title?.note || 'Add description...'" rows="3" (ngModelChange)="updateDescription($event)" (blur)="titleBlur.emit()" [disabled]="isIgnored()"></textarea>
+        <textarea class="form-input form-textarea" [(ngModel)]="title.description" [placeholder]="title?.note || 'Add description...'" rows="3" (ngModelChange)="updateDescription($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()"></textarea>
       </div>
 
       <!-- Metadata -->

@@ -328,3 +328,94 @@ def test_install_honors_explicit_version_over_predownload(monkeypatch):
             "1.17.5", build_ffmpeg=False, install_prefix="/tmp/mkvauto-test"
         )
     assert captured["version"] == "1.17.5"
+
+
+def test_partial_predownload_is_resumed_not_discarded(monkeypatch, tmp_path):
+    """A good tarball must survive its sibling's failed fetch.
+
+    download_makemkv_sources used to delete BOTH tarballs whenever either
+    was missing, then refetch both. On a fresh install with makemkv.com
+    down (2026-08-05), the bin tarball came from archive.org over ~2
+    minutes, the oss fetch was then rate-limited, and the retry deleted the
+    18MB it had just earned — turning a resumable install into a loop that
+    could not finish while the archive was throttling.
+    """
+    import gzip
+    import tarfile
+    import io
+
+    def _make_tar_gz(path, name="payload.txt"):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            data = b"x" * 32
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        path.write_bytes(gzip.compress(buf.getvalue()))
+
+    work = tmp_path / "makemkv-download" / "1.18.4"
+    work.mkdir(parents=True)
+    bin_tar = work / "makemkv-bin-1.18.4.tar.gz"
+    oss_tar = work / "makemkv-oss-1.18.4.tar.gz"
+    _make_tar_gz(bin_tar)  # already fetched; oss is absent
+    bin_bytes_before = bin_tar.read_bytes()
+
+    monkeypatch.setattr(makemkv_updater, "predownload_dir", lambda v: work)
+    monkeypatch.setattr(makemkv_updater, "fetch_latest_version", lambda: "1.18.4")
+    monkeypatch.setattr(makemkv_updater, "_extract_eula_text", lambda *a, **k: False)
+    monkeypatch.setattr(makemkv_updater, "_verify_against_manifest", lambda *a, **k: None)
+
+    fetched = []
+
+    def fake_download(url, dest, logs, **kwargs):
+        fetched.append(url)
+        _make_tar_gz(dest)
+
+    monkeypatch.setattr(makemkv_updater, "_download_with_fallback", fake_download)
+
+    makemkv_updater.download_makemkv_sources("1.18.4")
+
+    assert len(fetched) == 1, f"only the missing artifact should be fetched, got {fetched}"
+    assert "makemkv-oss" in fetched[0]
+    assert bin_tar.read_bytes() == bin_bytes_before, \
+        "the already-downloaded tarball must not be deleted or refetched"
+
+
+def test_corrupt_tarball_is_refetched_but_its_sibling_is_kept(monkeypatch, tmp_path):
+    import gzip
+    import io
+    import tarfile
+
+    def _make_tar_gz(path):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            data = b"y" * 16
+            info = tarfile.TarInfo("f.txt")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        path.write_bytes(gzip.compress(buf.getvalue()))
+
+    work = tmp_path / "makemkv-download" / "1.18.4"
+    work.mkdir(parents=True)
+    bin_tar = work / "makemkv-bin-1.18.4.tar.gz"
+    oss_tar = work / "makemkv-oss-1.18.4.tar.gz"
+    _make_tar_gz(bin_tar)
+    oss_tar.write_bytes(b"truncated garbage")  # fails verification
+    bin_before = bin_tar.read_bytes()
+
+    monkeypatch.setattr(makemkv_updater, "predownload_dir", lambda v: work)
+    monkeypatch.setattr(makemkv_updater, "fetch_latest_version", lambda: "1.18.4")
+    monkeypatch.setattr(makemkv_updater, "_extract_eula_text", lambda *a, **k: False)
+    monkeypatch.setattr(makemkv_updater, "_verify_against_manifest", lambda *a, **k: None)
+
+    fetched = []
+
+    def fake_download(url, dest, logs, **kwargs):
+        fetched.append(url)
+        _make_tar_gz(dest)
+
+    monkeypatch.setattr(makemkv_updater, "_download_with_fallback", fake_download)
+    makemkv_updater.download_makemkv_sources("1.18.4")
+
+    assert len(fetched) == 1 and "makemkv-oss" in fetched[0]
+    assert bin_tar.read_bytes() == bin_before

@@ -27,7 +27,11 @@ export class MakeMKVUpdaterComponent implements OnInit {
   message = '';
   error = '';
   logs: string[] = [];
-  includeFfmpeg = true;
+  /** Maps to `ffmpeg_advanced_features` (non-free codecs / libfdk-aac).
+   *  NOT "should we build ffmpeg" — /system/makemkv/update/start always
+   *  builds it. This used to send `build_ffmpeg`, which that endpoint
+   *  ignores, so the checkbox did nothing at all. */
+  includeAdvancedFeatures = true;
   latestVersion: string | null = null;
   statusLine = 'Idle';
   @ViewChild('logBox') logBox?: ElementRef<HTMLElement>;
@@ -89,7 +93,7 @@ export class MakeMKVUpdaterComponent implements OnInit {
     this.logs = ['Starting update…'];
     this.statusLine = 'Starting MakeMKV update…';
 
-    this.systemSvc.startMakeMKVUpdate({ build_ffmpeg: this.includeFfmpeg }).subscribe({
+    this.systemSvc.startMakeMKVUpdate({ ffmpeg_advanced_features: this.includeAdvancedFeatures }).subscribe({
       next: res => {
         const es = this.systemSvc.streamUpdate(res.jobId);
         es.addEventListener('log', (e: MessageEvent) => {

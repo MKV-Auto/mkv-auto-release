@@ -145,7 +145,7 @@
           [(ngModel)]="title.title"
           [placeholder]="isSeries ? 'Episode title' : 'Enter title name…'"
           (ngModelChange)="onTitleNameChange($event)"
-          (blur)="titleBlur.emit()"
+          (blur)="flushPendingFieldEdits(); titleBlur.emit()"
           [disabled]="isIgnored()">
       </div>
 
@@ -157,7 +157,7 @@
             class="title-editor__input title-editor__select"
             [(ngModel)]="title.type"
             (ngModelChange)="onTypeChange($event)"
-            (blur)="titleBlur.emit()">
+            (blur)="flushPendingFieldEdits(); titleBlur.emit()">
             <option *ngFor="let opt of titleTypeOptions" [value]="opt.value" [disabled]="opt.value === ''">{{ opt.label }}</option>
           </select>
           <ui-btn
@@ -182,7 +182,7 @@
             placeholder="Season #"
             min="1"
             (ngModelChange)="onSeasonChange($event)"
-            (blur)="titleBlur.emit()"
+            (blur)="flushPendingFieldEdits(); titleBlur.emit()"
             [disabled]="isIgnored()">
         </div>
         <div class="title-editor__field">
@@ -194,7 +194,7 @@
             placeholder="Episode #"
             min="1"
             (ngModelChange)="onEpisodeChange($event)"
-            (blur)="titleBlur.emit()"
+            (blur)="flushPendingFieldEdits(); titleBlur.emit()"
             [disabled]="isIgnored()">
         </div>
       </ng-container>
@@ -208,7 +208,7 @@
           [(ngModel)]="title.edition"
           placeholder="e.g., Extended, Director's Cut…"
           (ngModelChange)="onEditionChange($event)"
-          (blur)="titleBlur.emit()"
+          (blur)="flushPendingFieldEdits(); titleBlur.emit()"
           [disabled]="isIgnored()">
       </div>
     </div>
@@ -313,7 +313,7 @@
         [placeholder]="title?.note || 'Add description…'"
         rows="3"
         (ngModelChange)="updateDescription($event)"
-        (blur)="titleBlur.emit()"
+        (blur)="flushPendingFieldEdits(); titleBlur.emit()"
         [disabled]="isIgnored()"></textarea>
     </div>
 

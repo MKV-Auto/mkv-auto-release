@@ -173,22 +173,65 @@ def pick_primary_duplicate_row(members: list[db_models.DiscTitle]) -> db_models.
     return leaders[0]
 
 
-def _clear_label_metadata_fields(title: db_models.DiscTitle) -> None:
-    for field in DUPLICATE_LABEL_METADATA_FIELDS:
-        setattr(title, field, None)
+# (dead helper removed: _clear_label_metadata_fields had no callers and its
+# raw setattr predates the provenance split — apply_secondary_duplicate_row
+# below is the only clearing path and routes through set_title_field.)
 
 
 def apply_secondary_duplicate_row(title: db_models.DiscTitle) -> bool:
-    """Clear labeling metadata, set ignore, deactivate. Returns True if any column changed."""
+    """Clear labeling metadata, auto-ignore, deactivate. Returns True if any column changed.
+
+    Must be IDEMPOTENT: this runs after *every* title patch, and each True
+    return bumps the row's ``title_seq``. A pass that "changes" an
+    already-demoted row inflates sibling seqs on every edit, guaranteeing
+    the client's seq cache is stale by its next write — which is rejected
+    as a conflict, whose recovery then wipes the label form (#775). Two
+    prior non-idempotencies, both hit in prod:
+
+    - ``type`` sat in the metadata-clear loop, so every pass nulled it
+      directly (the raw-``setattr`` cache drift ``set_title_type``'s
+      docstring warns about) and the guard below re-set it: changed=True
+      forever. ``type`` is now the guard's job alone.
+    - The guard compared the EFFECTIVE type, which a user's ``user_type``
+      wins by the resolution rule — so a row the user had typed on
+      re-fired the guard on every pass. It now compares ``auto_type``,
+      the only channel this auto-derived demotion writes.
+    """
     changed = False
+    from api.crud import set_title_field
     for field in DUPLICATE_LABEL_METADATA_FIELDS:
-        if getattr(title, field, None) is not None:
-            setattr(title, field, None)
+        if field == "type":
+            continue  # provenance-managed below; never raw-setattr (#775)
+        # This demotion is automation, so it clears the AUTO opinion only —
+        # a secondary the user hand-labeled keeps its user value through
+        # resolution (user ?? auto). The changed-check reads the auto
+        # column for the same reason the type guard reads auto_type
+        # (documented above): comparing the resolved value on a row with
+        # a user override would report "changed" on every pass and
+        # re-inflate sibling seqs forever.
+        #
+        # A provenance-orphaned value (resolved set, BOTH source columns
+        # NULL — a raw write that bypassed set_title_field) counts as
+        # automation's, matching the backfill rule: unknown provenance
+        # defaults to auto. Clearing via the helper leaves resolved None,
+        # so the check can't re-fire on the next pass.
+        has_auto = getattr(title, f"auto_{field}", None) is not None
+        orphaned = (
+            getattr(title, field, None) is not None
+            and getattr(title, f"user_{field}", None) is None
+            and not has_auto
+        )
+        if has_auto or orphaned:
+            # The helper recomputes resolved = user ?? auto, which is None
+            # in both branches — the orphan cache clears through it too.
+            set_title_field(title, field, None, source="auto")
             changed = True
-    type_lower = (str(title.type).strip().lower() if title.type else "")
-    if type_lower != SECONDARY_IGNORE_TYPE:
+    auto_lower = (str(title.auto_type).strip().lower() if getattr(title, "auto_type", None) else "")
+    if auto_lower != SECONDARY_IGNORE_TYPE:
         # Sibling-of-primary auto-ignore — derived from the duplicate
-        # group consensus, not the user. source='auto'.
+        # group consensus, not the user. source='auto'. A user_type on
+        # this row still wins the effective-type resolution, which is
+        # the documented user-over-auto rule.
         from api.crud import set_title_type
         set_title_type(title, SECONDARY_IGNORE_TYPE, source="auto")
         changed = True
@@ -261,6 +304,7 @@ def demote_duplicate_secondaries_in_group(
     *,
     primary_id: str,
     fill_null_type_from_consensus: bool = True,
+    collect_modified: "list[db_models.DiscTitle] | None" = None,
 ) -> int:
     """
     Enforce invariant: primary_id is active=True; every other row in group is ignore + cleared metadata.
@@ -280,6 +324,8 @@ def demote_duplicate_secondaries_in_group(
             continue
         if apply_secondary_duplicate_row(t):
             _bump_title_seq(t)
+            if collect_modified is not None:
+                collect_modified.append(t)
             modified += 1
     if primary is not None:
         if apply_primary_duplicate_row(
@@ -288,6 +334,8 @@ def demote_duplicate_secondaries_in_group(
             fill_null_type_from_consensus=fill_null_type_from_consensus,
         ):
             _bump_title_seq(primary)
+            if collect_modified is not None:
+                collect_modified.append(primary)
             modified += 1
     return modified
 
@@ -297,6 +345,7 @@ def sync_duplicate_group_labels_for_disc(
     disc_id: str,
     *,
     fill_null_type_from_consensus: bool = True,
+    collect_modified: "list[db_models.DiscTitle] | None" = None,
 ) -> int:
     """
     Load all disc_titles for disc; for each multi-title segment_map group, pick primary and demote secondaries.
@@ -342,6 +391,7 @@ def sync_duplicate_group_labels_for_disc(
             members,
             primary_id=str(primary.id),
             fill_null_type_from_consensus=fill_null_type_from_consensus,
+            collect_modified=collect_modified,
         )
         total_modified += n
 

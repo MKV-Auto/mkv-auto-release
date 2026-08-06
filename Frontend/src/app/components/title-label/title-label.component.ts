@@ -220,6 +220,9 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
 
   
   ngOnDestroy(): void {
+    // Last line of defence: navigating away mid-edit must not strand a
+    // buffered typed field unsaved.
+    this.flushPendingFieldEdits();
     if (this.emphasizedTimeout) {
       clearTimeout(this.emphasizedTimeout);
     }
@@ -493,8 +496,9 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     return ordered;
   }
 
-  /** Blur: persist current visual order (no full re-sort). */
+  /** Blur: flush buffered typed-field edits, then persist visual order. */
   onBlur(): void {
+    this.flushPendingFieldEdits();
     const ordered = this.getDisplayOrderedTitles();
     this.displayOrderIds = ordered.map((t) => this.getTitleId(t) ?? '').filter(Boolean);
     this.recomputeDerivedState();
@@ -512,13 +516,11 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     if (members.length > 1) {
       for (const m of members) {
         m.title = value;
+        this.bufferFieldEdit(m, { title: normalizedTitle });
       }
-      this.emitBatchOrSingle(
-        members.map((m) => ({ title_id: this.getTitleId(m)!, title: normalizedTitle }))
-      );
     } else {
       title.title = value;
-      this.emitPatch(title, { title: normalizedTitle });
+      this.bufferFieldEdit(title, { title: normalizedTitle });
     }
     this.labelChanged.emit(this.titles);
   }
@@ -532,18 +534,21 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
         m.description = value;
         m.note = value;
       }
-      this.emitBatchOrSingle(
-        members.map((m) => ({ title_id: this.getTitleId(m)!, description: normalizedDescription }))
-      );
+      for (const m of members) this.bufferFieldEdit(m, { description: normalizedDescription });
     } else {
       title.description = value;
       title.note = value;
-      this.emitPatch(title, { description: normalizedDescription });
+      this.bufferFieldEdit(title, { description: normalizedDescription });
     }
     this.labelChanged.emit(this.titles);
   }
 
   onTypeChange(title: any, value: any): void {
+    // Type is picked, not typed, so it saves immediately. A name the user
+    // typed just before may still be buffered — it rides in THIS write
+    // rather than flushing as a separate one (two same-tick writes to one
+    // row carry the same base_seq, so one of them always loses). Users
+    // don't wait for autosave; the next action carries the pending edit.
     if (!title) return;
     const members = this.getDuplicateGroupMembers(title);
     const primary = this.getPrimaryTitle(members) || title;
@@ -561,8 +566,10 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
       }
       const patches: TitlePatchRequest[] = members.map((m) => {
         const id = this.getTitleId(m);
-        const p: TitlePatchRequest = { title_id: id!, type: normalizedType };
+        const pending = this.takePendingFieldsFor(m);
+        const p: TitlePatchRequest = { ...pending, title_id: id!, type: normalizedType };
         if (this.isIgnored(m)) {
+          // Nulls intentionally override pending text: ignore clears.
           p.title = null;
           p.description = null;
           p.season = null;
@@ -571,6 +578,7 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
         }
         return p;
       });
+      this.flushPendingFieldEdits(); // unrelated rows' leftovers, if any
       this.emitBatchOrSingle(patches);
       if (gid) {
         if (this.isDuplicateGroupIgnoredFromTitles(members)) {
@@ -585,10 +593,14 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
       }
     } else {
       const wasIgnore = this.isIgnored(title);
+      const pending = this.takePendingFieldsFor(title);
+      this.flushPendingFieldEdits(); // unrelated rows' leftovers, if any
       title.type = value;
       if (this.isIgnored(title)) {
         this.clearIgnoredFieldsInMemory(title);
+        // Nulls intentionally override pending text: ignore clears.
         this.emitPatch(title, {
+          ...pending,
           type: normalizedType,
           title: null,
           description: null,
@@ -597,7 +609,7 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
           edition: null,
         });
       } else {
-        this.emitPatch(title, { type: normalizedType });
+        this.emitPatch(title, { ...pending, type: normalizedType });
       }
       if (wasIgnore !== this.isIgnored(title)) {
         this.repartitionIgnoredToBottom();
@@ -615,10 +627,10 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
       for (const m of members) {
         m.season = season;
       }
-      this.emitBatchOrSingle(members.map((m) => ({ title_id: this.getTitleId(m)!, season })));
+      for (const m of members) this.bufferFieldEdit(m, { season });
     } else {
       title.season = season;
-      this.emitPatch(title, { season });
+      this.bufferFieldEdit(title, { season });
     }
     this.labelChanged.emit(this.titles);
   }
@@ -632,10 +644,10 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
       for (const m of members) {
         m.episode = episode;
       }
-      this.emitBatchOrSingle(members.map((m) => ({ title_id: this.getTitleId(m)!, episode })));
+      for (const m of members) this.bufferFieldEdit(m, { episode });
     } else {
       title.episode = episode;
-      this.emitPatch(title, { episode });
+      this.bufferFieldEdit(title, { episode });
     }
     this.labelChanged.emit(this.titles);
   }
@@ -648,12 +660,10 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
       for (const m of members) {
         m.edition = value;
       }
-      this.emitBatchOrSingle(
-        members.map((m) => ({ title_id: this.getTitleId(m)!, edition: normalizedEdition }))
-      );
+      for (const m of members) this.bufferFieldEdit(m, { edition: normalizedEdition });
     } else {
       title.edition = value;
-      this.emitPatch(title, { edition: normalizedEdition });
+      this.bufferFieldEdit(title, { edition: normalizedEdition });
     }
     this.labelChanged.emit(this.titles);
   }
@@ -705,10 +715,14 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
       const normalizedType = primary.type === '' ? null : primary.type;
       const patches: TitlePatchRequest[] = members.map((m) => {
         const id = this.getTitleId(m)!;
+        // Buffered typed fields ride in this write; see takePendingFieldsFor.
+        const pending = this.takePendingFieldsFor(m);
         if (wasIgnore) {
-          return { title_id: id, type: normalizedType };
+          return { ...pending, title_id: id, type: normalizedType };
         }
+        // Nulls intentionally override pending text: ignore clears.
         return {
+          ...pending,
           title_id: id,
           type: normalizedType,
           title: null,
@@ -743,8 +757,12 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
         }
       }
       const normalizedType = title.type === '' ? null : title.type;
+      // Buffered typed fields ride in this write; see takePendingFieldsFor.
+      const pending = this.takePendingFieldsFor(title);
       if (!singleWasIgnore) {
+        // Nulls intentionally override pending text: ignore clears.
         this.emitPatch(title, {
+          ...pending,
           type: normalizedType,
           title: null,
           description: null,
@@ -753,7 +771,7 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
           edition: null,
         });
       } else {
-        this.emitPatch(title, { type: normalizedType });
+        this.emitPatch(title, { ...pending, type: normalizedType });
       }
       if (singleWasIgnore !== this.isIgnored(title)) {
         this.repartitionIgnoredToBottom();
@@ -1146,6 +1164,77 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     this.primaryChanged.emit({ discId, titleId });
     this.labelChanged.emit(this.titles);
     this.cdr.markForCheck();
+  }
+
+  /** Typed-field edits awaiting a flush, keyed by title id.
+   *
+   *  Free-text fields used to PATCH on every ngModelChange — i.e. every
+   *  keystroke. Each response echoed the server's value back into the
+   *  ngModel-bound input, so a burst of late echoes visibly re-typed the
+   *  field character by character and could drop the last few (the final
+   *  keystrokes' write had not returned when an older echo landed).
+   *
+   *  Typed fields now buffer locally and flush once on blur. Fields the user
+   *  *picks* rather than types (the type dropdown) still save immediately —
+   *  one deliberate action, one write. */
+  private pendingFieldEdits = new Map<string, Partial<TitlePatchRequest>>();
+  private autosaveTimer: any = null;
+  private static readonly AUTOSAVE_IDLE_MS = 700;
+
+  /** See TitleEditorComponent: blur alone is not a sufficient save trigger,
+   *  so a buffered edit also writes itself after a short idle. */
+  private scheduleAutosave(): void {
+    if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = setTimeout(() => {
+      this.autosaveTimer = null;
+      this.flushPendingFieldEdits();
+    }, TitleLabelComponent.AUTOSAVE_IDLE_MS);
+  }
+
+  /** Buffer a typed-field change; the model updates immediately so typing
+   *  stays responsive, but nothing goes to the network until blur. */
+  private bufferFieldEdit(title: any, fields: Partial<TitlePatchRequest>): void {
+    const titleId = this.getTitleId(title);
+    if (!titleId) return;
+    const existing = this.pendingFieldEdits.get(titleId) || {};
+    this.pendingFieldEdits.set(titleId, { ...existing, ...fields });
+    this.scheduleAutosave();
+  }
+
+  /** Send everything buffered. Called from blur, Enter, and teardown so an
+   *  edit can never be stranded unsaved. */
+  private flushPendingFieldEdits(): void {
+    if (this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+    if (this.pendingFieldEdits.size === 0) return;
+    const patches: TitlePatchRequest[] = [];
+    this.pendingFieldEdits.forEach((fields, titleId) => {
+      patches.push({ title_id: titleId, ...fields } as TitlePatchRequest);
+    });
+    this.pendingFieldEdits.clear();
+    this.emitBatchOrSingle(patches);
+  }
+
+  /** Remove and return the buffered edits for one title so an immediate
+   *  write (type pick, ignore) carries them in the SAME request. Users
+   *  don't wait for autosave — they type and go straight for the
+   *  dropdown. Flushing the buffer as a separate request races the
+   *  immediate one (same base_seq → one write always loses); one request
+   *  can't race itself. Also prevents a late idle-flush resurrecting a
+   *  typed name onto a row the immediate write just cleared. */
+  private takePendingFieldsFor(title: any): Partial<TitlePatchRequest> {
+    const titleId = this.getTitleId(title);
+    if (!titleId) return {};
+    const pending = this.pendingFieldEdits.get(titleId);
+    if (!pending) return {};
+    this.pendingFieldEdits.delete(titleId);
+    if (this.pendingFieldEdits.size === 0 && this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+    return pending;
   }
 
   private emitPatch(title: any, fields: Partial<TitlePatchRequest>): void {

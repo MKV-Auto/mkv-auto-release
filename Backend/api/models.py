@@ -264,9 +264,25 @@ class DiscTitle(Base):
     duration_raw = Column(String, nullable=True)
     size = Column(BigInteger, nullable=True)
     display_size = Column(String, nullable=True)
+    # ── Label fields ────────────────────────────────────────────────
+    # Every user-editable label field is stored three ways: a resolved
+    # cache (these legacy columns — every reader in the codebase), plus
+    # a user_*/auto_* source split. Resolution: `resolved = user ?? auto`.
+    # Writes MUST go through `api.crud.set_title_field(title, field,
+    # value, source)` (or set_title_type for `type`) so all three stay
+    # in sync. This is the `type` provenance model (below) generalized
+    # to every label field — it is what makes an automated pass unable
+    # to overwrite a human's value, by construction rather than by
+    # defensive merge logic (title-state redesign, area 1).
     description = Column(Text, nullable=True)
     title = Column(String, nullable=True)
     edition = Column(String, nullable=True)  # Per-title edition (e.g. Director's Cut, Theatrical)
+    auto_title = Column(String, nullable=True)
+    user_title = Column(String, nullable=True)
+    auto_edition = Column(String, nullable=True)
+    user_edition = Column(String, nullable=True)
+    auto_description = Column(Text, nullable=True)
+    user_description = Column(Text, nullable=True)
     # Effective type, denormalized cache of `user_type ?? auto_type`. Reads
     # continue to go through this column; writes MUST go through
     # `api.crud.set_title_type(title, value, source)` so the source split
@@ -282,6 +298,10 @@ class DiscTitle(Base):
     user_type = Column(String, nullable=True)
     season = Column(Integer, nullable=True)
     episode = Column(Integer, nullable=True)
+    auto_season = Column(Integer, nullable=True)
+    user_season = Column(Integer, nullable=True)
+    auto_episode = Column(Integer, nullable=True)
+    user_episode = Column(Integer, nullable=True)
     chapters = Column(JSON, nullable=True)
     streams = Column(JSON, nullable=True)
     content = Column(Boolean, nullable=False, server_default=text("true"))

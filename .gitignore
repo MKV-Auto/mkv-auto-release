@@ -57,7 +57,14 @@ coverage.xml
 cover/
 GOT
 GOT copy
-Scripts
+# Windows virtualenv bin dir. Anchored to venv locations: a bare
+# `Scripts` also matches this repo's own `scripts/` directory on
+# case-insensitive filesystems (macOS), which silently dropped
+# newly-added files there from commits — twice, including a fix
+# that then failed only in CI.
+.venv/Scripts/
+venv/Scripts/
+*/Scripts/python.exe
 .e2e_data/
 
 # Translations

@@ -507,3 +507,333 @@ class TestRemainingPlaylistSize:
         resp = client.get(f"/discs/{uuid.uuid4()}/remaining-playlist-size")
         assert resp.status_code == 404
 
+
+
+def test_patch_reports_titles_the_group_sync_modified(client, test_db):
+    """#775 contract, re-anchored by redesign area 2: when the sweep runs,
+    the response must name every row it touched (a client that isn't told
+    holds a stale seq cache; its next sibling edit conflicts and the
+    recovery wipes the form). Area 2 narrows WHEN it runs: only
+    group-shaping writes — a `type` patch — trigger the sweep. Text-only
+    patches are single-row writes: no sweep, no sibling churn, and that
+    is pinned here too."""
+    session = test_db()
+    try:
+        disc_id = str(uuid.uuid4())
+        primary_id = str(uuid.uuid4())
+        sibling_id = str(uuid.uuid4())
+        sm = "100,200,300"
+        session.add(models.Disc(id=disc_id, content_hash="TESTHASH_775"))
+        session.add_all([
+            models.DiscTitle(
+                id=primary_id, disc_id=disc_id, source_file="a.mkv",
+                segment_map=sm, type="movie", title="Primary",
+                active=True, order_index=0,
+            ),
+            models.DiscTitle(
+                id=sibling_id, disc_id=disc_id, source_file="b.mkv",
+                segment_map=sm, type="episode", title="Sibling",
+                season=2, episode=5, active=False, order_index=1, title_seq=0,
+            ),
+        ])
+        session.commit()
+
+        # Area 2: a TEXT-ONLY patch is not group-shaping — no sweep, the
+        # sibling is untouched, and the response carries no synced noise.
+        response = client.patch(
+            f"/discs/{disc_id}/titles",
+            json={"title_id": primary_id, "title": "Primary renamed", "title_seq": 1},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["result"]["success"] is True
+        assert not data.get("synced_titles")
+        untouched = session.get(models.DiscTitle, sibling_id)
+        session.refresh(untouched)
+        assert untouched.title_seq == 0, "text patches must not churn sibling seqs"
+        assert untouched.title == "Sibling"
+
+        # A TYPE patch shapes groups: the sweep runs, the sibling gets
+        # demoted + seq-bumped, and the response reports it.
+        response = client.patch(
+            f"/discs/{disc_id}/titles",
+            json={"title_id": primary_id, "type": "MainMovie", "title_seq": 2},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["result"]["success"] is True
+
+        synced = data.get("synced_titles") or []
+        synced_ids = {t["title_id"] for t in synced}
+        assert sibling_id in synced_ids, \
+            "the demoted sibling must be reported so the client can update its seq cache"
+        # The patched title itself is already in result.updated_title.
+        assert primary_id not in synced_ids
+
+        sibling_row = next(t for t in synced if t["title_id"] == sibling_id)
+        session.refresh(session.get(models.DiscTitle, sibling_id))
+        db_sibling = session.get(models.DiscTitle, sibling_id)
+        assert sibling_row["title_seq"] == db_sibling.title_seq
+        assert sibling_row["title_seq"] >= 1, "seq bump must be visible to the client"
+
+        # A quiet disc (sync changes nothing on the second identical pass)
+        # reports nothing — no noise for the client to churn on.
+        response2 = client.patch(
+            f"/discs/{disc_id}/titles",
+            json={"title_id": primary_id, "type": "MainMovie", "title_seq": 3},
+        )
+        assert response2.status_code == 200
+        assert not response2.json().get("synced_titles")
+    finally:
+        session.close()
+
+
+def test_batch_patch_reports_synced_titles_once(client, test_db):
+    """#775, batch flavor: one sync pass after the loop, one synced_titles
+    list — rows already present as per-patch results are not repeated."""
+    session = test_db()
+    try:
+        disc_id = str(uuid.uuid4())
+        primary_id = str(uuid.uuid4())
+        sibling_id = str(uuid.uuid4())
+        sm = "111,222"
+        session.add(models.Disc(id=disc_id, content_hash="TESTHASH_775B"))
+        session.add_all([
+            models.DiscTitle(
+                id=primary_id, disc_id=disc_id, source_file="a.mkv",
+                segment_map=sm, type="movie", title="P",
+                active=True, order_index=0,
+            ),
+            models.DiscTitle(
+                id=sibling_id, disc_id=disc_id, source_file="b.mkv",
+                segment_map=sm, type="episode", title="S",
+                active=False, order_index=1, title_seq=0,
+            ),
+        ])
+        session.commit()
+
+        # Area 2: the batch sweeps only when some patch in it wrote `type`.
+        response = client.patch(
+            f"/discs/{disc_id}/titles/batch",
+            json={"patches": [
+                {"title_id": primary_id, "title": "P2", "type": "MainMovie", "title_seq": 1},
+            ]},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["results"][0]["success"] is True
+
+        synced_ids = {t["title_id"] for t in (data.get("synced_titles") or [])}
+        assert sibling_id in synced_ids
+        assert primary_id not in synced_ids
+
+        # Text-only batch: no sweep, no synced noise.
+        response2 = client.patch(
+            f"/discs/{disc_id}/titles/batch",
+            json={"patches": [
+                {"title_id": primary_id, "title": "P3", "title_seq": 2},
+            ]},
+        )
+        assert response2.status_code == 200, response2.text
+        assert response2.json()["results"][0]["success"] is True
+        assert not response2.json().get("synced_titles")
+    finally:
+        session.close()
+
+
+def test_base_seq_is_if_match_and_server_assigns_the_next_version(client, test_db):
+    """#778 stage 2: the client sends the version it READ; the server compares
+    and assigns the next one. The client never computes a version, so it can
+    never guess wrong — which is what turned an unobserved background write
+    into a bogus conflict."""
+    session = test_db()
+    try:
+        disc_id = str(uuid.uuid4())
+        title_id = str(uuid.uuid4())
+        session.add(models.Disc(id=disc_id, content_hash="BASESEQ_1"))
+        session.add(models.DiscTitle(id=title_id, disc_id=disc_id, title="Orig", title_seq=7))
+        session.commit()
+
+        r = client.patch(f"/discs/{disc_id}/titles",
+                         json={"title_id": title_id, "title": "New", "base_seq": 7})
+        assert r.status_code == 200, r.text
+        result = r.json()["result"]
+        assert result["success"] is True
+        # Server-assigned, not client-supplied.
+        assert result["updated_title"]["title_seq"] == 8
+        session.refresh(session.get(models.DiscTitle, title_id))
+        assert session.get(models.DiscTitle, title_id).title == "New"
+    finally:
+        session.close()
+
+
+def test_base_seq_mismatch_returns_the_current_row_for_in_place_reconcile(client, test_db):
+    """A conflict must hand back the row as it now is. Without it the client
+    refetched every title on the disc, which is how one conflict wiped a whole
+    label form (#775/#778)."""
+    session = test_db()
+    try:
+        disc_id = str(uuid.uuid4())
+        title_id = str(uuid.uuid4())
+        session.add(models.Disc(id=disc_id, content_hash="BASESEQ_2"))
+        session.add(models.DiscTitle(id=title_id, disc_id=disc_id, title="Winner", title_seq=9))
+        session.commit()
+
+        # Client read version 4; the row has since moved to 9.
+        r = client.patch(f"/discs/{disc_id}/titles",
+                         json={"title_id": title_id, "title": "Loser", "base_seq": 4})
+        assert r.status_code == 200
+        result = r.json()["result"]
+        assert result["success"] is False
+        assert result["error_code"] == "stale_seq"
+        assert result["current_title"]["title"] == "Winner"
+        assert result["current_title"]["title_seq"] == 9
+        session.refresh(session.get(models.DiscTitle, title_id))
+        assert session.get(models.DiscTitle, title_id).title == "Winner"
+    finally:
+        session.close()
+
+
+def test_base_seq_ahead_of_the_server_is_also_a_conflict(client, test_db):
+    """A client holding a NEWER version than the server has read something we
+    never wrote. Treating that as 'close enough' would let it overwrite state
+    it cannot have seen."""
+    session = test_db()
+    try:
+        disc_id = str(uuid.uuid4())
+        title_id = str(uuid.uuid4())
+        session.add(models.Disc(id=disc_id, content_hash="BASESEQ_3"))
+        session.add(models.DiscTitle(id=title_id, disc_id=disc_id, title="Server", title_seq=2))
+        session.commit()
+
+        r = client.patch(f"/discs/{disc_id}/titles",
+                         json={"title_id": title_id, "title": "FromFuture", "base_seq": 5})
+        assert r.json()["result"]["error_code"] == "stale_seq"
+        session.refresh(session.get(models.DiscTitle, title_id))
+        assert session.get(models.DiscTitle, title_id).title == "Server"
+    finally:
+        session.close()
+
+
+def test_legacy_title_seq_clients_still_work(client, test_db):
+    """Older clients send the version they claim to write. Backward compatible."""
+    session = test_db()
+    try:
+        disc_id = str(uuid.uuid4())
+        title_id = str(uuid.uuid4())
+        session.add(models.Disc(id=disc_id, content_hash="BASESEQ_4"))
+        session.add(models.DiscTitle(id=title_id, disc_id=disc_id, title="Orig", title_seq=3))
+        session.commit()
+
+        ok = client.patch(f"/discs/{disc_id}/titles",
+                          json={"title_id": title_id, "title": "Legacy", "title_seq": 4})
+        assert ok.json()["result"]["success"] is True
+        stale = client.patch(f"/discs/{disc_id}/titles",
+                             json={"title_id": title_id, "title": "Old", "title_seq": 2})
+        assert stale.json()["result"]["error_code"] == "stale_seq"
+        # Legacy conflicts get the current row too.
+        assert stale.json()["result"]["current_title"]["title"] == "Legacy"
+    finally:
+        session.close()
+
+
+# ── Title-state redesign area 1: field provenance ──────────────────────────
+
+def test_set_title_field_resolution_user_wins_and_retraction_falls_back():
+    """resolved = user ?? auto, for every provenanced field; a user write of
+    None retracts the user value and automation's opinion shows through
+    (matching user_type semantics)."""
+    from api.crud import set_title_field
+    from api import models
+
+    t = models.DiscTitle(id="t1", disc_id="d1")
+    set_title_field(t, "title", "Scanned Name", source="auto")
+    assert t.title == "Scanned Name" and t.auto_title == "Scanned Name" and t.user_title is None
+
+    set_title_field(t, "title", "Hand Typed", source="user")
+    assert t.title == "Hand Typed" and t.user_title == "Hand Typed"
+    assert t.auto_title == "Scanned Name"  # auto opinion preserved, not clobbered
+
+    # Automation writing under a user value updates auto only — the
+    # collision class behind #775/#778 is impossible by construction.
+    set_title_field(t, "season", 3, source="user")
+    set_title_field(t, "season", 1, source="auto")
+    assert t.season == 3 and t.user_season == 3 and t.auto_season == 1
+
+    # User retraction: resolved falls back to automation's answer.
+    set_title_field(t, "title", None, source="user")
+    assert t.user_title is None and t.title == "Scanned Name"
+
+
+def test_patch_sets_user_provenance_and_response_carries_it(client, test_db):
+    """A UI PATCH is a user write: user_* owns the value, auto_* is
+    untouched, and the patch echo serializes the split."""
+    session = test_db()
+    try:
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"h-{uuid.uuid4()}")
+        title = models.DiscTitle(
+            id=str(uuid.uuid4()), disc_id=disc.id, source_file="00001.mpls",
+            title="Auto Name", auto_title="Auto Name",
+        )
+        session.add_all([disc, title])
+        session.commit()
+
+        response = client.patch(
+            f"/discs/{disc.id}/titles",
+            json={"title_id": title.id, "title": "User Name", "season": 2, "base_seq": 0},
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()["result"]
+        assert result["success"] is True
+        updated = result["updated_title"]
+        assert updated["title"] == "User Name"
+        assert updated["user_title"] == "User Name"
+        assert updated["auto_title"] == "Auto Name"
+        assert updated["user_season"] == 2
+
+        session.refresh(title)
+        assert title.user_title == "User Name"
+        assert title.auto_title == "Auto Name"
+        assert title.title == "User Name"
+    finally:
+        session.close()
+
+
+def test_discdb_overlay_cannot_overwrite_user_labels(client, test_db):
+    """The DiscDB hit overlay is automation: it writes auto_* only, so a
+    re-lookup can no longer clobber a hand-typed label (the #775/#778
+    collision class, removed by construction)."""
+    from api.crud import _apply_discdb_metadata_to_titles
+
+    session = test_db()
+    try:
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"h-{uuid.uuid4()}")
+        labeled = models.DiscTitle(
+            id=str(uuid.uuid4()), disc_id=disc.id, source_file="00800.mpls",
+            title="My Episode Name", user_title="My Episode Name", user_type="Episode",
+            type="Episode",
+        )
+        unlabeled = models.DiscTitle(
+            id=str(uuid.uuid4()), disc_id=disc.id, source_file="00801.mpls",
+        )
+        session.add_all([disc, labeled, unlabeled])
+        session.commit()
+        session.refresh(disc)
+
+        _apply_discdb_metadata_to_titles(disc, {
+            "00800.mpls": {"type": "Episode", "episode_name": "DiscDB Name A", "season": 1, "episode": 1},
+            "00801.mpls": {"type": "Episode", "episode_name": "DiscDB Name B", "season": 1, "episode": 2},
+        })
+        session.commit()
+        session.refresh(labeled); session.refresh(unlabeled)
+
+        # User-labeled row: resolved keeps the human's value; the DiscDB
+        # opinion is recorded in auto_* for the chip system.
+        assert labeled.title == "My Episode Name"
+        assert labeled.auto_title == "DiscDB Name A"
+        # Untouched row: automation's value resolves normally.
+        assert unlabeled.title == "DiscDB Name B"
+        assert unlabeled.auto_title == "DiscDB Name B"
+        assert unlabeled.user_title is None
+    finally:
+        session.close()

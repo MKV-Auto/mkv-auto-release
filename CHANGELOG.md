@@ -12,6 +12,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-06
+
+### Changed
+
+- **Your hand-typed labels now survive every automated pass.** Every label field (name, type, season, episode, edition, description) now remembers whether a human or an automated step set it, and automation can only ever update its own answer — never yours. Concretely: re-running a DiscDB lookup, rescanning a disc, or the duplicate-title housekeeping can no longer replace a name you typed. Where the app previously defended your edits with timing heuristics, it now simply cannot lose them. Existing labels are migrated in place (with the usual automatic pre-migration backup); rows you had labeled by hand keep your ownership.
+
+- **Editing a title name no longer touches any other row.** Renaming or describing a title used to re-run duplicate-group housekeeping across the whole disc on every save — hundreds of hidden row updates and a large response payload per edit. That housekeeping now runs only when something that actually affects grouping changes (a type change, a rescan, saving the label form). Text edits are a single row write.
+
+- **Opening a disc no longer modifies it.** Loading the titles view used to write duplicate-detection marks to the database as a side effect of reading it — which could hand the page state that was already out of date the moment it arrived. Those marks are now computed when the disc is scanned or re-scanned, and reads are just reads.
+
+- **A second window now sees your edits immediately.** Title edits are broadcast as small change notices carrying just the rows that changed, and other open tabs fold them in on the spot. Previously a second tab either refetched the entire disc (about 1 MB on a 300-title disc) or never found out at all.
+
+### Fixed
+
+- **Typing a title no longer saves on every keystroke, and no longer loses what you typed.** Each character you typed sent its own save, and each reply wrote the server's copy back into the box you were still typing in — so the field would visibly reset and re-type what you had just entered, sometimes dropping the last character or two. Fields you type into (title, edition, description, season, episode) now save once, shortly after you stop typing — and immediately if you click away first. Several edits to the same title are sent together. The type dropdown still saves the moment you pick it, and a name you typed just before rides along in that same save so the two can't race each other.
+
+### Fixed
+
+- **Changing the type right after typing a name no longer reverts the name.** Two things conspired here. First, picking a type while a just-typed name was still waiting to save sent two saves at the same instant, and the server's version check wasn't atomic — both claimed the same version number, after which no later refresh could tell the states apart; the row is now locked during the check so that can't happen. Second, when a save was rejected as stale — routine, because background housekeeping bumps title versions constantly — the app silently threw your text away and put the server's copy back in the field. You'd type a name, reach for the type dropdown, and watch the name snap back; the type would then save fine, which made the type change look like the culprit. A rejected save now simply retries once against the version the server reports, so your input wins over background churn; only a genuine tug-of-war with another editor shows the conflict message. You never have to wait for the autosave pause — moving straight to the next field, row, or dropdown carries your edit with it.
+
+- **Editing titles on the phone-sized layout no longer fights your typing.** The mobile title editor was still saving on every keystroke — it had missed the earlier fix — with all the same echo-and-revert symptoms. It now buffers and saves exactly like the desktop editors.
+
+### Fixed
+
+- **Edit conflicts stopped being invented, and stopped costing you the form.** The app used to guess what the next version of a title would be; any change it hadn't seen made the guess wrong, and a wrong guess was reported to you as a conflict with someone else's edit. It now simply tells the server which version it read and lets the server decide, so those phantom conflicts disappear. When a genuine conflict does happen, the server sends back the winning value and only that one row updates — previously the whole title list was refetched and replaced, so one conflicted row could clear everything else you had typed.
+
+### Fixed
+
+- **A background refresh can no longer undo what you just typed (#778).** While you label, the app periodically refetches the disc's state in the background. That refetch is a snapshot of the moment it was requested, but it was applied whenever it arrived — so an edit made in between was silently replaced by the older value, with no error shown. Renaming a title and then changing its type was a reliable way to trigger it. Refetched titles are now merged row by row, keeping whichever version is newer, and text you are still typing is never overwritten at all.
+
+### Fixed
+
+- **Labeling no longer erases your in-progress edits (#775).** Editing a title — especially changing its type — could wipe everything else you had typed. Behind the scenes, every edit re-ran the duplicate-group sync, which re-modified already-demoted rows on every pass and silently bumped their edit counters; your next edit then looked like a conflict, and the conflict recovery replaced the whole table with server state. The sync is now idempotent, patch responses tell the page exactly which rows the sync touched, and conflict recovery replaces only the row that actually conflicted. A type you set by hand on a duplicate row is also respected now instead of being re-fought on every edit.
+
+### Added
+
+- **A disc the drive can't read now tells you to reseat it.** Inserting a disc upside down or not quite seated used to do nothing at all: the app saw no readable media, treated it as an ejection, and said nothing, so the only symptom was that the disc never scanned. That case is now told apart from an empty drive — the drive senses something in the tray but cannot read it — and you get a notification asking you to eject and reinsert, with a note that a dirty or damaged disc looks the same. An empty drive stays silent, and a disc left misseated alerts once rather than on every retry.
+
+### Fixed
+
+- **Installing MakeMKV works again.** As of 3 August, installing or updating MakeMKV failed partway through with a wall of compiler errors (`'AVCodec' has no member named 'ch_layouts'`), which blocked first-time setup completely — nothing on this end changed, FFmpeg simply published version 9.0 that day and the installer always grabbed the newest release. FFmpeg 9 removed pieces that MakeMKV still relies on, so the installer now builds against the newest FFmpeg that MakeMKV actually supports. Ordinary FFmpeg updates still come through automatically; only the incompatible jump is held back, and the log says so plainly when it skips one. Existing MakeMKV installations were never affected, and a failed install never damaged a working one.
+
+- **The "advanced FFmpeg features" checkbox in Settings now does something.** It was sending the wrong option, so unticking it changed nothing — you got the non-free AAC codec either way. It is now wired to the setting it names, and the label matches the equivalent one in first-time setup.
+
+- **Installing MakeMKV now works even when makemkv.com is unreachable.** The installer has always had an archive.org fallback, but it only ever looked at a single archived copy, and it reported *any* problem reaching the archive — including being temporarily rate-limited, which happens routinely — as "this file isn't archived". Installs failed with a message saying the file was unavailable when it was sitting in the archive the whole time. It now consults the full archive index, skips broken or partial copies (some archived entries are error pages saved during an earlier outage), and works through the remaining copies until one checks out. Being rate-limited is now retried and, if it persists, reported as the temporary condition it is rather than a missing file. Verified against the real outage: the download completed and matched the official file exactly.
+
+### Added
+
+- **MakeMKV updates are now offered only in combinations we've tested.** A background job builds each new MakeMKV release against the FFmpeg versions it might use, and only combinations that compile and produce a working program are published. Your installation checks that list — so an update that would fail to build is held back rather than offered, and when one is held back the app can tell you why instead of silently showing nothing. Downloads are also checked against the fingerprint of the exact files that passed those tests, which matters most when a file comes from the archive rather than from MakeMKV directly. Until the first list is published, installs behave exactly as before.
+
 ## [1.2.1] - 2026-08-01
 
 ### Fixed

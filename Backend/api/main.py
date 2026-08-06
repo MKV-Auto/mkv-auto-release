@@ -251,7 +251,27 @@ def _handle_udev_event(action: str, device: str, disc_num: Optional[str] = None)
             else:
                 action = "eject"
                 logger.info(f"Physical detection: disc NOT present at {device} -> treating change as EJECT")
-            
+                # "Nothing readable" covers two very different situations: an
+                # empty tray, and a disc the drive senses but cannot engage —
+                # upside down, misseated, damaged. Both used to be handled as
+                # a silent eject, so inserting a disc upside down produced no
+                # message at all. Only the second case alerts.
+                try:
+                    from core.media_diagnostics import (
+                        medium_present_but_unreadable,
+                        notify_unreadable_medium,
+                    )
+
+                    if medium_present_but_unreadable(device):
+                        logger.warning(
+                            "Drive at %s senses media it cannot read — "
+                            "likely misseated or damaged; alerting the user",
+                            device,
+                        )
+                        notify_unreadable_medium(device)
+                except Exception as exc:
+                    logger.debug("unreadable-medium check failed for %s: %s", device, exc)
+
             # Old cache-based logic removed - was causing inverted detection
             cached_disc = None
             cache_key_found = None

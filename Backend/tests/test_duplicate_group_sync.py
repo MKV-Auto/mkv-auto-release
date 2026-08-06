@@ -803,3 +803,155 @@ def test_642_sub3_m2ts_not_folded_when_no_wrapper_present(test_db):
         assert m2ts.type is None
     finally:
         session.close()
+
+
+def test_sync_is_idempotent_second_pass_touches_nothing(test_db):
+    """#775: the sync runs after EVERY title patch, and every row it claims
+    to change gets a title_seq bump. A non-idempotent pass therefore
+    inflates sibling seqs on every edit, guaranteeing every client's seq
+    cache is stale by its next write — the conflict storm behind
+    "everything gets erased" during labeling."""
+    import uuid
+    from core.duplicate_group_sync import sync_duplicate_group_labels_for_disc
+
+    session = test_db()
+    try:
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash="IDEMPOTENT_775")
+        session.add(disc)
+        sm = "10,20,30"
+        sib_id = str(uuid.uuid4())
+        session.add_all([
+            models.DiscTitle(
+                id=str(uuid.uuid4()), disc_id=disc.id, source_file="a.mkv",
+                segment_map=sm, type="movie", title="Primary",
+                active=True, order_index=0,
+            ),
+            models.DiscTitle(
+                id=sib_id, disc_id=disc.id, source_file="b.mkv",
+                segment_map=sm, type="episode", title="Sibling",
+                active=False, order_index=1, title_seq=0,
+            ),
+        ])
+        session.commit()
+
+        first = sync_duplicate_group_labels_for_disc(session, disc.id)
+        assert first >= 1
+        session.flush()
+        sib = session.get(models.DiscTitle, sib_id)
+        seq_after_first = sib.title_seq
+
+        second = sync_duplicate_group_labels_for_disc(session, disc.id)
+        session.flush()
+        session.refresh(sib)
+        assert second == 0, "an already-demoted group must not be re-modified"
+        assert sib.title_seq == seq_after_first, "no phantom seq bumps on a no-op pass"
+    finally:
+        session.close()
+
+
+def test_sync_respects_user_type_on_demoted_secondary(test_db):
+    """#775: a user's explicit type on a secondary wins the effective-type
+    resolution (user over auto). The sync records its auto-ignore intent
+    once and then leaves the row alone — it must not re-fire forever
+    because the user's value keeps winning."""
+    import uuid
+    from api.crud import set_title_type
+    from core.duplicate_group_sync import sync_duplicate_group_labels_for_disc
+
+    session = test_db()
+    try:
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash="USERTYPE_775")
+        session.add(disc)
+        sm = "11,22"
+        sib_id = str(uuid.uuid4())
+        session.add_all([
+            models.DiscTitle(
+                id=str(uuid.uuid4()), disc_id=disc.id, source_file="a.mkv",
+                segment_map=sm, type="movie", title="Primary",
+                active=True, order_index=0,
+            ),
+            models.DiscTitle(
+                id=sib_id, disc_id=disc.id, source_file="b.mkv",
+                segment_map=sm, active=False, order_index=1, title_seq=0,
+            ),
+        ])
+        session.commit()
+        sib = session.get(models.DiscTitle, sib_id)
+        set_title_type(sib, "extra", source="user")
+        session.commit()
+
+        sync_duplicate_group_labels_for_disc(session, disc.id)
+        session.flush()
+        session.refresh(sib)
+        assert sib.auto_type == "ignore", "auto intent is recorded"
+        assert sib.user_type == "extra", "user's choice is never overwritten"
+        assert (sib.type or "") == "extra", "effective type resolves user-over-auto"
+        seq_once = sib.title_seq
+
+        again = sync_duplicate_group_labels_for_disc(session, disc.id)
+        session.flush()
+        session.refresh(sib)
+        assert again == 0
+        assert sib.title_seq == seq_once
+    finally:
+        session.close()
+
+
+def test_sync_demotion_clears_auto_labels_but_never_user_labels(test_db):
+    """Title-state redesign area 1: the secondary demotion is automation,
+    so it clears the AUTO opinion of each label field only. A secondary
+    the user hand-labeled keeps its text through resolution, and the pass
+    stays idempotent (the changed-check reads the auto column — comparing
+    the resolved value would re-fire forever on user-labeled rows, the
+    #775 seq-inflation pathology)."""
+    import uuid
+    from api.crud import set_title_field
+    from core.duplicate_group_sync import sync_duplicate_group_labels_for_disc
+
+    session = test_db()
+    try:
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash="PROV_A1")
+        session.add(disc)
+        sm = "31,32"
+        user_sib_id, auto_sib_id = str(uuid.uuid4()), str(uuid.uuid4())
+        session.add_all([
+            models.DiscTitle(
+                id=str(uuid.uuid4()), disc_id=disc.id, source_file="p.mkv",
+                segment_map=sm, type="movie", title="Primary", active=True, order_index=0,
+            ),
+            models.DiscTitle(
+                id=user_sib_id, disc_id=disc.id, source_file="u.mkv",
+                segment_map=sm, active=False, order_index=1,
+            ),
+            models.DiscTitle(
+                id=auto_sib_id, disc_id=disc.id, source_file="a.mkv",
+                segment_map=sm, active=False, order_index=2,
+                title="Scan Junk", auto_title="Scan Junk",
+            ),
+        ])
+        session.commit()
+        user_sib = session.get(models.DiscTitle, user_sib_id)
+        set_title_field(user_sib, "title", "Deleted Scene I Named", source="user")
+        session.commit()
+
+        sync_duplicate_group_labels_for_disc(session, disc.id)
+        session.flush()
+        session.refresh(user_sib)
+        auto_sib = session.get(models.DiscTitle, auto_sib_id)
+        session.refresh(auto_sib)
+
+        # Automation-labeled secondary: cleared, as before the redesign.
+        assert auto_sib.auto_title is None and auto_sib.title is None
+        # User-labeled secondary: the human's text survives the demotion.
+        assert user_sib.user_title == "Deleted Scene I Named"
+        assert user_sib.title == "Deleted Scene I Named"
+
+        # Idempotent: a second pass changes nothing and bumps no seqs.
+        seqs = (user_sib.title_seq, auto_sib.title_seq)
+        again = sync_duplicate_group_labels_for_disc(session, disc.id)
+        session.flush()
+        session.refresh(user_sib); session.refresh(auto_sib)
+        assert again == 0
+        assert (user_sib.title_seq, auto_sib.title_seq) == seqs
+    finally:
+        session.close()

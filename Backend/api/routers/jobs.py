@@ -754,16 +754,16 @@ def _apply_label_to_records(disc, lp: Dict[str, Any], db: Session) -> None:
             existing_title = existing_titles.get(title_id_str)
             if existing_title:
                 # Update existing title - only user-editable fields
-                # Update fields - SQLAlchemy will track these as dirty
-                # workflow-context save is user-initiated; route through
-                # set_title_type so user_type + the legacy cache stay synced.
-                from api.crud import set_title_type
+                # workflow-context save is user-initiated; route every
+                # label field through the source-aware helper so user_*
+                # owns the values + the resolved cache stays synced.
+                from api.crud import set_title_field
                 type_value = _normalize_title_type(t.get("type"))
-                set_title_type(existing_title, type_value, source="user")
-                existing_title.title = t.get("title") or t.get("episode_name")
-                existing_title.description = t.get("description") or t.get("note")
-                existing_title.season = t.get("season")
-                existing_title.episode = t.get("episode")
+                set_title_field(existing_title, "type", type_value, source="user")
+                set_title_field(existing_title, "title", t.get("title") or t.get("episode_name"), source="user")
+                set_title_field(existing_title, "description", t.get("description") or t.get("note"), source="user")
+                set_title_field(existing_title, "season", t.get("season"), source="user")
+                set_title_field(existing_title, "episode", t.get("episode"), source="user")
                 existing_title.comment = t.get("comment") or t.get("output_file") or existing_title.comment
                 existing_title.order_index = idx
                 
@@ -7170,13 +7170,12 @@ def get_job_workflow_context(job_id: str, db: Session = Depends(get_db), *, _pre
                     # wrapper. Phase 6 onward writes this; until then it stays
                     # NULL and the frontend treats every row as standalone.
                     "subsumed_by_title_id": getattr(title, "subsumed_by_title_id", None),
-                    # Source-split of `type` for the titles-step chip system.
-                    # auto_type = automated detection (DiscDB, scan-time,
-                    # Path A sibling-ignore, subsumption, etc); user_type =
-                    # direct user input. Effective `type` is the legacy
-                    # cache (user_type ?? auto_type) preserved above.
-                    "auto_type": getattr(title, "auto_type", None),
-                    "user_type": getattr(title, "user_type", None),
+                    # Source-split of every label field for the titles-step
+                    # chip system: auto_* = automated detection (DiscDB,
+                    # scan-time, Path A sibling-ignore, subsumption, etc);
+                    # user_* = direct user input. The effective resolved
+                    # columns (user ?? auto) are preserved above.
+                    **crud.title_provenance_payload(title),
                     "force_independent_group": bool(getattr(title, "force_independent_group", False)),
                     "playitem_durations_s": getattr(title, "playitem_durations_s", None),
                 }
@@ -7216,63 +7215,30 @@ def get_job_workflow_context(job_id: str, db: Session = Depends(get_db), *, _pre
         # the Midway-class case order-preserving grouping misses. Annotate
         # each title with its dedupe_group_id and surface the groups (with
         # representative + disagreement metadata) on the workflow context.
+        #
+        # PURE COMPUTE ONLY. The persisting half (obfuscation_reason +
+        # subsumption marks) used to run right here, committing mid-GET —
+        # which made this response stale relative to its own side effects
+        # and turned read traffic into write churn (~300 rows re-stamped on
+        # the first GET after a restart, measured on the rc rig). It now
+        # runs where the inputs change: scan ingest
+        # (crud._apply_path_b_marks_for_disc_safe) and detect completion
+        # (workers/preview_detect_phases). This GET must never write.
         from core.path_b_dedupe import (
             annotate_titles_with_dedupe_group as _annotate_dedupe,
-            apply_obfuscation_reason_from_dedupe as _apply_reason,
-            apply_subsumption_marks as _apply_subsumption,
             compute_dedupe_groups as _compute_dedupe,
             compute_mpls_clip_index as _compute_clip_index,
             fold_subsumption_into_groups as _fold_subsumption,
         )
         clip_index = _compute_clip_index(titles_by_id_ref)
         groups_path_b = _compute_dedupe(titles_by_id_ref)
-        # Persist tier-aware obfuscation_reason for sibling-group members.
-        # This catches Midway-class false negatives that MakeMKV's per-title
-        # bit missed (8 of 202 long playlists on Midway, all sharing the
-        # canonical's sorted segment-set) AND demotes MakeMKV's signal on
-        # the representative — sorted-segment-set membership is a stronger
-        # canonical-pick signal than the per-title bit. Idempotent.
-        try:
-            cleared, set_sibling = _apply_reason(db, str(job.disc.id), groups_path_b)
-            if cleared or set_sibling:
-                log.info(
-                    "Path B: disc %s obfuscation_reason cleared on %d rep(s), "
-                    "set='segment_set_sibling' on %d sibling(s)",
-                    job.disc.id, cleared, set_sibling,
-                )
-                db.commit()
-        except Exception as exc:
-            log.warning(
-                "Path B: failed to persist obfuscation_reason for disc %s: %s",
-                getattr(job.disc, "id", "?"), exc,
-            )
-        # m2ts ⊆ mpls subsumption: any m2ts whose clip ID appears in some
-        # mpls's segment_map on the same disc is redundant — the mpls
-        # already wraps it. Fold it into the wrapper's dedupe group so it
-        # collapses out of the left rail (the fold runs AFTER _apply_reason
-        # so component clips never get obfuscation_reason='segment_set_
-        # sibling' — they aren't decoys). Annotation + the serialized
-        # dedupeGroups use the folded list.
+        # The fold runs on the response annotation only — component clips
+        # collapse into their wrapper's group in the left rail. The
+        # persisted marks were applied (in the same order: reason before
+        # fold, subsumption after) at scan/detect time.
         groups_path_b = _fold_subsumption(groups_path_b, clip_index, titles_by_id_ref)
         _annotate_dedupe(titles_by_id_ref, groups_path_b)
         dedupe_groups = [g.to_dict() for g in groups_path_b]
-        # Persist subsumed_by_title_id (drives the right-panel "Component
-        # clips" section) and mark the m2ts type='ignore' so downstream
-        # stages skip it. Idempotent + respects user-set types.
-        try:
-            marked, set_sub = _apply_subsumption(db, str(job.disc.id), clip_index)
-            if marked or set_sub:
-                log.info(
-                    "Path B: disc %s m2ts subsumption — marked %d type='ignore', "
-                    "set subsumed_by_title_id on %d row(s)",
-                    job.disc.id, marked, set_sub,
-                )
-                db.commit()
-        except Exception as exc:
-            log.warning(
-                "Path B: failed to persist m2ts subsumption for disc %s: %s",
-                getattr(job.disc, "id", "?"), exc,
-            )
 
     # 5. Options are NOT loaded here - frontend fetches them separately via GET /discs/options
     
@@ -7675,6 +7641,30 @@ def save_job_workflow_context(
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(job, "disc_payload")
     flag_modified(disc, "label_draft")
+
+    # Title rows are NOT written from this endpoint. Autosave of the label
+    # form must never carry a titles payload: title edits go through
+    # PATCH /discs/{id}/titles, which is the only path with optimistic
+    # concurrency (base_seq / If-Match), per-title write serialization and
+    # field provenance.
+    #
+    # The client already strips `tracks` before sending (#349) — but the
+    # PATCH variant of this endpoint merges the incoming form over the
+    # SERVER's current labelForm, and that one carries `tracks` for every
+    # title on the disc. The merge silently put them back, so each autosave
+    # rewrote all of them via _apply_label_to_records with source="user",
+    # from a snapshot read at the start of the request.
+    #
+    # Measured on rc.3: a labeling session issued 10 of these and rewrote
+    # all 302 rows of one disc in a single timestamp. Any title edit landing
+    # after that snapshot was read — or still in flight — was overwritten by
+    # the older value. That is the "my edit reverted" report, and a snapshot
+    # caught mid-typing is why titles came back truncated ("Hulk Chases T").
+    #
+    # save_label / complete_label still pass titles deliberately; only this
+    # autosave path is stripped.
+    lp.pop("tracks", None)
+    lp.pop("titles", None)
 
     # Call existing label save logic (saves to disc/release/track records)
     _apply_label_to_records(disc, lp, db)

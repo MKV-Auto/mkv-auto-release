@@ -798,3 +798,194 @@ def test_job_workflow_context_patch_ignores_regressive_workflow_step(client, tes
         assert job.workflow_step == "titles"
     finally:
         session.close()
+
+
+def _seed_path_b_disc(session):
+    """Disc with two same-segment-set mpls (rep + sibling) and one m2ts
+    wrapped by the rep — inputs that produce BOTH Path B mark types."""
+    disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"hash-{uuid.uuid4()}")
+    job = models.Job(
+        id=str(uuid.uuid4()), disc_id=disc.id, disc_num="1",
+        mount_point="/dev/sr0", job_status="running", rip_state="completed",
+    )
+    rep = models.DiscTitle(
+        id=str(uuid.uuid4()), disc_id=disc.id, index=1, order_index=0,
+        source_file="00800.mpls", segment_map="504,510", duration=3600,
+    )
+    sibling = models.DiscTitle(
+        id=str(uuid.uuid4()), disc_id=disc.id, index=2, order_index=1,
+        source_file="00801.mpls", segment_map="510,504", duration=3600,
+    )
+    clip = models.DiscTitle(
+        id=str(uuid.uuid4()), disc_id=disc.id, index=3, order_index=2,
+        source_file="00504.m2ts", segment_map="504", duration=1800,
+    )
+    session.add_all([disc, job, rep, sibling, clip])
+    session.commit()
+    return disc, job, rep, sibling, clip
+
+
+def test_workflow_context_get_is_a_pure_read(client, test_db):
+    """Redesign area 3: GET /jobs/{id}/workflow-context must never write.
+
+    It used to persist Path B marks (obfuscation_reason, subsumption)
+    mid-GET and commit — so the response was serialized BEFORE its own
+    side effects, handing clients title state stale relative to the very
+    request that returned it, and read traffic caused write churn. The
+    marks now apply at scan/detect time. This test seeds rows that WOULD
+    receive both mark types and pins that the GET changes nothing.
+    """
+    from core.path_b_dedupe import invalidate_dedupe_apply_memo
+
+    invalidate_dedupe_apply_memo()
+    session = test_db()
+    try:
+        disc, job, rep, sibling, clip = _seed_path_b_disc(session)
+
+        def snapshot():
+            rows = (
+                session.query(models.DiscTitle)
+                .filter(models.DiscTitle.disc_id == disc.id)
+                .order_by(models.DiscTitle.order_index)
+                .all()
+            )
+            for r in rows:
+                session.refresh(r)
+            return [
+                (r.id, r.type, r.obfuscation_reason, r.obfuscation_flag,
+                 r.subsumed_by_title_id, r.title_seq)
+                for r in rows
+            ]
+
+        before = snapshot()
+        for _ in range(2):  # twice: the memo must not be what saves us
+            response = client.get(f"/jobs/{job.id}/workflow-context")
+            assert response.status_code == 200, response.text
+        assert snapshot() == before
+
+        # The response still carries the dedupe annotation (pure compute):
+        titles = response.json().get("titles") or []
+        by_src = {t.get("source_file"): t for t in titles}
+        assert by_src["00800.mpls"].get("dedupe_group_id") == by_src["00801.mpls"].get("dedupe_group_id")
+    finally:
+        session.close()
+
+
+def test_apply_path_b_marks_for_disc_persists_what_the_get_used_to(client, test_db):
+    """The scan-time apply produces exactly the marks the GET used to:
+    sibling mpls gets obfuscation_reason, wrapped m2ts gets auto-ignore +
+    subsumed_by_title_id, and the memo makes a second run a no-op."""
+    from core.path_b_dedupe import apply_path_b_marks_for_disc, invalidate_dedupe_apply_memo
+
+    invalidate_dedupe_apply_memo()
+    session = test_db()
+    try:
+        disc, job, rep, sibling, clip = _seed_path_b_disc(session)
+
+        cleared, set_sibling, marked, set_sub = apply_path_b_marks_for_disc(session, str(disc.id))
+        session.commit()
+        assert set_sibling == 1
+        assert marked == 1
+        assert set_sub == 1
+
+        session.refresh(sibling); session.refresh(clip); session.refresh(rep)
+        assert sibling.obfuscation_reason == "segment_set_sibling"
+        assert sibling.obfuscation_flag is True
+        assert rep.obfuscation_reason is None
+        assert clip.subsumed_by_title_id == rep.id
+        assert clip.type == "ignore"
+        assert clip.auto_type == "ignore"      # automated decision…
+        assert clip.user_type is None          # …never forged as the user's
+
+        # Idempotent re-run: memo short-circuits, nothing changes.
+        again = apply_path_b_marks_for_disc(session, str(disc.id))
+        assert again == (0, 0, 0, 0)
+    finally:
+        session.close()
+
+
+def test_workflow_context_autosave_never_rewrites_titles(client, test_db):
+    """Label-form autosave must not touch title rows.
+
+    Reproduces the reported "my edit reverted" bug. The client strips
+    `tracks` before sending (#349), but the PATCH variant merges the
+    incoming form over the SERVER's labelForm — which carries `tracks` for
+    every title on the disc — and the merged form was handed to
+    _apply_label_to_records, rewriting all of them with source="user" from
+    a snapshot read at the start of the request.
+
+    Measured on rc.3: one labeling session issued 10 of these and rewrote
+    all 302 rows of a disc in a single timestamp, overwriting edits that
+    landed after the snapshot was taken.
+    """
+    session = test_db()
+    try:
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"h-{uuid.uuid4()}")
+        title = models.DiscTitle(
+            id=str(uuid.uuid4()), disc_id=disc.id, source_file="00800.mpls",
+            title="Name The User Just Typed", user_title="Name The User Just Typed",
+            type="Extra", user_type="Extra", order_index=0, title_seq=7,
+        )
+        job = models.Job(
+            id=str(uuid.uuid4()), disc_id=disc.id, disc_num="1",
+            mount_point="/dev/sr0", job_status="running", rip_state="completed",
+        )
+        session.add_all([disc, title, job])
+        session.commit()
+        before_seq = title.title_seq
+
+        # An autosave carrying a STALE titles payload — exactly what the
+        # server-side merge used to re-inject.
+        response = client.patch(
+            f"/jobs/{job.id}/workflow-context",
+            json={"labelForm": {
+                "disc_name": "Thor: Ragnarok",
+                "tracks": [{
+                    "title_id": title.id,
+                    "title": "Stale Snapshot Value",
+                    "type": "Featurette",
+                    "season": 9,
+                }],
+            }},
+        )
+        assert response.status_code == 200, response.text
+
+        session.refresh(title)
+        assert title.title == "Name The User Just Typed", \
+            "autosave must not overwrite a title row"
+        assert title.user_title == "Name The User Just Typed"
+        assert title.type == "Extra", "autosave must not overwrite the type"
+        assert title.season is None, "autosave must not write season"
+        assert title.title_seq == before_seq, "the row must not be versioned by autosave"
+
+        # The non-title part of the form still saves.
+        session.refresh(disc)
+        assert (disc.disc_name or "") == "Thor: Ragnarok"
+    finally:
+        session.close()
+
+
+def test_label_complete_still_writes_titles_deliberately(client, test_db):
+    """The strip is scoped to autosave — the deliberate label-save path
+    (which shares _apply_label_to_records) must keep writing titles."""
+    from api.routers.jobs import _apply_label_to_records
+
+    session = test_db()
+    try:
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"h-{uuid.uuid4()}")
+        title = models.DiscTitle(
+            id=str(uuid.uuid4()), disc_id=disc.id, source_file="00801.mpls",
+            title="Old", order_index=0,
+        )
+        session.add_all([disc, title])
+        session.commit()
+
+        _apply_label_to_records(disc, {"tracks": [
+            {"title_id": title.id, "title": "Deliberate Save", "type": "Episode"},
+        ]}, session)
+        session.commit()
+        session.refresh(title)
+        assert title.title == "Deliberate Save"
+        assert title.user_title == "Deliberate Save", "still recorded as a user value"
+    finally:
+        session.close()

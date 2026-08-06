@@ -359,4 +359,23 @@ def run_detect_raw_titles_phase(
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
             list(pool.map(do_detect, keys))
+    # Detection updated metadata_scan / auto-ignore state, which the Path B
+    # marks depend on. Re-apply them here — GET workflow-context no longer
+    # writes them (reads stay reads), so every writer of the inputs owns
+    # refreshing the derived marks.
+    try:
+        with db_session() as th_db:
+            j = crud.get_job(th_db, job_id)
+            disc_id = str(j.disc.id) if j is not None and getattr(j, "disc", None) is not None else None
+            if disc_id:
+                from core.path_b_dedupe import apply_path_b_marks_for_disc
+                cleared, set_sibling, marked, set_sub = apply_path_b_marks_for_disc(th_db, disc_id)
+                if cleared or set_sibling or marked or set_sub:
+                    log.info(
+                        "Path B (detect-time): disc %s reason cleared=%d set=%d; subsumption ignore=%d set=%d",
+                        disc_id, cleared, set_sibling, marked, set_sub,
+                    )
+                th_db.commit()
+    except Exception as pb_ex:
+        log.warning("detect_raw_titles: Path B mark refresh failed for job %s: %s", job_id, pb_ex)
     log.info("detect_raw_titles phase finished", extra={"job_id": job_id})

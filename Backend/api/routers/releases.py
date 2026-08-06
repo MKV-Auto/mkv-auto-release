@@ -2535,12 +2535,21 @@ def patch_disc_title_records(disc_id: str, tracks: List[TitleLabel], db: Session
                 id=str(uuid.uuid4()),
                 disc_id=disc.id,
                 source_file=str(source),
+                # User-submitted labels: mirror into user_* at construction
+                # (resolved cache = user value; automation can't overwrite).
+                # Without the mirror, a later auto write would resolve over
+                # the raw resolved-only value (user None ?? auto).
                 title=t.title,
+                user_title=t.title,
                 description=t.description,
+                user_description=t.description,
                 order_index=order_idx,
                 season=t.season,
+                user_season=t.season,
                 episode=t.episode,
+                user_episode=t.episode,
                 type=normalized_type,
+                user_type=normalized_type,
                 comment=t.comment or t.note,
                 duration=t.duration,
                 size=t.size,
@@ -2966,11 +2975,18 @@ def update_disc_metadata(disc_id: str, payload: DiscMetadataUpdate, db: Session 
                     duration_raw=t.get("duration_raw"),
                     size=t.get("size"),
                     display_size=t.get("display_size"),
+                    # User-submitted labels: mirror into user_* (see
+                    # patch_disc_title_records above for why).
                     description=t.get("description") or t.get("note"),
+                    user_description=t.get("description") or t.get("note"),
                     title=t.get("title") or t.get("episode_name"),
+                    user_title=t.get("title") or t.get("episode_name"),
                     type=_normalize_title_type(t.get("type")),
+                    user_type=_normalize_title_type(t.get("type")),
                     season=t.get("season"),
+                    user_season=t.get("season"),
                     episode=t.get("episode"),
+                    user_episode=t.get("episode"),
                     chapters=t.get("chapters"),
                     streams=t.get("streams"),
                     language_code=t.get("language_code"),
@@ -3346,18 +3362,19 @@ def save_disc_label(disc_id: str, label: LabelRequest, db: Session = Depends(get
                 )
             if t.get("source_file"):
                 target.source_file = t.get("source_file")
+            # Release labelForm save is user-initiated; route every label
+            # field through the source-aware helper so user_* owns the
+            # values (and automation can never overwrite them later).
+            from api.crud import set_title_field
             # If title is explicitly in payload (even if None/empty), use it; otherwise fall back to episode_name
             if "title" in t:
-                target.title = t.get("title") if t.get("title") is not None else None
+                set_title_field(target, "title", t.get("title"), source="user")
             else:
-                target.title = t.get("episode_name")
-            target.description = t.get("description") or t.get("note")
-            target.season = t.get("season")
-            target.episode = t.get("episode")
-            # Release labelForm save is user-initiated; route through the
-            # source-aware helper so user_type owns the value.
-            from api.crud import set_title_type
-            set_title_type(target, _normalize_title_type(t.get("type")), source="user")
+                set_title_field(target, "title", t.get("episode_name"), source="user")
+            set_title_field(target, "description", t.get("description") or t.get("note"), source="user")
+            set_title_field(target, "season", t.get("season"), source="user")
+            set_title_field(target, "episode", t.get("episode"), source="user")
+            set_title_field(target, "type", _normalize_title_type(t.get("type")), source="user")
             target.comment = t.get("comment") or t.get("note")
             target.duration = t.get("duration")
             target.size = t.get("size")
