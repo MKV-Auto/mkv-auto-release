@@ -302,6 +302,27 @@ class DiscTitle(Base):
     user_season = Column(Integer, nullable=True)
     auto_episode = Column(Integer, nullable=True)
     user_episode = Column(Integer, nullable=True)
+    # Multi-part layout (#796). A disc's physical layout does not always
+    # match one-file-per-episode, in either direction:
+    #
+    #   part / part_of  — this file is part N of M for ONE episode. Emits the
+    #                     Plex/Jellyfin stacking suffix (`- part1`), which both
+    #                     servers treat as a single episode split across files.
+    #   episode_end     — this ONE file covers `episode`..`episode_end`. Emits
+    #                     range naming (`s03e01-e02`).
+    #
+    # Both carry the user_/auto_ provenance split like season/episode, so
+    # TMDB two-parter detection can populate them without ever overwriting a
+    # hand-correction.
+    part = Column(Integer, nullable=True)
+    auto_part = Column(Integer, nullable=True)
+    user_part = Column(Integer, nullable=True)
+    part_of = Column(Integer, nullable=True)
+    auto_part_of = Column(Integer, nullable=True)
+    user_part_of = Column(Integer, nullable=True)
+    episode_end = Column(Integer, nullable=True)
+    auto_episode_end = Column(Integer, nullable=True)
+    user_episode_end = Column(Integer, nullable=True)
     chapters = Column(JSON, nullable=True)
     streams = Column(JSON, nullable=True)
     content = Column(Boolean, nullable=False, server_default=text("true"))

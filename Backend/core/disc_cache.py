@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Iterable, Tuple
 from core.disc import Disc
 from core.logging_utils import get_logger
+from core.loop_local import LoopLocalLock
 from core.utils import get_drives, get_mkvauto_root, get_mkvauto_tmp
 
 logger = get_logger("core.disc_cache")
@@ -41,8 +42,10 @@ def _compute_disk_persistence_enabled() -> bool:
 
 # Tests may set this to False to avoid touching disk.
 DISK_PERSIST_ENABLED: bool = _compute_disk_persistence_enabled()
-# Async lock to prevent concurrent refreshes
-_LOCK = asyncio.Lock()
+# Async lock to prevent concurrent refreshes. Loop-local: a bare asyncio.Lock
+# in module state sticks to the first event loop that contends on it, which
+# breaks every later loop in the same process (see core/loop_local.py).
+_LOCK = LoopLocalLock()
 # Serialize concurrent access to _cache (parallel startup rescans, SSE updates, etc.)
 _cache_lock = threading.RLock()
 # Internal cache: key (mount_point, disc_num, disc_hash, or disc_id) -> (timestamp, payload)

@@ -678,6 +678,11 @@ def attach_duplicate_info(titles_by_id: dict[str, dict[str, Any]], disc_id: str)
     # Absorb subsumed m2ts into the wrapper's group. Pass after the initial
     # segment-set grouping so we know which group each wrapper lives in.
     for tid, payload in list(titles_by_id.items()):
+        # Same escape hatch the segment-set pass above honours. Without it
+        # this pass re-absorbs a row the user explicitly ungrouped, and the
+        # row disappears back into the wrapper (#797).
+        if payload.get("force_independent_group"):
+            continue
         wrapper_tid = payload.get("subsumed_by_title_id")
         if not wrapper_tid:
             continue

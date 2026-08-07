@@ -419,6 +419,48 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     return !!titleId && this._dedupeSiblingIds.has(titleId);
   }
 
+  /** Clips inside a play-all wrapper that the USER has claimed (#797).
+   *
+   * A `.mpls` can wrap several `.m2ts` clips; subsumption folds them into the
+   * wrapper's dedupe group so they collapse out of the rail. That is right for
+   * clips nobody cares about, and wrong for one the user has labelled — the
+   * backend now keeps those `active`, so hiding them meant a title that WILL
+   * be ripped was invisible.
+   *
+   * A non-ignore `user_type` is the claim signal, matching
+   * `user_claimed_row()` in core/duplicate_group_sync.py. Presentation only:
+   * these are ordinary rows that render indented under their parent, and
+   * selecting one opens it in the editor like any other title.
+   */
+  claimedClipsOf(title: any): any[] {
+    const parentId = this.getTitleId(title);
+    if (!parentId) return [];
+    return (this.titles || []).filter((t) => {
+      const sub = (t as { subsumed_by_title_id?: string | null }).subsumed_by_title_id;
+      if (!sub || sub !== parentId) return false;
+      const ut = ((t as { user_type?: string | null }).user_type || '').toString().toLowerCase();
+      return !!ut && ut !== 'ignore';
+    });
+  }
+
+  /** True when this row is a claimed clip rendered under its parent — used to
+   * keep it from ALSO appearing as a top-level row. */
+  isClaimedClip(title: any): boolean {
+    const sub = (title as { subsumed_by_title_id?: string | null })?.subsumed_by_title_id;
+    if (!sub) return false;
+    const ut = ((title as { user_type?: string | null }).user_type || '').toString().toLowerCase();
+    return !!ut && ut !== 'ignore';
+  }
+
+  /** True when a wrapper stepped aside because its clips are claimed — the
+   * backend auto-ignores it so the same footage isn't ripped twice. */
+  isSupersededWrapper(title: any): boolean {
+    if (!this.claimedClipsOf(title).length) return false;
+    const auto = ((title as { auto_type?: string | null })?.auto_type || '').toString().toLowerCase();
+    const user = ((title as { user_type?: string | null })?.user_type || '').toString().toLowerCase();
+    return auto === 'ignore' && !user;
+  }
+
   /** True when this title is the canonical playlist Path A identified. */
   isMatchedCanonical(title: any): boolean {
     if (this.matchedCanonicalIndex == null || !title) return false;
@@ -1480,10 +1522,15 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     this.selectedTitleId = first ? this.getTitleId(first) : null;
   }
 
-  /** Show season/episode fields when release is series or title type is Episode (so they stay visible when user selects Episode). */
+  /** Show season/episode fields when the title's own type is Episode.
+   *
+   * The `if (this.isSeries) return true;` short-circuit used to force these
+   * onto every row of a series disc, including extras (#798). Now per-type,
+   * matching showEdition() below and the completeness rules in
+   * title-label-stats.util.ts.
+   */
   showSeasonEpisode(title: any): boolean {
     if (this.isIgnored(title)) return false;
-    if (this.isSeries) return true;
     const type = (title?.type || '').toString().toLowerCase();
     return type === 'episode';
   }

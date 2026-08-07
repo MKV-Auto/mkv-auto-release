@@ -82,6 +82,11 @@ export class TitleEditorComponent implements OnDestroy {
   readonly titleTypeOptions = TITLE_TYPE_SELECT_OPTIONS;
 
   @Input() title: any = null;
+  /** @deprecated Do not gate form fields on this — it describes the DISC,
+   * not the row. Gating on it is what made every title on a series disc
+   * show the episode picker and lose its name field (#798). Use
+   * isEpisodeType() / isMainMovie(). Retained only because parent
+   * templates still bind it. */
   @Input() isSeries = false;
   @Input() titleProgress: Record<string, number> = {};
   @Input() titleStatusFn: (id: string | null | undefined) => string = () => 'pending';
@@ -149,7 +154,15 @@ export class TitleEditorComponent implements OnDestroy {
   private readonly workflow = inject(WorkflowService);
   readonly episodeOptions$: Observable<TmdbEpisodeSummary[] | 'loading' | 'error' | 'unavailable'> =
     this.workflow.getPrimarySeason$().pipe(
-      switchMap((primary) => this.workflow.getEpisodesForSeason$(this.effectiveSeason(primary))),
+      switchMap((primary) => {
+        const season = this.effectiveSeason(primary);
+        // The prefetch only loads the disc's PRIMARY season, and the getter
+        // below is a pure reader — so a title on any other season resolved to
+        // 'unavailable' forever and the picker never appeared. Ask for this
+        // title's own season; the call is idempotent.
+        this.workflow.ensureEpisodeSeasonLoaded(season);
+        return this.workflow.getEpisodesForSeason$(season);
+      }),
       distinctUntilChanged(),
     );
 
@@ -438,13 +451,24 @@ export class TitleEditorComponent implements OnDestroy {
     const name = (this.title.title || '').toString().trim();
     if (!name) return null;
     const safeName = name.replace(/[\/\\:*?"<>|]/g, '_');
-    if (this.isSeries) {
+    if (this.isEpisodeType()) {
       const season = Number(this.title.season);
       const episode = Number(this.title.episode);
       if (Number.isFinite(season) && Number.isFinite(episode) && season > 0 && episode > 0) {
         const s = String(season).padStart(2, '0');
         const e = String(episode).padStart(2, '0');
-        return `S${s}E${e} - ${safeName}.mkv`;
+        // Mirrors format_episode_designator / format_part_suffix in
+        // core/disc.py. Still a cue rather than the canonical path, but the
+        // multi-part suffixes are the whole point of the Layout control —
+        // without them the setting has no visible effect until postprocess.
+        let designator = `S${s}E${e}`;
+        const end = Number(this.title.episode_end);
+        if (Number.isFinite(end) && end > episode) {
+          designator += `-E${String(end).padStart(2, '0')}`;
+        }
+        const part = Number(this.title.part);
+        const partSuffix = Number.isFinite(part) && part > 0 ? ` - part${part}` : '';
+        return `${designator} - ${safeName}${partSuffix}.mkv`;
       }
       return `${safeName}.mkv`;
     }
@@ -476,6 +500,88 @@ export class TitleEditorComponent implements OnDestroy {
 
   isIgnored(): boolean {
     return (this.title?.type || '').toString().toLowerCase() === 'ignore';
+  }
+
+  /** True when THIS title is an episode — not when the disc happens to be a series.
+   *
+   * The form used to gate on the disc-level `isSeries`, so every row on a
+   * series disc got the episode picker and no name field — an extra could
+   * not be named at all (#798). Mirrors `showSeasonEpisode()` in
+   * title-label.component.ts minus its disc-level short-circuit, and matches
+   * the completeness rules in title-label-stats.util.ts, which were already
+   * per-type.
+   */
+  isEpisodeType(): boolean {
+    return (this.title?.type || '').toString().toLowerCase() === 'episode';
+  }
+
+  /** True when this title carries an edition — a main movie, per-type. */
+  isMainMovie(): boolean {
+    return (this.title?.type || '').toString().toLowerCase() === 'mainmovie';
+  }
+
+  /** The three shapes an episode can take on disc (#796).
+   *
+   * Derived from the stored fields rather than stored itself, so there is
+   * one source of truth: `part` set means the disc split one episode across
+   * files, `episode_end` set means one file covers several episodes.
+   */
+  get episodeLayout(): 'single' | 'split' | 'span' {
+    if (this.title?.part != null) return 'split';
+    if (this.title?.episode_end != null) return 'span';
+    return 'single';
+  }
+
+  /** Layout is a picked control — it writes immediately, so it must absorb
+   * any buffered typed fields rather than let them flush as a second
+   * same-tick write (both would carry the same base_seq and one would lose).
+   * Same contract as onTypeChange / onEpisodePicked. */
+  onEpisodeLayoutChange(value: string): void {
+    if (!this.title) return;
+    const pending = this.takePendingFieldsFor(this.title.title_id);
+    this.flushPendingFieldEdits();
+    if (value === 'split') {
+      this.title.part = this.title.part ?? 1;
+      this.title.part_of = this.title.part_of ?? 2;
+      this.title.episode_end = null;
+    } else if (value === 'span') {
+      const ep = Number(this.title.episode);
+      this.title.episode_end = this.title.episode_end ?? (Number.isFinite(ep) ? ep + 1 : null);
+      this.title.part = null;
+      this.title.part_of = null;
+    } else {
+      this.title.part = null;
+      this.title.part_of = null;
+      this.title.episode_end = null;
+    }
+    this.emitFieldPatch({
+      ...pending,
+      part: this.title.part ?? null,
+      part_of: this.title.part_of ?? null,
+      episode_end: this.title.episode_end ?? null,
+    });
+    this.titleChanged.emit();
+  }
+
+  onPartChange(value: any): void {
+    if (!this.title) return;
+    const num = value === null || value === '' ? null : Number(value);
+    this.bufferFieldPatch({ part: Number.isFinite(num as number) ? (num as number) : null });
+    this.titleChanged.emit();
+  }
+
+  onPartOfChange(value: any): void {
+    if (!this.title) return;
+    const num = value === null || value === '' ? null : Number(value);
+    this.bufferFieldPatch({ part_of: Number.isFinite(num as number) ? (num as number) : null });
+    this.titleChanged.emit();
+  }
+
+  onEpisodeEndChange(value: any): void {
+    if (!this.title) return;
+    const num = value === null || value === '' ? null : Number(value);
+    this.bufferFieldPatch({ episode_end: Number.isFinite(num as number) ? (num as number) : null });
+    this.titleChanged.emit();
   }
 
   getChapterCount(): number | null {

@@ -15,6 +15,8 @@ from typing import Dict, Set, Optional, Any
 from collections import defaultdict
 from fastapi import WebSocket, WebSocketDisconnect
 
+from core.loop_local import LoopLocalLock
+
 logger = logging.getLogger("core.websocket_manager")
 
 # Connection limits
@@ -35,8 +37,10 @@ class WebSocketManager:
     def __init__(self):
         # Connection registries: key -> Set[WebSocket]
         self._connections: Dict[str, Set[WebSocket]] = defaultdict(set)
-        # Lock for thread-safe operations
-        self._lock = asyncio.Lock()
+        # Lock for thread-safe operations. Loop-local because the manager is a
+        # process-wide singleton (see get_websocket_manager) and a bare
+        # asyncio.Lock would stick to the first loop that contends on it.
+        self._lock = LoopLocalLock()
         # Track total connections
         self._total_connections = 0
     

@@ -594,6 +594,112 @@ class MakeMKVStallError(MakeMKVError):
     pass
 
 
+class MakeMKVNoDrivesError(MakeMKVError):
+    """MakeMKV enumerated zero usable optical drives (#802).
+
+    Distinct from "this disc will not read": the engine never saw a drive to
+    begin with, so retrying, cleaning the disc, or trying another disc cannot
+    help. Kept as its own type so callers can surface the host-level remedy
+    instead of a disc-level one.
+    """
+    pass
+
+
+# MSG:5042 "The program can't find any usable optical drives."
+# MSG:2024 "Unknown device - '/dev/sr0'" — emitted when an explicitly passed
+#          device path matches nothing MakeMKV enumerated.
+#
+# The optional ``[timestamp] `` prefix matters: run_makemkv keeps the raw
+# stdout line in ``full_output`` but writes a timestamped copy to
+# makemkvcon.log. Accepting both means the same classifier works on the live
+# stream and on a log file pasted into a bug report.
+_MSG_PREFIX = r'^(?:\[[^\]]*\]\s*)?'
+_NO_USABLE_DRIVES_RE = re.compile(_MSG_PREFIX + r'MSG:5042', re.M)
+_UNKNOWN_DEVICE_RE = re.compile(
+    _MSG_PREFIX + r'MSG:2024,[^,]*,[^,]*,"Unknown device[^"]*"', re.M
+)
+
+
+def diagnose_makemkv_no_drives(output: str) -> Optional[str]:
+    """Actionable message when MakeMKV output shows zero usable drives, else None.
+
+    The signature is ``MSG:5042`` (no usable optical drives) or ``MSG:2024``
+    (a device path MakeMKV cannot resolve). Both mean the engine's drive
+    enumeration came back empty, which on Linux almost always means there are
+    no ``/dev/sg*`` nodes for it to enumerate — see
+    ``core.drive_registry.scsi_generic_missing``.
+
+    Pure and string-only so it can be unit-tested against captured logs
+    without a drive, an engine, or a container.
+    """
+    if not output:
+        return None
+    saw_no_drives = bool(_NO_USABLE_DRIVES_RE.search(output))
+    saw_unknown_device = bool(_UNKNOWN_DEVICE_RE.search(output))
+    if not (saw_no_drives or saw_unknown_device):
+        return None
+
+    # Import here: core.drive_registry imports core.utils lazily for its media
+    # probe, so a module-level import would close the cycle.
+    try:
+        from core.drive_registry import diagnose_no_drives_environment
+        reason, detail = diagnose_no_drives_environment()
+    except Exception:  # noqa: BLE001 - diagnosis must never be the thing that fails
+        reason, detail = "unknown", "The drive environment could not be inspected."
+
+    remedies = {
+        "no_sg_nodes": [
+            "Load the SCSI generic module ON THE HOST — a container cannot",
+            "create these nodes, it shares the host kernel:",
+            "",
+            "    sudo modprobe sg",
+            "    echo sg | sudo tee /etc/modules-load.d/sg.conf   # persist across reboots",
+            "",
+            "Then restart the container.",
+        ],
+        "sg_not_passed_through": [
+            "The host is fine — do NOT run modprobe. The container was not given",
+            "the SCSI generic nodes. Note that --device flags are fixed when a",
+            "container is created, so `docker restart` will not add them:",
+            "",
+            "    docker inspect <container> --format '{{.HostConfig.Privileged}}'",
+            "",
+            "If that prints false, re-create the container with --privileged, or",
+            "pass each drive's sg node explicitly (--device=/dev/sgN alongside",
+            "--device=/dev/srN). See docs/HOST_OPTICAL_SETUP.md.",
+        ],
+        "no_devices": [
+            "Pass the drive through to the container. For each drive you need",
+            "both its /dev/srN node and its /dev/sgN node — see",
+            "docs/HOST_OPTICAL_SETUP.md.",
+        ],
+        "no_sr_nodes": [
+            "Pass the drive's /dev/srN node through to the container as well;",
+            "the SCSI generic node alone is not enough. See",
+            "docs/HOST_OPTICAL_SETUP.md.",
+        ],
+        "sg_not_accessible": [
+            "Grant the container access to those nodes. The host's device group",
+            "usually does not exist inside the container, so add its GID with",
+            "group_add (compose) or --group-add (docker run). See",
+            "docs/HOST_OPTICAL_SETUP.md.",
+        ],
+        "unknown": [
+            "Collect the following and open an issue with the output — the",
+            "device nodes themselves are not the problem:",
+            "",
+            "    docker exec <container> sg_inq /dev/sgN     # SCSI reachable?",
+            "    docker exec <container> makemkvcon -r info disc:9999",
+            "    docker inspect <container> --format '{{.HostConfig.Privileged}}'",
+        ],
+    }
+
+    return "\n".join(
+        ["MakeMKV found no usable optical drives.", "", detail, ""]
+        + remedies.get(reason, remedies["unknown"])
+    )
+
+
 def get_rip_output_stall_seconds() -> int:
     """
     Max seconds without a line of process output before the rip is aborted (worker-owned stall).
@@ -945,6 +1051,25 @@ def run_makemkv(
         raise MakeMKVStallError(
             f"No output from MakeMKV for {stall_seconds}s; rip aborted as stalled."
         )
+
+    # #802: zero usable drives beats every other diagnosis — the engine never
+    # saw a drive, so disc-level advice would send the user chasing a clean
+    # cloth for a kernel-module problem.
+    #
+    # Scoped to device-targeted commands (``dev:``) and checked regardless of
+    # exit code, because makemkvcon reports "no usable optical drives" and
+    # still exits 0 for an ``info dev:`` scan — verified on a CachyOS host with
+    # the sg module unloaded, where the API happily returned 200 with a payload
+    # whose info_log was nothing but MSG:5042. ``disc:9999`` enumeration is
+    # deliberately excluded: "no drives" is a legitimate empty list there, not
+    # an error. Living here rather than at the call sites so a third
+    # ``info dev:`` caller cannot silently miss it — there were already two.
+    if "dev:" in cmd_args:
+        no_drives = diagnose_makemkv_no_drives(''.join(full_output))
+        if no_drives:
+            raise MakeMKVNoDrivesError(
+                f"{no_drives}\n\nFull output:\n{''.join(full_output)}"
+            )
 
     if rc != 0:
         # tailor the error for the common expiry/out-of-date case (253)

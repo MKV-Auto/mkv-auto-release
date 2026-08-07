@@ -1395,3 +1395,40 @@ class StageState:
             updates["transfer_paths"] = dest_paths
         updates.update(kwargs)
         return apply_job_state(db, job, updates=updates, reason=reason or "transfer_failed")
+
+
+def claim_transfer_for_dispatch(db: Any, job_id: str) -> bool:
+    """Atomically claim a job's transfer slot. True if THIS caller won it.
+
+    Two independent paths enqueue ``transfer_remote``: the post-process
+    auto-dispatch helper in ``workers/tasks.py`` and the
+    ``POST /jobs/{id}/transfer`` endpoint. Neither used to claim the job
+    before enqueueing — auto-dispatch left ``transfer_state='ready'``, so
+    for the whole gap between enqueue and the worker's own
+    ``ready -> running`` transition the job still looked startable.
+
+    On 2026-08-06 that gap was 91 seconds and both paths fired: two celery
+    tasks ran the same transfer concurrently and two ``smbclient`` processes
+    wrote the SAME destination file. Captain America's Blu-Ray was
+    dispatched four times, and its ``NT_STATUS_IO_TIMEOUT`` on 2/8 files is
+    what that contention looks like from the SMB side.
+
+    The claim is a single conditional UPDATE so it is atomic even against a
+    concurrent claimer: only the transaction whose WHERE still matches gets
+    ``rowcount == 1``. Callers must not enqueue when this returns False.
+    """
+    from api import models
+
+    updated = (
+        db.query(models.Job)
+        .filter(
+            models.Job.id == job_id,
+            models.Job.transfer_state.in_(("pending", "ready")),
+        )
+        .update(
+            {"transfer_state": "running", "transfer_progress": 0},
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return updated == 1

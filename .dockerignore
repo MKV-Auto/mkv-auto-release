@@ -14,6 +14,9 @@
 *.swo
 *~
 scripts/
+# ...except the support bundle, which the Dockerfile copies into the image so a
+# user can diagnose drive problems from inside the container (#802).
+!scripts/mkv-support-bundle.sh
 .github/
 .circleci/
 docs/

@@ -95,10 +95,21 @@ def known_result(rows: list[dict], makemkv: str, ffmpeg: str) -> str | None:
 
 # ── Source archival ─────────────────────────────────────────────────────────
 
-def archive_sources(ledger_dir: Path, version: str, files: list[Path]) -> dict:
+PROVENANCE_NAME = "provenance.json"
+
+
+def archive_sources(
+    ledger_dir: Path, version: str, files: list[Path], provenance: dict | None = None
+) -> dict:
     """Keep our own copy of the tarballs, since makemkv.com hosts only the
     current release — once a version rolls off, an un-archived copy may be
-    unobtainable. Private, never redistributed."""
+    unobtainable. Private, never redistributed.
+
+    Records each file's origin alongside it. Without that, reading a tarball
+    back later would lose the distinction between "the vendor served us these
+    bytes" and "a mirror did", and the whole point of the provenance gate is
+    that those are different claims.
+    """
     dest_dir = ledger_dir / SOURCES_SUBDIR / version
     dest_dir.mkdir(parents=True, exist_ok=True)
     stored = {}
@@ -107,7 +118,61 @@ def archive_sources(ledger_dir: Path, version: str, files: list[Path]) -> dict:
         if not target.exists():
             shutil.copy2(f, target)
         stored[f.name] = sha256_of(target)
+
+    prov_path = dest_dir / PROVENANCE_NAME
+    known: dict = {}
+    if prov_path.exists():
+        try:
+            known = json.loads(prov_path.read_text())
+        except ValueError:
+            known = {}
+    for name, origin in (provenance or {}).items():
+        # Never downgrade a recorded vendor fetch to a later mirror fetch:
+        # the bytes are identical (verified by hash) and the stronger claim
+        # is the true one.
+        if known.get(name) == "vendor":
+            continue
+        known[name] = origin
+    prov_path.write_text(json.dumps(known, indent=2, sort_keys=True) + "\n")
     return stored
+
+
+def restore_from_archive(ledger_dir: Path, version: str, dest_dir: Path) -> dict:
+    """Take verified tarballs from our own archive instead of the network.
+
+    This is why the sources repo exists. archive.org will not reliably serve
+    these files to a GitHub runner — two runs died after 3x300s of trying on
+    a 6.6MB file that downloads in ~60s elsewhere — while the bytes were
+    already sitting in the repo this job clones at startup.
+
+    Returns {filename: recorded_origin} for what it restored. Anything
+    corrupt is ignored so the caller refetches it. A copy with no recorded
+    provenance is reported as "archived", which the manifest treats as
+    not-vendor, so restoring can never upgrade a hash's standing.
+    """
+    src_dir = ledger_dir / SOURCES_SUBDIR / version
+    if not src_dir.is_dir():
+        return {}
+    recorded: dict = {}
+    prov_path = src_dir / PROVENANCE_NAME
+    if prov_path.exists():
+        try:
+            recorded = json.loads(prov_path.read_text())
+        except ValueError:
+            recorded = {}
+
+    restored: dict = {}
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for tar in sorted(src_dir.glob("*.tar.gz")):
+        target = dest_dir / tar.name
+        if target.exists():
+            continue
+        if not mu._verify_tarball_gz(tar, []):
+            log(f"  archived {tar.name} fails verification; will refetch")
+            continue
+        shutil.copy2(tar, target)
+        restored[tar.name] = recorded.get(tar.name, "archived")
+    return restored
 
 
 # ── Building ────────────────────────────────────────────────────────────────
@@ -184,6 +249,11 @@ def try_pair(makemkv_version: str, ffmpeg_version: str, sources: dict[str, Path]
             install_prefix=str(prefix),
             log_cb=lambda line: print(f"    {line}", flush=True),
         )
+    except mu.SourceUnavailableError:
+        # Could not fetch, so we learned nothing about this pair. Ordered
+        # before the MakeMKVUpdateError/Exception handlers below because it
+        # is a subclass of them.
+        raise
     except mu.BuildEnvironmentError:
         # The runner is broken, not the version pair. Propagate so the job
         # aborts instead of recording a compatibility verdict it has not
@@ -310,10 +380,19 @@ def main() -> int:
     # here rather than in someone's setup wizard.
     work = mu.predownload_dir(makemkv_version)
     work.mkdir(parents=True, exist_ok=True)
-    provenance: dict[str, str] = {}
+
+    # Our own archive first — it is the reason the sources repo exists.
+    provenance: dict[str, str] = dict(
+        restore_from_archive(args.ledger_dir, makemkv_version, work)
+    )
+    for name, origin in provenance.items():
+        log(f"  {name}: restored from our archive (origin: {origin})")
+
     for kind, url_tpl in (("bin", mu.MAKEMKV_BIN_URL), ("oss", mu.MAKEMKV_OSS_URL)):
         name = f"makemkv-{kind}-{makemkv_version}.tar.gz"
         target = work / name
+        if name in provenance:
+            continue  # already restored
         if not target.exists():
             provenance[name] = fetch_with_provenance(url_tpl.format(version=makemkv_version), target)
         else:
@@ -322,7 +401,9 @@ def main() -> int:
 
     dl = mu.download_makemkv_sources(makemkv_version, log_cb=lambda l: print(f"    {l}", flush=True))
     sources = {"bin": Path(dl.bin_tar), "oss": Path(dl.oss_tar)}
-    stored = archive_sources(args.ledger_dir, makemkv_version, list(sources.values()))
+    stored = archive_sources(
+        args.ledger_dir, makemkv_version, list(sources.values()), provenance
+    )
     log(f"archived {len(stored)} source tarball(s)")
 
     result_written = False
@@ -339,6 +420,12 @@ def main() -> int:
         log(f"building {makemkv_version} + {ffmpeg_version}")
         try:
             ok, detail = try_pair(makemkv_version, ffmpeg_version, sources)
+        except mu.SourceUnavailableError as exc:
+            # Skip this candidate WITHOUT recording a verdict — a slow
+            # mirror is not evidence of incompatibility, and a recorded
+            # failure here is memoized and never retried.
+            log(f"  -> skipped (sources unavailable, no verdict recorded): {str(exc)[:120]}")
+            continue
         except mu.BuildEnvironmentError as exc:
             # Abort the whole run: no ledger row, no manifest, non-zero exit
             # so the failure surfaces as an issue instead of as a false

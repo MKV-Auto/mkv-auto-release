@@ -418,6 +418,12 @@ export interface TitlePatchRequest {
   comment?: string | null;
   season?: number | null;
   episode?: number | null;
+  /** Multi-part layout (#796). `part`/`part_of`: this file is part N of M of
+   * ONE episode (Plex/Jellyfin stacking). `episode_end`: this ONE file covers
+   * `episode`..`episode_end`. */
+  part?: number | null;
+  part_of?: number | null;
+  episode_end?: number | null;
   type?: string | null;
   duration?: number | null;
   size?: number | null;
@@ -6207,6 +6213,30 @@ export class WorkflowService implements OnDestroy {
 
   /** Episode dropdown options for one season — 'loading'/'error'/'unavailable'
    * are sentinel strings the template ngSwitches on. */
+  /** Ensure a season's episodes are loaded, fetching on demand.
+   *
+   * `_prefetchTmdbEpisodeCatalog` only loads the disc's PRIMARY season, and
+   * `getEpisodesForSeason$` is a pure reader that returns 'unavailable' for
+   * anything else. So a title whose season differs from the primary — e.g. a
+   * Rebels S3 disc whose primary_season is unset and defaults to 1 — could
+   * never show the TMDB episode picker, because nothing ever fetched season 3.
+   *
+   * Idempotent: no-ops when the season is already loaded, in flight, or
+   * previously errored, so it is safe to call on every render.
+   */
+  ensureEpisodeSeasonLoaded(season_number: number): void {
+    if (!Number.isFinite(season_number) || season_number <= 0) return;
+    const tmdb_id = this.getActiveTmdbTvId();
+    if (!tmdb_id) return;
+    const c = this._activeContext$.value?.tmdbEpisodeCatalog;
+    if (c && c.tmdb_id === tmdb_id) {
+      if (c.seasons.has(season_number)) return;
+      if (c.loadingSeasons.has(season_number)) return;
+      if (c.errorSeasons.has(season_number)) return;
+    }
+    this._fetchSeasonIntoActiveContext(tmdb_id, season_number);
+  }
+
   getEpisodesForSeason$(season_number: number):
     Observable<TmdbEpisodeSummary[] | 'loading' | 'error' | 'unavailable'> {
     return this._activeContext$.pipe(

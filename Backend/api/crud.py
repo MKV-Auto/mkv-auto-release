@@ -168,7 +168,12 @@ def set_title_type(
 
 # Label fields carrying the user_/auto_ provenance split (plus `type`,
 # which has its own helper above and predates the generalization).
-PROVENANCED_TITLE_FIELDS = ("title", "edition", "description", "season", "episode")
+PROVENANCED_TITLE_FIELDS = (
+    "title", "edition", "description", "season", "episode",
+    # Multi-part layout (#796) — same provenance rules, so TMDB two-parter
+    # detection writes auto_* and a hand-correction always wins.
+    "part", "part_of", "episode_end",
+)
 
 
 def set_title_field(

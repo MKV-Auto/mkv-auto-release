@@ -178,6 +178,24 @@ def pick_primary_duplicate_row(members: list[db_models.DiscTitle]) -> db_models.
 # below is the only clearing path and routes through set_title_field.)
 
 
+def user_claimed_row(title: db_models.DiscTitle) -> bool:
+    """True when the user gave this row a real type of their own.
+
+    ``user_type`` set to anything other than ``ignore`` is the user saying
+    "I want this title on its own", and it is the only signal needed — the
+    provenance columns already record it. Used to stop the auto-demotion
+    below from deactivating a row the user deliberately claimed.
+
+    The motivating case is a play-all ``.mpls`` wrapping several ``.m2ts``
+    clips (#797): the clips get ``auto_type='ignore'`` from subsumption,
+    the user types ``BehindTheScenes`` on each, resolution correctly yields
+    ``BehindTheScenes`` — and then ``active=False`` hid them anyway, so
+    they could never be ripped.
+    """
+    user_type = (str(getattr(title, "user_type", None) or "")).strip().lower()
+    return bool(user_type) and user_type != SECONDARY_IGNORE_TYPE
+
+
 def apply_secondary_duplicate_row(title: db_models.DiscTitle) -> bool:
     """Clear labeling metadata, auto-ignore, deactivate. Returns True if any column changed.
 
@@ -235,7 +253,19 @@ def apply_secondary_duplicate_row(title: db_models.DiscTitle) -> bool:
         from api.crud import set_title_type
         set_title_type(title, SECONDARY_IGNORE_TYPE, source="auto")
         changed = True
-    if title.active is not False:
+    # A row the user typed stays visible and rippable. Everything above is
+    # deliberately unchanged: the auto-* columns still record automation's
+    # opinion, and resolution (user ?? auto) still lets the user's type win
+    # — this only stops `active` from overriding that decision.
+    #
+    # Both branches are idempotent, which matters: every True return bumps
+    # title_seq, and an always-changed row re-inflates sibling seqs on each
+    # pass until the client's next write is rejected as a conflict (#775).
+    if user_claimed_row(title):
+        if title.active is not True:
+            title.active = True
+            changed = True
+    elif title.active is not False:
         title.active = False
         changed = True
     return changed

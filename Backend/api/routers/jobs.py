@@ -4506,6 +4506,20 @@ def transfer_job(
             )
         except Exception as e:
             log.warning("Failed to emit transfer_started notification: %s", e)
+        # Refuse if a transfer is already claimed for this job. Without this
+        # the post-process auto-dispatch could already have a transfer_remote
+        # in flight and we would enqueue a second one, putting two smbclient
+        # processes on the same destination file.
+        from core.job_state import claim_transfer_for_dispatch
+
+        if not claim_transfer_for_dispatch(db, str(job.id)):
+            raise HTTPException(
+                409,
+                detail=(
+                    "A transfer is already in progress for this job "
+                    f"(transfer_state={getattr(job, 'transfer_state', None)})."
+                ),
+            )
         apply_job_state(
             db,
             job,
@@ -6707,6 +6721,9 @@ def _build_labelform_from_job(job: db_models.Job) -> Dict[str, Any]:
                     "comment": title.comment,
                     "season": title.season,
                     "episode": title.episode,
+                    "part": title.part,
+                    "part_of": title.part_of,
+                    "episode_end": title.episode_end,
                     "type": _normalize_title_type(title.type) or "",
                     "duration": title.duration,
                     "size": title.size,
@@ -7144,6 +7161,9 @@ def get_job_workflow_context(job_id: str, db: Session = Depends(get_db), *, _pre
                     "type": _normalize_title_type(title.type),
                     "season": title.season,
                     "episode": title.episode,
+                    "part": title.part,
+                    "part_of": title.part_of,
+                    "episode_end": title.episode_end,
                     "duration": title.duration,
                     "duration_raw": title.duration_raw,
                     "size": title.size,

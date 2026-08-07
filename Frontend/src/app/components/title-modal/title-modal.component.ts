@@ -23,6 +23,11 @@ export class TitleModalComponent implements OnDestroy {
   }
 
   @Input() title: any = null;
+  /** @deprecated Do not gate form fields on this — it describes the DISC,
+   * not the row. Gating on it is what made every title on a series disc
+   * show the episode picker and lose its name field (#798). Use
+   * isEpisodeType() / isMainMovie(). Retained only because parent
+   * templates still bind it. */
   @Input() isSeries = false;
   @Input() titleProgress: Record<string, number> = {};
   @Input() titleStatusFn: (id: string | null | undefined) => string = () => 'pending';
@@ -245,6 +250,16 @@ export class TitleModalComponent implements OnDestroy {
 
   isIgnored(): boolean {
     return (this.title?.type || '').toString().toLowerCase() === 'ignore';
+  }
+
+  /** True when THIS title is an episode — not when the disc is a series (#798). */
+  isEpisodeType(): boolean {
+    return (this.title?.type || '').toString().toLowerCase() === 'episode';
+  }
+
+  /** True when this title carries an edition — a main movie, per-type. */
+  isMainMovie(): boolean {
+    return (this.title?.type || '').toString().toLowerCase() === 'mainmovie';
   }
 
   getChapterCount(): number | null {

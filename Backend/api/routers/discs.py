@@ -229,6 +229,9 @@ def _serialize_disc_title(title: db_models.DiscTitle) -> Dict[str, Any]:
         "type": _normalize_title_type(title.type),
         "season": title.season,
         "episode": title.episode,
+        "part": title.part,
+        "part_of": title.part_of,
+        "episode_end": title.episode_end,
         **title_provenance_payload(title),
         "duration": title.duration,
         "duration_raw": title.duration_raw,
@@ -1001,6 +1004,29 @@ def _workflow_pending_release_summary(
     return _release_summary(pr, db)
 
 
+def _linked_movie_tmdb_id(disc_record: db_models.Disc) -> str:
+    """TMDB id reached through the disc's own link: disc -> release -> movie.
+
+    ``labelForm.tmdb_id`` used to come only from ``disc_info`` (the scan
+    payload). A disc labeled through the normal flow has its series recorded
+    on the linked Movie, not in disc_info — so on resume the field came back
+    empty, the frontend's `_prefetchTmdbEpisodeCatalog` returned early on
+    `if (!tmdb_id) return`, no episode catalog was ever fetched, and the TMDB
+    episode picker silently rendered nothing on every Episode row.
+
+    Observed on Star Wars Rebels S3: disc -> release -> movie carried
+    tmdb_id 60554 and `GET /movies/60554/seasons/3/episodes` returned the
+    full season, while labelForm.tmdb_id was "".
+
+    Read-only and lowest-precedence — callers must prefer any explicitly
+    persisted value so a hand-linked disc is never overridden.
+    """
+    release = getattr(disc_record, "release", None)
+    movie = getattr(release, "movie", None) if release is not None else None
+    tmdb_id = getattr(movie, "tmdb_id", None) if movie is not None else None
+    return str(tmdb_id) if tmdb_id else ""
+
+
 def _build_labelform_from_disc(
     disc_record: db_models.Disc,
     disc_info: Dict[str, Any],
@@ -1048,7 +1074,9 @@ def _build_labelform_from_disc(
         "disc_group": disc_record.release.slug if disc_record.release else "",
         "disc_number": disc_record.disc_number,
         "discdb_disc_num": getattr(disc_record, "discdb_disc_num", None),
-        "tmdb_id": disc_info.get("tmdb_id") or "",
+        # disc_info first (scan payload), then the disc's own movie link. The
+        # fallback only fills an otherwise-empty value; it never overrides one.
+        "tmdb_id": disc_info.get("tmdb_id") or _linked_movie_tmdb_id(disc_record) or "",
         "disc_format": disc_record.format or disc_info.get("disc_format"),
         "release_name": "",
         "release_slug": disc_record.release.slug if disc_record.release else "",
@@ -1210,6 +1238,9 @@ def _build_labelform_from_disc(
                 "comment": title.comment,
                 "season": title.season,
                 "episode": title.episode,
+                "part": title.part,
+                "part_of": title.part_of,
+                "episode_end": title.episode_end,
                 "type": _normalize_title_type(title.type) or "",
                 "duration": title.duration,
                 "size": None,  # Not stored in title record
@@ -1794,6 +1825,9 @@ def get_disc_workflow_context_by_mount(
                     "type": _normalize_title_type(title.type),
                     "season": title.season,
                     "episode": title.episode,
+                    "part": title.part,
+                    "part_of": title.part_of,
+                    "episode_end": title.episode_end,
                     "duration": title.duration,
                     "duration_raw": title.duration_raw,
                     "size": title.size,
@@ -2311,6 +2345,9 @@ def get_disc_workflow_context_by_id(
                     "type": _normalize_title_type(title.type),
                     "season": title.season,
                     "episode": title.episode,
+                    "part": title.part,
+                    "part_of": title.part_of,
+                    "episode_end": title.episode_end,
                     "duration": title.duration,
                     "duration_raw": title.duration_raw,
                     "size": title.size,
@@ -2628,6 +2665,9 @@ def get_disc_titles(
             "mkv_size": t.mkv_size,
             "season": t.season,
             "episode": t.episode,
+            "part": t.part,
+            "part_of": t.part_of,
+            "episode_end": t.episode_end,
             "edition": t.edition,
             "description": t.description,
             "comment": t.comment,

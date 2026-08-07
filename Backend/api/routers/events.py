@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from filelock import FileLock, Timeout
 
+from core.loop_local    import LoopLocalEvent, LoopLocalLock
 from core.utils         import MakeMKVError, get_drive_scan_lock_path, build_drive_api_dict
 from core import makemkv_state
 from core.makemkv_update_jobs import get_job
@@ -40,7 +41,9 @@ logger = get_logger("api.routers.events")
 DRIVE_SCAN_TIMEOUT = float(os.getenv("DRIVE_SCAN_TIMEOUT", "-1"))  # seconds; <=0 disables timeout
 DISABLE_AUTOSCAN = os.getenv("MKVAUTO_DISABLE_AUTOSCAN", "").lower() in ("1", "true", "yes")
 _last_drives: dict[str, Any] = {"ts": 0, "drives": []}
-_drive_scan_lock = asyncio.Lock()
+# Loop-local throughout this module: a bare asyncio primitive kept in module
+# state sticks to the first event loop that contends on it. See core/loop_local.py.
+_drive_scan_lock = LoopLocalLock()
 
 
 def _coerce_drive_entry(entry: Union[dict, tuple, list]) -> dict[str, Any]:
@@ -82,17 +85,17 @@ def _drive_payload_for_api(d: dict[str, Any]) -> dict[str, Any]:
         "name": d.get("name") or "",
     }
 DRIVE_SCAN_FILELOCK = str(get_drive_scan_lock_path())
-_drive_scan_event: asyncio.Event | None = None
+_drive_scan_event = LoopLocalEvent()
 # Store pending ejection events to broadcast to all connected SSE clients
 _pending_ejections: list[dict] = []
-_ejection_lock = asyncio.Lock()
+_ejection_lock = LoopLocalLock()
 # Store pending drive changes and disc info updates to broadcast to SSE clients
 _pending_drive_changes: list[dict] = []
 _pending_discinfo_updates: list[dict] = []
-_broadcast_lock = asyncio.Lock()
+_broadcast_lock = LoopLocalLock()
 # Track active disc info loading tasks to avoid duplicates
 _active_disc_loads: dict[str, asyncio.Task] = {}
-_disc_load_lock = asyncio.Lock()
+_disc_load_lock = LoopLocalLock()
 # Callback registry for Disc Manager notifications
 _disc_manager_callbacks: dict[str, Callable] = {}
 # Reference to FastAPI app for event loop access
@@ -869,11 +872,8 @@ async def _trigger_drive_rescan_async(device: str | None = None, change: str | N
     loop = asyncio.get_running_loop()
     
     # Clear drive cache to force rescan
-    global _drive_scan_event
-    if _drive_scan_event is None:
-        _drive_scan_event = asyncio.Event()
     _drive_scan_event.clear()
-    
+
     # Update drive list
     try:
         # For udev_insert events, skip list_drives call - drive list is updated proactively
@@ -882,8 +882,7 @@ async def _trigger_drive_rescan_async(device: str | None = None, change: str | N
             # Just broadcast any pending drive changes (already queued by proactive updates)
             # Drive list update was already queued by _notify_disc_inserted, but we still need to
             # set the scan event so the SSE loop can continue (it's waiting for the event)
-            if _drive_scan_event:
-                _drive_scan_event.set()
+            _drive_scan_event.set()
             return
         
         # For udev_eject events, skip MakeMKV scan - just remove drive from cache
@@ -897,8 +896,7 @@ async def _trigger_drive_rescan_async(device: str | None = None, change: str | N
             async with _broadcast_lock:
                 _pending_drive_changes.append(drives_payload)
 
-            if _drive_scan_event:
-                _drive_scan_event.set()
+            _drive_scan_event.set()
 
             logger.info("Eject handled without rescan: removed device=%s from drive list", device)
             return  # Skip MakeMKV scan entirely
@@ -1014,14 +1012,12 @@ async def _trigger_drive_rescan_async(device: str | None = None, change: str | N
                         cleanup_task(str(disc_num), task)
         
         # Mark scan as complete
-        if _drive_scan_event:
-            _drive_scan_event.set()
+        _drive_scan_event.set()
         
         logger.info("Async drive rescan triggered: drives=%s", drives_payload)
     except Exception as exc:
         logger.error("Failed to trigger async drive rescan: %s", exc)
-        if _drive_scan_event:
-            _drive_scan_event.set()
+        _drive_scan_event.set()
         raise
 
 
@@ -1056,9 +1052,6 @@ async def _load_drive_list(loop: asyncio.AbstractEventLoop, force: bool = False)
                 _last_drives["drives"] = raw_drives
                 logger.debug("drive scan complete: %s", raw_drives)
                 logger.info("Drive scan complete: %s", raw_drives)
-                global _drive_scan_event
-                if _drive_scan_event is None:
-                    _drive_scan_event = asyncio.Event()
                 _drive_scan_event.set()
                 return raw_drives
         except Timeout as exc:
@@ -1104,9 +1097,6 @@ async def rescan_drives(request: Request):
     loop = asyncio.get_running_loop()
     # clear cache so next scan runs
     _last_drives["drives"] = []
-    global _drive_scan_event
-    if _drive_scan_event is None:
-        _drive_scan_event = asyncio.Event()
     _drive_scan_event.clear()
     
     # Device hint: query > JSON body (frontend refresh) > form (udev script). Read body only once.
@@ -1181,11 +1171,10 @@ async def rescan_drives(request: Request):
             return
         
         # Wait for drive scan to complete
-        if _drive_scan_event:
-            try:
-                await asyncio.wait_for(_drive_scan_event.wait(), timeout=DRIVE_SCAN_TIMEOUT if DRIVE_SCAN_TIMEOUT > 0 else 60)
-            except asyncio.TimeoutError:
-                logger.warning("Drive scan wait timed out in streaming rescan")
+        try:
+            await asyncio.wait_for(_drive_scan_event.wait(), timeout=DRIVE_SCAN_TIMEOUT if DRIVE_SCAN_TIMEOUT > 0 else 60)
+        except asyncio.TimeoutError:
+            logger.warning("Drive scan wait timed out in streaming rescan")
         
         # Emit drive list
         norm = _normalize_drive_list(_last_drives.get("drives", []))
@@ -1496,9 +1485,6 @@ async def drive_eject(request: Request):
 
     # reset cached drives so next poll re-scans
     _last_drives["drives"] = []
-    global _drive_scan_event
-    if _drive_scan_event is None:
-        _drive_scan_event = asyncio.Event()
     _drive_scan_event.clear()
     
     # Trigger async rescan to notify SSE clients

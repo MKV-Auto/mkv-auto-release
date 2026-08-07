@@ -357,11 +357,13 @@ describe('TitleEditorComponent', () => {
       expect(component.findEpisodeIndex(opts)).toBe(-1);
     });
 
-    // #602: when TMDB has the episode catalog for the row, the manual
-    // title / season / episode inputs hide — the picker covers all three.
-    // When TMDB doesn't have data, the manuals stay so the user is never
-    // stranded.
-    it('#602 — hides title / season / episode inputs on Episode rows when TMDB has the catalog', async () => {
+    // #798 reverses #602. #602 hid the manual title / season / episode
+    // inputs once TMDB had the catalog, on the theory that the picker
+    // covered all three. It does not: a disc can split one TMDB episode
+    // across two files (#796, "Steps Into Shadow"), and with the inputs
+    // hidden there is no way to correct it. The fields now always render
+    // for an Episode row.
+    it('#798 — keeps title / season / episode editable on Episode rows even with a TMDB catalog', async () => {
       const workflow = TestBed.inject(WorkflowService);
       seedSeriesCatalog(workflow);
       fixture.componentRef.setInput('title', makeTitle({ type: 'episode', season: 1 }));
@@ -371,16 +373,16 @@ describe('TitleEditorComponent', () => {
       fixture.detectChanges();
 
       const root = fixture.nativeElement as HTMLElement;
-      // Picker present (sanity).
+      // Picker present (sanity) — it is still the fast path.
       expect(root.querySelector('select[aria-label="TMDB episode picker"]')).toBeTruthy();
-      // Title input + season + episode all hidden.
+      // ...and the manual inputs sit alongside it rather than being replaced.
       const labels = Array.from(root.querySelectorAll('label')).map((l) => (l.textContent || '').trim());
-      expect(labels).not.toContain('Episode title');
-      expect(labels).not.toContain('Season');
-      expect(labels).not.toContain('Episode');
+      expect(labels).toContain('Episode title');
+      expect(labels).toContain('Season');
+      expect(labels).toContain('Episode');
     });
 
-    it('#602 — keeps the inputs visible when TMDB returns no catalog (movie disc / no TMDB hit)', () => {
+    it('#798 — keeps the inputs visible when TMDB returns no catalog (movie disc / no TMDB hit)', () => {
       // Don't seed — workflow context stays empty, so episodeOptions$
       // emits 'unavailable' / never emits.
       fixture.componentRef.setInput('title', makeTitle({ type: 'episode', season: 1 }));
@@ -389,11 +391,28 @@ describe('TitleEditorComponent', () => {
 
       const root = fixture.nativeElement as HTMLElement;
       const labels = Array.from(root.querySelectorAll('label')).map((l) => (l.textContent || '').trim());
-      // Without TMDB data the manual inputs must still render so the
-      // user can edit by hand.
       expect(labels).toContain('Episode title');
       expect(labels).toContain('Season');
       expect(labels).toContain('Episode');
+    });
+
+    // The complaint that motivated #798: on a series disc an extra could
+    // not be named, because the form keyed on the disc rather than the row.
+    it('#798 — an extra on a series disc gets a name field and no episode picker', async () => {
+      const workflow = TestBed.inject(WorkflowService);
+      seedSeriesCatalog(workflow);
+      fixture.componentRef.setInput('title', makeTitle({ type: 'Featurette', season: null }));
+      fixture.componentRef.setInput('isSeries', true);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const root = fixture.nativeElement as HTMLElement;
+      expect(root.querySelector('select[aria-label="TMDB episode picker"]')).toBeNull();
+      const labels = Array.from(root.querySelectorAll('label')).map((l) => (l.textContent || '').trim());
+      expect(labels).toContain('Title name');
+      expect(labels).not.toContain('Season');
+      expect(labels).not.toContain('Episode');
     });
   });
 
@@ -551,4 +570,72 @@ describe('TitleEditorComponent', () => {
     });
   });
 
+  describe('multi-part episode layout (#796)', () => {
+    function seed(extra: Record<string, any> = {}) {
+      fixture.componentRef.setInput('title', makeTitle({
+        type: 'episode', title: 'Steps Into Shadow', season: 3, episode: 1, ...extra,
+      }));
+      fixture.detectChanges();
+    }
+
+    it('derives layout from the stored fields rather than tracking its own', () => {
+      seed();
+      expect(component.episodeLayout).toBe('single');
+      seed({ part: 1, part_of: 2 });
+      expect(component.episodeLayout).toBe('split');
+      seed({ episode_end: 2 });
+      expect(component.episodeLayout).toBe('span');
+    });
+
+    it('switching to split seeds part 1 of 2 and clears any range', () => {
+      seed({ episode_end: 5 });
+      const emitted: any[] = [];
+      component.titlePatched.subscribe((p) => emitted.push(p));
+
+      component.onEpisodeLayoutChange('split');
+
+      expect(component.title.part).toBe(1);
+      expect(component.title.part_of).toBe(2);
+      expect(component.title.episode_end).toBeNull();
+      // One write carrying all three, not three writes.
+      expect(emitted.length).toBe(1);
+      expect(emitted[0].episode_end).toBeNull();
+    });
+
+    it('switching back to single clears every layout field', () => {
+      seed({ part: 2, part_of: 2 });
+      const emitted: any[] = [];
+      component.titlePatched.subscribe((p) => emitted.push(p));
+
+      component.onEpisodeLayoutChange('single');
+
+      expect(emitted[0].part).toBeNull();
+      expect(emitted[0].part_of).toBeNull();
+      expect(emitted[0].episode_end).toBeNull();
+    });
+
+    it('carries a buffered name edit in the layout write', () => {
+      // Layout is picked, so it writes immediately. A name typed just before is
+      // still buffered; two same-tick writes share a base_seq and one loses.
+      seed();
+      const emitted: any[] = [];
+      component.titlePatched.subscribe((p) => emitted.push(p));
+
+      component.onTitleNameChange('Steps Into Shadow (corrected)');
+      component.onEpisodeLayoutChange('split');
+
+      expect(emitted.length).toBe(1);
+      expect(emitted[0].title).toBe('Steps Into Shadow (corrected)');
+      expect(emitted[0].part).toBe(1);
+    });
+
+    it('previews the stacking suffix and the range', () => {
+      seed({ part: 1, part_of: 2 });
+      expect(component.getFilenamePreview()).toBe('S03E01 - Steps Into Shadow - part1.mkv');
+      seed({ episode_end: 2 });
+      expect(component.getFilenamePreview()).toBe('S03E01-E02 - Steps Into Shadow.mkv');
+      seed();
+      expect(component.getFilenamePreview()).toBe('S03E01 - Steps Into Shadow.mkv');
+    });
+  });
 });

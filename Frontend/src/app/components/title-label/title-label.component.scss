@@ -1871,3 +1871,13 @@ select {
     }
   }
 }
+
+/* #797: a play-all wrapper's claimed clips render as children of its row.
+   Presentation only — each is an ordinary title row, so the indent and the
+   accent rail are the whole visual difference. */
+.title-label-claimed-clip {
+  display: block;
+  margin-left: 0.85rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid rgba(99, 102, 241, 0.55);
+}

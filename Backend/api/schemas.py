@@ -1345,6 +1345,11 @@ class DiscTitleRecord(BaseModel):
     type: Optional[str] = None
     season: Optional[int] = None
     episode: Optional[int] = None
+    # Multi-part layout (#796): part/part_of split one episode across files,
+    # episode_end covers several episodes in one file.
+    part: Optional[int] = None
+    part_of: Optional[int] = None
+    episode_end: Optional[int] = None
     chapters: Optional[Dict[str, Any]] = None
     streams: Optional[Dict[str, Any] | List[Any]] = None
     content: Optional[bool] = True
@@ -1405,6 +1410,11 @@ class TitlePatchRequest(BaseModel):
     comment: Optional[str] = None
     season: Optional[int] = None
     episode: Optional[int] = None
+    # Multi-part layout (#796): part/part_of split one episode across files,
+    # episode_end covers several episodes in one file.
+    part: Optional[int] = None
+    part_of: Optional[int] = None
+    episode_end: Optional[int] = None
     type: Optional[str] = None
     duration: Optional[float] = None
     size: Optional[int] = None

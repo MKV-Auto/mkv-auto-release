@@ -188,3 +188,126 @@ class TestEnvironmentFailuresAreNotCompatibilityVerdicts:
         m = mx.build_manifest([_row("1.18.4", "8.1.2", build="build_failed",
                                     tested_at="2026-08-05T00:00:00+00:00")])
         assert m["validated"] == {}
+
+
+class TestSourceArchiveReadPath:
+    """The sources repo exists so the job is not hostage to a mirror.
+
+    archive.org would not serve the 6.6MB oss tarball to a GitHub runner —
+    two runs died after 3x300s of retries on a file that downloads in ~60s
+    elsewhere — while those exact bytes were already in the repo this job
+    clones at startup. It wrote to that archive and never read from it.
+    """
+
+    def _tar_gz(self, path: Path, payload=b"x" * 64):
+        import gzip, io, tarfile
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            info = tarfile.TarInfo("f.txt")
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+        path.write_bytes(gzip.compress(buf.getvalue()))
+
+    def test_verified_archive_copies_are_restored_without_the_network(self, mx, tmp_path):
+        ledger = tmp_path / "ledger"
+        src = ledger / "sources" / "1.18.4"
+        src.mkdir(parents=True)
+        self._tar_gz(src / "makemkv-bin-1.18.4.tar.gz")
+        self._tar_gz(src / "makemkv-oss-1.18.4.tar.gz")
+
+        dest = tmp_path / "work"
+        restored = mx.restore_from_archive(ledger, "1.18.4", dest)
+        assert set(restored) == {"makemkv-bin-1.18.4.tar.gz", "makemkv-oss-1.18.4.tar.gz"}
+        assert (dest / "makemkv-bin-1.18.4.tar.gz").exists()
+
+    def test_recorded_origin_survives_the_round_trip(self, mx, tmp_path):
+        """A vendor fetch archived today must still read back as `vendor`
+        tomorrow, or hashes could never be certified from the archive."""
+        ledger = tmp_path / "ledger"
+        work = tmp_path / "work"
+        work.mkdir()
+        tar = work / "makemkv-bin-1.18.4.tar.gz"
+        self._tar_gz(tar)
+
+        mx.archive_sources(ledger, "1.18.4", [tar], {"makemkv-bin-1.18.4.tar.gz": "vendor"})
+        restored = mx.restore_from_archive(ledger, "1.18.4", tmp_path / "work2")
+        assert restored["makemkv-bin-1.18.4.tar.gz"] == "vendor"
+
+    def test_a_later_mirror_fetch_never_downgrades_a_recorded_vendor_origin(self, mx, tmp_path):
+        # Bytes are identical (hash-verified); the stronger claim is the true one.
+        ledger = tmp_path / "ledger"
+        work = tmp_path / "work"
+        work.mkdir()
+        tar = work / "makemkv-bin-1.18.4.tar.gz"
+        self._tar_gz(tar)
+
+        mx.archive_sources(ledger, "1.18.4", [tar], {"makemkv-bin-1.18.4.tar.gz": "vendor"})
+        mx.archive_sources(ledger, "1.18.4", [tar], {"makemkv-bin-1.18.4.tar.gz": "archive"})
+        restored = mx.restore_from_archive(ledger, "1.18.4", tmp_path / "work2")
+        assert restored["makemkv-bin-1.18.4.tar.gz"] == "vendor"
+
+    def test_unrecorded_origin_reads_back_as_not_vendor(self, mx, tmp_path):
+        """Restoring must never launder an unknown origin into a vendor
+        claim — `archived` is treated as not-vendor by the manifest."""
+        ledger = tmp_path / "ledger"
+        src = ledger / "sources" / "1.18.4"
+        src.mkdir(parents=True)
+        self._tar_gz(src / "makemkv-bin-1.18.4.tar.gz")   # no provenance.json
+
+        restored = mx.restore_from_archive(ledger, "1.18.4", tmp_path / "work")
+        assert restored["makemkv-bin-1.18.4.tar.gz"] == "archived"
+        m = mx.build_manifest([_row("1.18.4", "8.1.2",
+                                    source={"makemkv-bin-1.18.4.tar.gz": "archived"},
+                                    sha={"makemkv-bin-1.18.4.tar.gz": "abc"})])
+        assert m["validated"]["1.18.4"]["sha256"] == {}, "must not certify"
+
+    def test_a_corrupt_archive_copy_is_skipped_so_the_caller_refetches(self, mx, tmp_path):
+        ledger = tmp_path / "ledger"
+        src = ledger / "sources" / "1.18.4"
+        src.mkdir(parents=True)
+        (src / "makemkv-bin-1.18.4.tar.gz").write_bytes(b"truncated garbage")
+
+        restored = mx.restore_from_archive(ledger, "1.18.4", tmp_path / "work")
+        assert restored == {}
+
+    def test_missing_archive_is_not_an_error(self, mx, tmp_path):
+        assert mx.restore_from_archive(tmp_path / "nope", "1.18.4", tmp_path / "work") == {}
+
+
+class TestFetchFailuresAreNotCompatibilityVerdicts:
+    """A slow mirror is not evidence that two versions are incompatible.
+
+    Observed on the first successful run (2026-08-06): a transient
+    ffmpeg.org timeout recorded `1.18.4 + 8.1.2 -> build_failed`. That
+    verdict is memoized, so the pair would never have been retried and the
+    matrix would have pinned users to 8.1.1 on the strength of one slow
+    download — while 8.1.2 had built fine three times that day.
+    """
+
+    def test_source_unavailable_stays_a_makemkv_update_error(self, mx):
+        """It must remain catchable by the archive-fallback retry loop, which
+        handles MakeMKVUpdateError — breaking that hierarchy would stop the
+        fallback retrying at all."""
+        mu = mx.mu
+        assert issubclass(mu.SourceUnavailableError, mu.MakeMKVUpdateError)
+
+    def test_try_pair_propagates_a_fetch_failure_rather_than_failing_the_pair(self, mx, monkeypatch):
+        mu = mx.mu
+
+        def boom(*a, **k):
+            raise mu.SourceUnavailableError("Download failed (timeout or network): timed out")
+
+        monkeypatch.setattr(mu, "install_makemkv_from_sources", boom)
+        with pytest.raises(mu.SourceUnavailableError):
+            mx.try_pair("1.18.4", "8.1.2", {})
+
+    def test_a_genuine_build_failure_is_still_recorded(self, mx, monkeypatch):
+        # The distinction must not swallow real compile failures.
+        mu = mx.mu
+
+        def boom(*a, **k):
+            raise mu.MakeMKVUpdateError("Command failed (2): make")
+
+        monkeypatch.setattr(mu, "install_makemkv_from_sources", boom)
+        ok, detail = mx.try_pair("1.18.4", "9.0", {})
+        assert ok is False and "make" in detail

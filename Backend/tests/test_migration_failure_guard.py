@@ -18,7 +18,8 @@ def _reset_readiness_state(monkeypatch, tmp_path):
         api_main, "_readiness_state",
         {"checked_at": 0.0, "ready": False, "error": None},
     )
-    monkeypatch.setattr(api_main, "_readiness_lock", None)
+    # _readiness_lock is a LoopLocalLock — it yields a fresh asyncio.Lock per
+    # event loop, so there is nothing to reset between tests.
     # Point the sentinel at a temp path and make the DB ping always succeed, so
     # the ONLY thing that can flip readiness in these tests is the sentinel.
     monkeypatch.setattr(api_main, "_MIGRATION_FAILED_SENTINEL", str(tmp_path / "mig-failed"))

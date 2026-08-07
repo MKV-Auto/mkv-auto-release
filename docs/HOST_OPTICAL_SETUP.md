@@ -164,6 +164,151 @@ sudo sh -c 'echo 0 > /proc/sys/dev/cdrom/autoclose'
 
 This survives Unraid reboots via boot config persistence.
 
+## Drive not detected at all
+
+Everything above is about a disc that **ejects and gets pulled back in**. This
+section is a different failure: the drive never appears, and scanning a disc
+reports that it could not be found.
+
+### Start here: run the triage script
+
+`scripts/mkv-support-bundle.sh` diagnoses this automatically and prints what to
+do. It works from the Docker **host** or from **inside the container**, works
+out which on its own, and changes nothing:
+
+```bash
+./scripts/mkv-support-bundle.sh                 # print a diagnosis
+./scripts/mkv-support-bundle.sh --bundle        # also write a .tar.gz for support
+```
+
+Inside the container, write the bundle somewhere you can reach:
+
+```bash
+docker exec mkv-auto /app/scripts/mkv-support-bundle.sh --bundle /data
+```
+
+Prefer running it on the host when you can — only there can it see the Docker
+engine's own configuration, which is one of the possible causes. The rest of
+this section explains what it is checking and why.
+
+### The one fact that explains it
+
+**MakeMKV enumerates optical drives through SCSI generic — `/dev/sg*` — not
+through `/dev/sr*`.** A drive can be perfectly healthy at the OS level, fire
+udev events, mount, and read with `dd`, and MakeMKV will still not see it if
+there is no `/dev/sg*` node for it.
+
+The signature in `makemkvcon.log`:
+
+```
+MSG:5042,0,0,"The program can't find any usable optical drives."
+DRV:0,256,999,0,"","",""      ← all sixteen slots empty
+...
+DRV:15,256,999,0,"","",""
+MSG:2024,16777216,1,"Unknown device - '/dev/sr0'"
+MSG:5010,0,0,"Failed to open disc"
+```
+
+### Two causes that look identical
+
+They need opposite fixes, so tell them apart first. On the **host**:
+
+```bash
+lsscsi -g | grep -i cd/dvd
+```
+
+The last column is that drive's SCSI generic node. A `-` there means it has
+none.
+
+```
+[9:0:0:0]  cd/dvd  ASUS  BW-16D1HT  3.10  /dev/sr1  /dev/sg2   ← healthy
+[9:0:0:0]  cd/dvd  ASUS  BW-16D1HT  3.10  /dev/sr1  -          ← no sg node
+```
+
+Then compare against what the **container** got:
+
+```bash
+docker exec mkv-auto sh -c 'ls -l /dev/sr* /dev/sg*'
+```
+
+> The `sh -c` is not optional. Without it there is no shell inside the
+> container to expand the glob, so your **host** shell expands it first and the
+> output describes the host while looking like it describes the container.
+
+| Host `/dev/sg*` | Container `/dev/sg*` | Cause | Fix |
+|---|---|---|---|
+| absent | absent | `sg` kernel module not loaded | load it, then restart the container |
+| present | absent | nodes never reached the container | restart the container |
+| present | present | not this problem | see Diagnostics below |
+
+### Cause 1: the `sg` module is not loaded
+
+Load it **on the host** — a container shares the host kernel and cannot create
+these nodes itself:
+
+```bash
+sudo modprobe sg
+echo sg | sudo tee /etc/modules-load.d/sg.conf   # survive reboots
+docker restart mkv-auto
+```
+
+Do not skip the persistence step, and do not skip the restart. See below for
+why both matter.
+
+### Cause 2: the nodes never reached the container
+
+The module is loaded and the host has `/dev/sg*`, but the container does not.
+Restart it:
+
+```bash
+docker restart mkv-auto
+```
+
+If that does not help, check that privileged mode is on:
+
+```bash
+docker inspect mkv-auto --format '{{.HostConfig.Privileged}}'
+```
+
+Under `privileged: true` the container receives every host device node,
+including `/dev/sg*`, without listing them anywhere. Without it, only the
+devices named in `devices:` appear — and since drive numbering shifts, naming
+`/dev/sg*` explicitly is fragile. Prefer privileged, which is what the shipped
+`Docker/docker-compose.yml` and Unraid template already use.
+
+### Why a restart is required
+
+A container's `/dev` is populated when the container **starts**. Device nodes
+created on the host afterwards do not appear inside a container that is already
+running. Loading the module changes nothing on its own:
+
+```
+sg loaded on host        →  container /dev/sg*: still empty  →  still broken
+container restarted      →  container /dev/sg*: present      →  works
+```
+
+`--device` entries are also fixed at container *creation*, so adding one needs
+`docker compose up -d --force-recreate`, not `docker restart`.
+
+### The reboot trap
+
+The container has `restart: unless-stopped`, so it comes back at boot — and if
+`sg` is not configured to load at boot, the container starts **before** anyone
+runs `modprobe`. The symptom then returns after every reboot, and re-running
+`modprobe` appears not to fix it because nobody restarts the container
+afterwards. Writing `/etc/modules-load.d/sg.conf` is what actually ends this.
+
+### Platform notes for `sg`
+
+- **Arch / CachyOS / Manjaro** — `sg` is **not** loaded by default. This is the
+  common case; a fresh CachyOS install has the module on disk at
+  `/lib/modules/$(uname -r)/kernel/drivers/scsi/sg.ko.zst` and never loads it.
+- **Ubuntu / Debian / Fedora** — normally loaded automatically. If yours is not,
+  something removed it; persist it as above.
+- **Arch-family kernel updates** — `pacman` replaces the running kernel's
+  modules, so `modprobe` for anything not already loaded fails until reboot. If
+  `modprobe sg` errors after an update, reboot first.
+
 ## Platform-Specific Notes
 
 ### Ubuntu/Debian

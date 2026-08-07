@@ -73,6 +73,10 @@ venv/Scripts/
 
 # Django stuff:
 *.log
+# ...except captured logs kept as test fixtures. These are inputs to the suite,
+# not runtime output — a parser that stops matching real MakeMKV output is a bug
+# we only catch by testing against the real thing.
+!Backend/tests/fixtures/**/*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal

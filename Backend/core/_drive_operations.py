@@ -32,6 +32,7 @@ from core.disc_cache import (
 from core.utils import (
     get_drives,
     MakeMKVError,
+    MakeMKVNoDrivesError,
     hash_media_disc,
     run_makemkv,
     get_disc_size_bytes_for_mount_point,
@@ -315,6 +316,8 @@ def _load_discinfo(disc_num: str, mount_point: str, refresh: bool = False, sourc
         logger.debug("makemkv info scan completed disc_num=%s mount_point=%s source=%s info_log_length=%s", 
                     disc_num, mount_point, source, len(str(info_log)) if info_log else 0)
         il_text = info_log if isinstance(info_log, str) else "\n".join(info_log) if isinstance(info_log, list) else str(info_log)
+        # No "no drives" check here: run_makemkv raises MakeMKVNoDrivesError for
+        # any dev:-targeted scan, so every caller is covered (#802).
         parsed_idx, parsed_hw, vol_label = parse_drv_fields_for_mount(il_text, mount_point)
         if parsed_idx:
             upsert_makemkv_drive_cache_for_mount(mount_point, parsed_idx, parsed_hw)
@@ -410,6 +413,16 @@ def get_disc_info(disc_num: str, mount_point: str, refresh: bool = False) -> dic
         logger.debug("HTTPException raised disc_num=%s mount_point=%s status_code=%s detail=%s", 
                     disc_num, mount_point, exc.status_code, str(exc.detail))
         raise
+    except MakeMKVNoDrivesError as exc:
+        # Must precede the MakeMKVError branch — this is a subclass, and 409
+        # "a scan is already running" would tell the user to wait for something
+        # that is never going to happen. The host is misconfigured (#802).
+        logger = get_logger("core._drive_operations", "get_disc_info")
+        logger.debug("MakeMKVNoDrivesError raised disc_num=%s mount_point=%s", disc_num, mount_point)
+        raise HTTPException(
+            status_code=503,
+            detail={"type": "no_optical_drives", "message": str(exc)},
+        ) from exc
     except MakeMKVError as exc:
         logger = get_logger("core._drive_operations", "get_disc_info")
         logger.debug("MakeMKVError raised disc_num=%s mount_point=%s error=%s", disc_num, mount_point, str(exc))

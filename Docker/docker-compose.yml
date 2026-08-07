@@ -14,11 +14,17 @@ services:
     volumes:
       # Persistent data
       - mkv-data:/data
-      # Optical drive access (adjust device path as needed)
-      - /dev/sr0:/dev/sr0
     devices:
+      # Optical drive access (adjust device path as needed).
       - /dev/sr0
-    # Privileged mode required for optical drive access and mount operations
+    # Required. Beyond mount operations, this is what gives the container the
+    # /dev/sg* (SCSI generic) nodes — MakeMKV enumerates drives through those,
+    # not through /dev/sr*, and without them it reports no usable optical
+    # drives at all. There is deliberately no `- /dev/sgN` line here: under
+    # privileged the container receives every host device node, and a static
+    # list would go stale the moment drive numbering changed. If a drive is
+    # not detected, see docs/HOST_OPTICAL_SETUP.md § "Drive not detected at
+    # all" — the usual cause is host-side, not this file.
     privileged: true
     environment:
       # Optional: Override default timezone

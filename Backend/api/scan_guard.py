@@ -7,10 +7,14 @@ import os
 import time
 from typing import Dict, Tuple
 
+from core.loop_local import LoopLocalLock
+
 SCAN_TIMEOUT = int(os.getenv("SCAN_GUARD_TIMEOUT", "180"))
 
 _inflight: Dict[str, Tuple[asyncio.Future, float]] = {}
-_lock = asyncio.Lock()
+# Loop-local: a bare asyncio.Lock in module state sticks to the first event
+# loop that contends on it (see core/loop_local.py).
+_lock = LoopLocalLock()
 
 
 def _key(disc_num: str, mount: str) -> str:

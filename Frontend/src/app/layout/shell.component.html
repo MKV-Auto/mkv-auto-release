@@ -60,85 +60,6 @@
           </a>
         </nav>
 
-        <!-- Notification bell (visible on all viewports) -->
-        <div class="relative ml-1 lg:ml-0">
-          <button
-            type="button"
-            class="p-2 text-white/60 hover:text-white hover:bg-white/5 rounded-lg transition-all relative"
-            (click)="toggleNotifPanel(); $event.stopPropagation()"
-            aria-label="Notifications"
-            [attr.aria-expanded]="notifPanelOpen">
-            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-            </svg>
-            <span
-              *ngIf="(notifHistory.unreadCount$ | async) as unread"
-              class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 flex items-center justify-center text-[10px] font-bold text-white bg-red-500 rounded-full leading-none">
-              {{ unread > 99 ? '99+' : unread }}
-            </span>
-          </button>
-          <!-- Notification dropdown panel -->
-          <ng-container *ngIf="notifPanelOpen">
-            <div class="fixed inset-0 z-[49]" (click)="closeNotifPanel()" aria-hidden="true"></div>
-            <div class="absolute right-0 top-full mt-2 w-80 max-h-96 z-50 rounded-xl border border-white/10 bg-[#0f172a]/95 backdrop-blur-lg shadow-2xl overflow-hidden flex flex-col">
-              <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
-                <span class="text-sm font-semibold text-white">Notifications</span>
-                <button
-                  type="button"
-                  class="text-xs text-white/50 hover:text-white transition-colors"
-                  (click)="notifHistory.clearAll(); $event.stopPropagation()">
-                  Clear all
-                </button>
-              </div>
-              <div
-                *ngIf="browserNotif.osNotifPromptVisible$ | async"
-                class="px-3 py-2 border-b border-white/10 bg-sky-500/10 flex items-center gap-2 flex-wrap">
-                <p class="text-[11px] leading-snug text-white/80 m-0 flex-1 min-w-[140px]">
-                  Enable desktop alerts when this tab is in the background?
-                </p>
-                <div class="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    class="text-[11px] font-medium px-2 py-1 rounded-md bg-white/15 text-white hover:bg-white/25 transition-colors"
-                    (click)="onDismissOsNotifPrompt($event)">
-                    Dismiss
-                  </button>
-                  <button
-                    type="button"
-                    class="text-[11px] font-medium px-2 py-1 rounded-md bg-sky-600 text-white hover:bg-sky-500 transition-colors"
-                    (click)="onApproveOsNotifPrompt($event)">
-                    Approve
-                  </button>
-                </div>
-              </div>
-              <div class="overflow-y-auto flex-1" style="max-height: 320px;">
-                <div *ngIf="(notifHistory.notifications$ | async)?.length === 0" class="px-4 py-8 text-center text-sm text-white/40">
-                  No notifications yet
-                </div>
-                <div
-                  *ngFor="let notif of (notifHistory.notifications$ | async)"
-                  class="px-4 py-3 border-b border-white/5 hover:bg-white/5 transition-colors"
-                  [class.opacity-60]="notif.read">
-                  <div class="flex items-start gap-2">
-                    <span class="mt-0.5 flex-shrink-0 w-2 h-2 rounded-full"
-                      [class.bg-blue-400]="notif.kind === 'info'"
-                      [class.bg-green-400]="notif.kind === 'success'"
-                      [class.bg-amber-400]="notif.kind === 'warning'"
-                      [class.bg-red-400]="notif.kind === 'error'">
-                    </span>
-                    <div class="min-w-0 flex-1">
-                      <p class="text-xs font-medium text-white/90 m-0 truncate" *ngIf="notif.title">{{ notif.title }}</p>
-                      <p class="text-xs text-white/60 m-0 line-clamp-2">{{ notif.message }}</p>
-                      <p class="text-[10px] text-white/30 m-0 mt-1">{{ notif.receivedAt | date:'short' }}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </ng-container>
-        </div>
-
         <!-- Desktop: external links + dev mode (hidden on mobile) -->
         <div class="hidden lg:flex items-center gap-2 ml-auto">
           <a
@@ -202,6 +123,89 @@
               </div>
             </ng-container>
           </div>
+        </div>
+
+        <!-- Notification bell (visible on all viewports; kept last so its
+             right-aligned panel opens inside the header, not off-page) -->
+        <div class="relative ml-1 lg:ml-2">
+          <button
+            type="button"
+            class="p-2 text-white/60 hover:text-white hover:bg-white/5 rounded-lg transition-all relative"
+            (click)="toggleNotifPanel(); $event.stopPropagation()"
+            aria-label="Notifications"
+            [attr.aria-expanded]="notifPanelOpen">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
+            <span
+              *ngIf="(notifHistory.unreadCount$ | async) as unread"
+              class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 flex items-center justify-center text-[10px] font-bold text-white bg-red-500 rounded-full leading-none">
+              {{ unread > 99 ? '99+' : unread }}
+            </span>
+          </button>
+          <!-- Notification dropdown panel -->
+          <ng-container *ngIf="notifPanelOpen">
+            <div class="fixed inset-0 z-[49]" (click)="closeNotifPanel()" aria-hidden="true"></div>
+            <!-- max-w guard: w-80 is wider than the smallest phones once the
+                 header's px-5 is accounted for, so cap it at the viewport. -->
+            <div class="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2.5rem)] max-h-96 z-50 rounded-xl border border-white/10 shadow-2xl overflow-hidden flex flex-col"
+                 style="background: rgba(25, 32, 46, 0.98); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);">
+              <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                <span class="text-sm font-semibold text-white">Notifications</span>
+                <button
+                  type="button"
+                  class="text-xs text-white/50 hover:text-white transition-colors"
+                  (click)="notifHistory.clearAll(); $event.stopPropagation()">
+                  Clear all
+                </button>
+              </div>
+              <div
+                *ngIf="browserNotif.osNotifPromptVisible$ | async"
+                class="px-3 py-2 border-b border-white/10 bg-sky-500/10 flex items-center gap-2 flex-wrap">
+                <p class="text-[11px] leading-snug text-white/80 m-0 flex-1 min-w-[140px]">
+                  Enable desktop alerts when this tab is in the background?
+                </p>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    class="text-[11px] font-medium px-2 py-1 rounded-md bg-white/15 text-white hover:bg-white/25 transition-colors"
+                    (click)="onDismissOsNotifPrompt($event)">
+                    Dismiss
+                  </button>
+                  <button
+                    type="button"
+                    class="text-[11px] font-medium px-2 py-1 rounded-md bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                    (click)="onApproveOsNotifPrompt($event)">
+                    Approve
+                  </button>
+                </div>
+              </div>
+              <div class="overflow-y-auto flex-1" style="max-height: 320px;">
+                <div *ngIf="(notifHistory.notifications$ | async)?.length === 0" class="px-4 py-8 text-center text-sm text-white/40">
+                  No notifications yet
+                </div>
+                <div
+                  *ngFor="let notif of (notifHistory.notifications$ | async)"
+                  class="px-4 py-3 border-b border-white/5 hover:bg-white/5 transition-colors"
+                  [class.opacity-60]="notif.read">
+                  <div class="flex items-start gap-2">
+                    <span class="mt-0.5 flex-shrink-0 w-2 h-2 rounded-full"
+                      [class.bg-blue-400]="notif.kind === 'info'"
+                      [class.bg-green-400]="notif.kind === 'success'"
+                      [class.bg-amber-400]="notif.kind === 'warning'"
+                      [class.bg-red-400]="notif.kind === 'error'">
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-xs font-medium text-white/90 m-0 truncate" *ngIf="notif.title">{{ notif.title }}</p>
+                      <p class="text-xs text-white/60 m-0 line-clamp-2">{{ notif.message }}</p>
+                      <p class="text-[10px] text-white/30 m-0 mt-1">{{ notif.receivedAt | date:'short' }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </ng-container>
         </div>
       </div>
     </div>

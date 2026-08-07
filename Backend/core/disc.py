@@ -44,6 +44,50 @@ def _apply_path_template(template: str, variables: dict) -> str | None:
         return None
 
 
+def format_episode_designator(
+    season: int,
+    episode: int,
+    episode_end: int | None = None,
+    media_server: str = "plex",
+) -> str:
+    """``s03e01``, or ``s03e01-e02`` when one file covers several episodes.
+
+    Shared by ``compute_expected_path`` and ``Disc._rename_series`` — those
+    two must produce identical names or the transfer stage's expected-file
+    check (core/stage_validation.py) fails on every episode.
+    """
+    ss, ee = int(season), int(episode)
+    if (media_server or "plex").strip().lower() == "jellyfin":
+        name = f"S{ss:02}E{ee:02}"
+        if episode_end is not None and int(episode_end) > ee:
+            name += f"-E{int(episode_end):02}"
+        return name
+    name = f"s{ss:02}e{ee:02}"
+    if episode_end is not None and int(episode_end) > ee:
+        name += f"-e{int(episode_end):02}"
+    return name
+
+
+def format_part_suffix(part: int | None) -> str:
+    """`` - part1`` — the Plex/Jellyfin *stacking* suffix.
+
+    Both servers treat files sharing a basename and differing only by
+    ``partN`` as ONE episode split across files, which is what a disc does
+    when it presents an episode as "Part 1" / "Part 2" (#796).
+
+    Deliberately not used for a two-parter TMDB numbers as separate episodes
+    (E20 "Zero Hour (1)", E21 "Zero Hour (2)") — stacking requires the same
+    episode number, so those stay separate episodes or use the range form.
+    """
+    if part is None:
+        return ""
+    try:
+        n = int(part)
+    except (TypeError, ValueError):
+        return ""
+    return f" - part{n}" if n > 0 else ""
+
+
 def compute_expected_path(
     title_metadata: dict,
     release_metadata: dict,
@@ -136,16 +180,19 @@ def compute_expected_path(
     # Base name
     base_name = ""
     if is_series and season is not None and episode is not None and safe_movie:
-        ss, ee = int(season), int(episode)
+        designator = format_episode_designator(
+            season, episode, title_metadata.get("episode_end"), ms
+        )
         ep_part = sanitize_path_component(title_name) if title_name else ""
         if ms == "jellyfin":
-            base_name = f"{safe_movie} S{ss:02}E{ee:02}"
+            base_name = f"{safe_movie} {designator}"
             if ep_part:
                 base_name += f" {ep_part}"
         else:
-            base_name = f"{safe_movie} - s{ss:02}e{ee:02}"
+            base_name = f"{safe_movie} - {designator}"
             if ep_part:
                 base_name += f" - {ep_part}"
+        base_name += format_part_suffix(title_metadata.get("part"))
     elif title_name:
         base_name = sanitize_path_component(title_name)
     elif safe_movie:
@@ -217,6 +264,16 @@ def rename_title_file(old_path: str, new_path: str) -> dict:
     except Exception as exc:
         result["error"] = str(exc)
     return result
+
+
+class OutputCollisionError(RuntimeError):
+    """Two titles resolved to the same output filename.
+
+    Not a per-file error: the loop's ``except Exception`` records those in
+    ``self.errors`` and carries on, which for a collision means the second
+    file is silently left behind while the job still reports success. This
+    type is re-raised by that handler so the stage fails loudly instead.
+    """
 
 
 class Disc:
@@ -740,6 +797,7 @@ class Disc:
                        title_id_to_title: dict = None, title_id_to_type: dict = None, title_id_to_source_file: dict = None,
                        title_id_to_edition: dict = None, title_id_to_resolution: dict = None,
                        title_id_to_season: dict = None, title_id_to_episode: dict = None,
+                       title_id_to_part: dict = None, title_id_to_episode_end: dict = None,
                        progress_cb: Callable[[int, int, str], None] | None = None, source_hashes: dict = None,
                        media_server: str = "plex",
                        dest_root: Path | None = None):
@@ -859,7 +917,7 @@ class Disc:
         is_series_result = self._is_series()
         ms = (media_server or "plex").strip().lower()
         if is_series_result:
-            renamed_paths = self._rename_series(origin_folder, show_folder, final_paths=final_paths, source_file_to_title=source_file_to_title, source_file_to_type=source_file_to_type, title_id_to_title=title_id_to_title, title_id_to_type=title_id_to_type, title_id_to_source_file=title_id_to_source_file, title_id_to_resolution=title_id_to_resolution, title_id_to_season=title_id_to_season, title_id_to_episode=title_id_to_episode, movie_name=movie_name, production_year=production_year, release_name=release_name, progress_cb=progress_cb, source_hashes=source_hashes, transient_root=transient_root, media_server=ms)
+            renamed_paths = self._rename_series(origin_folder, show_folder, final_paths=final_paths, source_file_to_title=source_file_to_title, source_file_to_type=source_file_to_type, title_id_to_title=title_id_to_title, title_id_to_type=title_id_to_type, title_id_to_source_file=title_id_to_source_file, title_id_to_resolution=title_id_to_resolution, title_id_to_season=title_id_to_season, title_id_to_episode=title_id_to_episode, title_id_to_part=title_id_to_part, title_id_to_episode_end=title_id_to_episode_end, movie_name=movie_name, production_year=production_year, release_name=release_name, progress_cb=progress_cb, source_hashes=source_hashes, transient_root=transient_root, media_server=ms)
         else:
             renamed_paths = self._rename_movie(origin_folder, show_folder, final_paths=final_paths, source_file_to_title=source_file_to_title, source_file_to_type=source_file_to_type, title_id_to_title=title_id_to_title, title_id_to_type=title_id_to_type, title_id_to_source_file=title_id_to_source_file, title_id_to_edition=title_id_to_edition, title_id_to_resolution=title_id_to_resolution, movie_name=movie_name, production_year=production_year, release_name=release_name, progress_cb=progress_cb, source_hashes=source_hashes, transient_root=transient_root, media_server=ms)
         
@@ -872,7 +930,7 @@ class Disc:
         """
         return self.title_type == "Series"
 
-    def _rename_series(self, origin_folder: str, show_folder: str, final_paths: dict = None, source_file_to_title: dict = None, source_file_to_type: dict = None, title_id_to_title: dict = None, title_id_to_type: dict = None, title_id_to_source_file: dict = None, title_id_to_resolution: dict = None, title_id_to_season: dict = None, title_id_to_episode: dict = None, movie_name: str = None, production_year: int = None, release_name: str = None, progress_cb: Callable[[int, int, str], None] | None = None, source_hashes: dict = None, transient_root: Path = None, media_server: str = "plex"):
+    def _rename_series(self, origin_folder: str, show_folder: str, final_paths: dict = None, source_file_to_title: dict = None, source_file_to_type: dict = None, title_id_to_title: dict = None, title_id_to_type: dict = None, title_id_to_source_file: dict = None, title_id_to_resolution: dict = None, title_id_to_season: dict = None, title_id_to_episode: dict = None, title_id_to_part: dict = None, title_id_to_episode_end: dict = None, movie_name: str = None, production_year: int = None, release_name: str = None, progress_cb: Callable[[int, int, str], None] | None = None, source_hashes: dict = None, transient_root: Path = None, media_server: str = "plex"):
         """
         Rename each .mkv under origin_folder into:
         Plex: {ShowTitle}/Season {SS}/ShowTitle - s{SS}e{EE} - EpisodeName.1080p.mkv (4K uses .4k)
@@ -936,6 +994,12 @@ class Disc:
             except Exception:
                 pass
         files_processed = 0
+
+        # Destinations this run has already claimed, dst -> the input file that
+        # claimed it. The discriminator for the collision check below: a dst
+        # that existed *before* this run is a resume, a dst claimed *during*
+        # this run means two titles resolved to one filename.
+        claimed_dsts: dict[str, str] = {}
 
         # Build reverse maps once (same pattern as _rename_movie) so fn -> title_id resolution works for DiscDB hit and miss
         input_to_title_id = {}  # input filename (fn) -> title_id — primary lookup for DiscDB miss
@@ -1080,6 +1144,22 @@ class Disc:
                             except (ValueError, TypeError):
                                 pass
                 
+                # Multi-part layout (#796): part/part_of split one episode
+                # across files, episode_end covers several in one file.
+                def _int_or_none(mapping, key):
+                    if not mapping or key is None or key not in mapping:
+                        return None
+                    raw = mapping.get(key)
+                    if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+                        return None
+                    try:
+                        return int(str(raw).strip()) if not isinstance(raw, int) else raw
+                    except (ValueError, TypeError):
+                        return None
+
+                part = _int_or_none(title_id_to_part, title_id_from_final_paths)
+                episode_end = _int_or_none(title_id_to_episode_end, title_id_from_final_paths)
+
                 # Get type from disc_titles table (user labels), prefer new format, fallback to legacy
                 title_type = None
                 if title_id_from_final_paths:
@@ -1140,17 +1220,20 @@ class Disc:
                 
                 # Prefer full "Show - s01e01 - EpisodeTitle" when we have season, episode, and show name
                 if season is not None and episode is not None and show_name_s:
-                    ss, ee = int(season), int(episode)
+                    designator = format_episode_designator(
+                        season, episode, episode_end, media_server
+                    )
                     if (media_server or "plex").lower() == "jellyfin":
                         if episode_part:
-                            base_name = f"{show_name_s} S{ss:02}E{ee:02} {episode_part}"
+                            base_name = f"{show_name_s} {designator} {episode_part}"
                         else:
-                            base_name = f"{show_name_s} S{ss:02}E{ee:02}"
+                            base_name = f"{show_name_s} {designator}"
                     else:
                         if episode_part:
-                            base_name = f"{show_name_s} - s{ss:02}e{ee:02} - {episode_part}"
+                            base_name = f"{show_name_s} - {designator} - {episode_part}"
                         else:
-                            base_name = f"{show_name_s} - s{ss:02}e{ee:02}"
+                            base_name = f"{show_name_s} - {designator}"
+                    base_name += format_part_suffix(part)
                 
                 # Fallback: Use title from disc_titles table as full base_name (legacy or when no season/episode)
                 if not base_name and episode_title_from_db:
@@ -1194,7 +1277,32 @@ class Disc:
                 dst_size = os.path.getsize(dst) if dst_exists else 0
                 
                 series_logger.info(f"_rename_series: Processing {fn} ({src_size} bytes) -> {new_name} (source: {src}, dest: {dst})")
-                
+
+                # Two titles resolving to one filename is data loss, not a
+                # resume. Whichever branch below runs, the second file would be
+                # skipped: never moved out of transient, never recorded in
+                # renamed_paths, never present in expected_files — and the job
+                # would still report success.
+                #
+                # Seen on Star Wars Rebels S3 D1, where the disc splits one
+                # TMDB episode ("Steps Into Shadow") across two files and both
+                # title rows carry season=3 episode=1.
+                if dst in claimed_dsts:
+                    error_msg = (
+                        f"Two titles resolve to the same output file: "
+                        f"{os.path.basename(dst)!r} is claimed by both "
+                        f"{claimed_dsts[dst]!r} and {fn!r}. Give them distinct "
+                        f"episode numbers, or mark them as parts of one episode."
+                    )
+                    series_logger.error(f"_rename_series: {error_msg}")
+                    if self.log_fn:
+                        try:
+                            self.log_fn(f"[postprocess] {error_msg}")
+                        except Exception:
+                            pass
+                    raise OutputCollisionError(error_msg)
+                claimed_dsts[dst] = fn
+
                 if not src_exists and dst_exists:
                     # Source file doesn't exist but destination does - likely already processed
                     # Verify hash if source_hashes is available
@@ -1255,14 +1363,18 @@ class Disc:
                                 progress_cb(files_processed, total_files, fn)
                             continue
                 elif dst_exists:
-                    # Destination exists but no source_hashes - assume already processed, skip move
+                    # NOTE: src_exists is necessarily True here — the branch
+                    # above already handled "source missing". A pre-existing
+                    # destination from an earlier run is a genuine resume; a
+                    # second title claiming it is caught by the collision guard
+                    # above, before we get here.
                     files_processed += 1
                     if progress_cb:
                         progress_cb(files_processed, total_files, fn)
                     series_logger.info(f"_rename_series: Skipping {fn} - destination exists (no source_hashes provided) (source: {src}, dest: {dst}, size: {dst_size} bytes)")
                     if self.log_fn:
                         try:
-                            self.log_fn(f"[postprocess] Source file missing but destination exists - skipping {src} -> {dst}")
+                            self.log_fn(f"[postprocess] Destination already exists from an earlier run - skipping {src} -> {dst}")
                         except Exception:
                             pass
                     continue
@@ -1298,41 +1410,44 @@ class Disc:
                         return file_cb
                     file_progress_cb = make_file_cb(files_processed, total_files, fn)
                     
-                    move_with_progress(src, dst, log_fn=self.log_fn, progress_cb=file_progress_cb)
-                    files_processed += 1
-                    if progress_cb:
-                        progress_cb(files_processed, total_files, fn)
-                    
-                    # Verify file was created and log completion
-                    if not os.path.exists(dst):
-                        error_msg = f"ERROR: Destination file was not created after move: {dst}"
-                        series_logger.error(f"_rename_series: {error_msg}")
-                        if self.log_fn:
-                            try:
-                                self.log_fn(f"[postprocess] {error_msg}")
-                            except Exception:
-                                pass
-                    else:
-                        final_size = os.path.getsize(dst)
-                        series_logger.info(f"_rename_series: Moved {fn} -> {new_name} (source: {src}, dest: {dst}, source_size: {src_size} bytes, dest_size: {final_size} bytes)")
-                        series_logger.debug(f"_rename_series: Verified destination file exists: {dst}")
-                        
-                        # Capture the mapping: title_id -> final relative path (from transient root)
-                        if title_id_from_final_paths and transient_root:
-                            try:
-                                # Calculate relative path from transient root to destination file
-                                rel_path = os.path.relpath(dst, transient_root)
-                                renamed_paths[str(title_id_from_final_paths)] = rel_path
-                                series_logger.debug(f"_rename_series: Captured mapping: title_id={title_id_from_final_paths} -> rel_path={rel_path}")
-                            except Exception as rel_exc:
-                                series_logger.warning(f"_rename_series: Failed to calculate relative path for {dst}: {rel_exc}")
-                    
-                    # Log file processing completion
+                move_with_progress(src, dst, log_fn=self.log_fn, progress_cb=file_progress_cb)
+                files_processed += 1
+                if progress_cb:
+                    progress_cb(files_processed, total_files, fn)
+                
+                # Verify file was created and log completion
+                if not os.path.exists(dst):
+                    error_msg = f"ERROR: Destination file was not created after move: {dst}"
+                    series_logger.error(f"_rename_series: {error_msg}")
                     if self.log_fn:
                         try:
-                            self.log_fn(f"[postprocess] Completed file {files_processed}/{total_files}: {fn} -> {dst}")
+                            self.log_fn(f"[postprocess] {error_msg}")
                         except Exception:
                             pass
+                else:
+                    final_size = os.path.getsize(dst)
+                    series_logger.info(f"_rename_series: Moved {fn} -> {new_name} (source: {src}, dest: {dst}, source_size: {src_size} bytes, dest_size: {final_size} bytes)")
+                    series_logger.debug(f"_rename_series: Verified destination file exists: {dst}")
+                    
+                    # Capture the mapping: title_id -> final relative path (from transient root)
+                    if title_id_from_final_paths and transient_root:
+                        try:
+                            # Calculate relative path from transient root to destination file
+                            rel_path = os.path.relpath(dst, transient_root)
+                            renamed_paths[str(title_id_from_final_paths)] = rel_path
+                            series_logger.debug(f"_rename_series: Captured mapping: title_id={title_id_from_final_paths} -> rel_path={rel_path}")
+                        except Exception as rel_exc:
+                            series_logger.warning(f"_rename_series: Failed to calculate relative path for {dst}: {rel_exc}")
+                
+                # Log file processing completion
+                if self.log_fn:
+                    try:
+                        self.log_fn(f"[postprocess] Completed file {files_processed}/{total_files}: {fn} -> {dst}")
+                    except Exception:
+                        pass
+            except OutputCollisionError:
+                # Losing a file is not something to record and continue past.
+                raise
             except Exception as e:
                 error_msg = f"Unexpected error processing {fn}: {e}"
                 series_logger.error(f"_rename_series: {error_msg}", exc_info=True)

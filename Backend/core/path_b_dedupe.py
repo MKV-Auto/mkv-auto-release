@@ -471,6 +471,12 @@ def fold_subsumption_into_groups(
     return out
 
 
+def _user_claimed_type(row: Any) -> bool:
+    """True when the user typed this row with something other than ignore."""
+    user_type = (str(getattr(row, "user_type", None) or "")).strip().lower()
+    return bool(user_type) and user_type != "ignore"
+
+
 def apply_subsumption_marks(
     db: Any,
     disc_id: str,
@@ -527,6 +533,33 @@ def apply_subsumption_marks(
             from api.crud import set_title_type
             set_title_type(row, "ignore", source="auto")
             marked += 1
+    # A wrapper whose clips the user has claimed must step aside, or the
+    # same footage is ripped twice — once as the play-all and once as each
+    # clip (#797). Auto-ignore is source='auto', so a user who wants the
+    # play-all as well can set a type on the wrapper and win by resolution.
+    claimed_wrappers = {
+        clip_index[str(getattr(row, "id", ""))]
+        for row in rows
+        if clip_index.get(str(getattr(row, "id", ""))) and _user_claimed_type(row)
+    }
+    if claimed_wrappers:
+        from api.crud import set_title_type
+        wrapper_rows = (
+            db.query(db_models.DiscTitle)
+            .filter(db_models.DiscTitle.disc_id == disc_id)
+            .filter(db_models.DiscTitle.id.in_(claimed_wrappers))
+            .all()
+        )
+        for wrapper_row in wrapper_rows:
+            # Idempotent: only write when auto_type isn't already ignore, and
+            # never touch a wrapper the user typed themselves.
+            if _user_claimed_type(wrapper_row):
+                continue
+            if (getattr(wrapper_row, "auto_type", None) or "").strip().lower() == "ignore":
+                continue
+            set_title_type(wrapper_row, "ignore", source="auto")
+            marked += 1
+
     # Update memo only after a successful pass so a mid-flight crash retries.
     _LAST_APPLY_SIG.setdefault(disc_id, {})["subsumption"] = sig
     return (marked, set_sub)

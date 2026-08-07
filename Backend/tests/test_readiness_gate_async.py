@@ -22,12 +22,17 @@ from api import main as api_main
 
 @pytest.fixture(autouse=True)
 def _reset_readiness_state(monkeypatch):
-    """Each test starts with a cold cache and a fresh lock."""
+    """Each test starts with a cold cache.
+
+    The lock deliberately is *not* reset: ``_readiness_lock`` is a
+    ``LoopLocalLock``, so it hands out a fresh ``asyncio.Lock`` per event loop
+    on its own. Leaving the real singleton in place is what makes these tests
+    exercise reuse across the loops each ``asyncio.run`` below creates.
+    """
     monkeypatch.setattr(
         api_main, "_readiness_state",
         {"checked_at": 0.0, "ready": False, "error": None},
     )
-    monkeypatch.setattr(api_main, "_readiness_lock", None)
     yield
 
 

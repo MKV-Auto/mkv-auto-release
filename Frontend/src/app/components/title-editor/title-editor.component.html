@@ -98,18 +98,13 @@
 
     <!-- Form: 2-column grid for title/type/edition/season+episode (matches
          the prototype's TitleEditor layout — research/MKV Auto UI/labeling.jsx:1583). -->
-    <!-- #602: single-subscription wrapper — exposes `t.tmdbReady` for
-         the conditional render of the manual title / season / episode
-         inputs below. When TMDB has the catalog the picker covers all
-         three; we hide the redundant manuals. -->
-    <ng-container *ngIf="{ tmdbReady: (tmdbCatalogReady$ | async) ?? false } as t">
     <div class="title-editor__form-grid">
       <!-- TMDB episode picker (#371). Renders for series titles when
            the workflow context has a populated episode catalog for the
            row's effective season. Selecting an episode auto-fills the
            EPISODE TITLE, SEASON and EPISODE fields below; the user can
            still override any of them by hand. -->
-      <ng-container *ngIf="isSeries && !isIgnored()">
+      <ng-container *ngIf="isEpisodeType() && !isIgnored()">
         <ng-container *ngIf="episodeOptions$ | async as opts">
           <div class="title-editor__field title-editor__field--full" *ngIf="isEpisodeList(opts)">
             <label class="title-editor__label">TMDB episode</label>
@@ -135,15 +130,16 @@
         </ng-container>
       </ng-container>
 
-      <!-- Title name. #602: hide on Episode rows when TMDB returned the
-           catalog — the picker writes title.title via onEpisodePicked. -->
-      <div class="title-editor__field" *ngIf="!(isSeries && t.tmdbReady)">
-        <label class="title-editor__label">{{ isSeries ? 'Episode title' : 'Title name' }}</label>
+      <!-- Title name. Always shown: the picker fills it, but TMDB does not
+           always match the disc (a two-part episode on disc against one TMDB
+           entry — #796), so the user must be able to correct it. -->
+      <div class="title-editor__field">
+        <label class="title-editor__label">{{ isEpisodeType() ? 'Episode title' : 'Title name' }}</label>
         <input
           type="text"
           class="title-editor__input"
           [(ngModel)]="title.title"
-          [placeholder]="isSeries ? 'Episode title' : 'Enter title name…'"
+          [placeholder]="isEpisodeType() ? 'Episode title' : 'Enter title name…'"
           (ngModelChange)="onTitleNameChange($event)"
           (blur)="flushPendingFieldEdits(); titleBlur.emit()"
           [disabled]="isIgnored()">
@@ -170,9 +166,9 @@
         </div>
       </div>
 
-      <!-- Season / Episode (series) — sit in the grid alongside Title + Type.
-           #602: same TMDB-catalog hide as the title input above. -->
-      <ng-container *ngIf="isSeries && !isIgnored() && !t.tmdbReady">
+      <!-- Season / Episode — sit in the grid alongside Title + Type. Shown
+           for Episode rows regardless of whether TMDB has the catalog. -->
+      <ng-container *ngIf="isEpisodeType() && !isIgnored()">
         <div class="title-editor__field">
           <label class="title-editor__label">Season</label>
           <input
@@ -197,10 +193,52 @@
             (blur)="flushPendingFieldEdits(); titleBlur.emit()"
             [disabled]="isIgnored()">
         </div>
+
+        <!-- Layout (#796). The disc does not always give one file per
+             episode; this says which way it diverges. -->
+        <div class="title-editor__field">
+          <label class="title-editor__label">Layout</label>
+          <select
+            class="title-editor__input title-editor__select"
+            [ngModel]="episodeLayout"
+            [ngModelOptions]="{standalone: true}"
+            (ngModelChange)="onEpisodeLayoutChange($event)"
+            [disabled]="isIgnored()"
+            aria-label="Episode layout">
+            <option value="single">Single episode</option>
+            <option value="split">Split across files</option>
+            <option value="span">Spans episodes</option>
+          </select>
+        </div>
+
+        <ng-container *ngIf="episodeLayout === 'split'">
+          <div class="title-editor__field">
+            <label class="title-editor__label">Part</label>
+            <input type="number" class="title-editor__input" [(ngModel)]="title.part"
+              min="1" (ngModelChange)="onPartChange($event)"
+              (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
+          </div>
+          <div class="title-editor__field">
+            <label class="title-editor__label">of</label>
+            <input type="number" class="title-editor__input" [(ngModel)]="title.part_of"
+              min="1" (ngModelChange)="onPartOfChange($event)"
+              (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
+          </div>
+          <div class="title-editor__field title-editor__field--full title-editor__hint">
+            Plex and Jellyfin stack these as one episode.
+          </div>
+        </ng-container>
+
+        <div class="title-editor__field" *ngIf="episodeLayout === 'span'">
+          <label class="title-editor__label">Through episode</label>
+          <input type="number" class="title-editor__input" [(ngModel)]="title.episode_end"
+            min="1" (ngModelChange)="onEpisodeEndChange($event)"
+            (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
+        </div>
       </ng-container>
 
-      <!-- Edition (movies) — full-width row in the grid -->
-      <div class="title-editor__field title-editor__field--full" *ngIf="!isSeries && !isIgnored()">
+      <!-- Edition — main-movie rows only -->
+      <div class="title-editor__field title-editor__field--full" *ngIf="isMainMovie() && !isIgnored()">
         <label class="title-editor__label">Edition (Optional)</label>
         <input
           type="text"
@@ -212,7 +250,6 @@
           [disabled]="isIgnored()">
       </div>
     </div>
-    </ng-container>
 
     <!-- Duplicate Group Panel (Path B sorted-segment-set dedupe) -->
     <section class="title-editor__dupe" *ngIf="siblings.length">

@@ -862,4 +862,51 @@ describe('TitleLabelComponent', () => {
       expect(disabled).toContain(false);  // the 'has' title
     });
   });
+
+  describe('play-all clips nested under their wrapper (#797)', () => {
+    const WRAPPER = 'w-1';
+    function clip(id: string, userType: string | null, sub = WRAPPER) {
+      return { title_id: id, title: `Clip ${id}`, source_file: `${id}.m2ts`,
+               subsumed_by_title_id: sub, user_type: userType, auto_type: 'ignore' };
+    }
+    const wrapper = { title_id: WRAPPER, title: 'Rebel Recon - Play All',
+                      source_file: '00215.mpls', auto_type: 'ignore', user_type: null };
+
+    beforeEach(() => {
+      component.titles = [wrapper, clip('c1', 'BehindTheScenes'), clip('c2', null), clip('c3', 'ignore')];
+    });
+
+    it('lists only the clips the user labelled', () => {
+      const ids = component.claimedClipsOf(wrapper).map((c: any) => c.title_id);
+      expect(ids).toEqual(['c1']);
+    });
+
+    it('an unlabelled clip is not a claimed clip', () => {
+      expect(component.isClaimedClip(clip('c2', null))).toBe(false);
+    });
+
+    it('a clip the user set to ignore is not claimed', () => {
+      // Mirrors user_claimed_row() in duplicate_group_sync.py: ignore is not a claim.
+      expect(component.isClaimedClip(clip('c3', 'ignore'))).toBe(false);
+    });
+
+    it('a claimed clip is excluded from the top level so it renders once', () => {
+      expect(component.isClaimedClip(clip('c1', 'BehindTheScenes'))).toBe(true);
+    });
+
+    it('flags the wrapper as superseded once a clip is claimed', () => {
+      expect(component.isSupersededWrapper(wrapper)).toBe(true);
+    });
+
+    it('does not flag a wrapper whose clips are all unlabelled', () => {
+      component.titles = [wrapper, clip('c2', null)];
+      expect(component.isSupersededWrapper(wrapper)).toBe(false);
+    });
+
+    it('does not flag a wrapper the user typed themselves', () => {
+      const kept = { ...wrapper, user_type: 'BehindTheScenes' };
+      component.titles = [kept, clip('c1', 'BehindTheScenes', WRAPPER)];
+      expect(component.isSupersededWrapper(kept)).toBe(false);
+    });
+  });
 });

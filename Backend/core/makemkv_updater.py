@@ -427,13 +427,29 @@ def _download(
             log_cb(msg_line)
             log_cb(f"URL: {url}")
         log.error("%s URL: %s", msg_line, url)
-        raise MakeMKVUpdateError(
+        raise SourceUnavailableError(
             f"Download failed (timeout or network): {exc.reason or exc} for URL {url}"
         ) from exc
     log.debug("Downloaded %s", url)
     logs.append(f"Downloaded {url}")
     if log_cb:
         log_cb(f"Downloaded {url}")
+
+
+class SourceUnavailableError(MakeMKVUpdateError):
+    """Sources could not be FETCHED — network, timeout, mirror refusing.
+
+    Says nothing about whether the software builds. On 2026-08-06 a
+    transient ffmpeg.org timeout was recorded as `1.18.4 + 8.1.2 ->
+    build_failed`; that verdict is memoized, so the pair would never have
+    been retried and the matrix would have pinned users to an older FFmpeg
+    on the strength of one slow download.
+
+    Deliberately a MakeMKVUpdateError subclass: the archive-fallback retry
+    loop catches that type, and breaking the hierarchy would stop the
+    fallback from retrying at all. Callers that need to tell the two apart
+    order this handler first.
+    """
 
 
 class WaybackLookupError(Exception):

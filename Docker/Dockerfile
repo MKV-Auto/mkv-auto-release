@@ -112,6 +112,11 @@ COPY Docker/healthcheck.sh /healthcheck.sh
 # #709: guarded migration (pre-migration backup + halt-on-failure) and restore
 COPY Docker/db-migrate.sh /app/db-migrate.sh
 COPY Docker/db-restore.sh /app/db-restore.sh
+# #802: support triage + log bundle. Shipped inside the image so a user whose
+# drives are not detected can produce a diagnosis without shell access to the
+# host — `docker exec mkv-auto /app/scripts/mkv-support-bundle.sh --bundle /data`
+# writes it to the mounted data volume, where they can actually reach it.
+COPY scripts/mkv-support-bundle.sh /app/scripts/mkv-support-bundle.sh
 
 # Generate udev rules from template with Docker-specific paths
 COPY Deploy/udev/99-mkva-disc.rules.template /tmp/udev-template.rules

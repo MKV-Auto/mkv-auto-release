@@ -28,7 +28,7 @@
                can confirm/override via the right-editor's Confirm-
                ignore button instead of having decoy candidates
                silently disappear. -->
-          <ng-container *ngIf="!isDedupeSibling(getTitleId(t)) && (showIgnored || !isUserIgnored(t))">
+          <ng-container *ngIf="!isDedupeSibling(getTitleId(t)) && !isClaimedClip(t) && (showIgnored || !isUserIgnored(t))">
             <app-title-row
               [attr.data-title-id]="getTitleId(t)"
               [attr.id]="'title-row-' + (getTitleId(t) || '')"
@@ -96,6 +96,27 @@
                   </svg>
                 </span>
               </span>
+            </app-title-row>
+
+            <!-- #797: clips inside a play-all wrapper that the user has
+                 labelled. They stay in the wrapper's dedupe group but render
+                 as children here, because the backend keeps them active and
+                 they WILL be ripped — hiding them made that invisible. -->
+            <app-title-row
+              *ngFor="let clip of claimedClipsOf(t); trackBy: trackByTitleId"
+              class="title-label-claimed-clip"
+              [attr.data-title-id]="getTitleId(clip)"
+              [attr.id]="'title-row-' + (getTitleId(clip) || '')"
+              [title]="clip.title"
+              [sourceFile]="clip.source_file"
+              [duration]="getTitleDurationLabel(clip)"
+              [previewUrl]="null"
+              [status]="getTitleRowStatus(clip)"
+              [progress]="getTitleProgressValue(clip) || null"
+              [selected]="selectedTitleId === getTitleId(clip)"
+              [userType]="clip.user_type"
+              [autoType]="clip.auto_type"
+              (selected$)="selectTitle(clip)">
             </app-title-row>
           </ng-container>
         </ng-container>

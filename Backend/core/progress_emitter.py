@@ -19,8 +19,6 @@ PROGRESS_DEBOUNCE_SECONDS = 1.0  # Max 1 update per second per job
 _last_emission: Dict[str, float] = {}
 # Track pending progress data per job
 _pending_progress: Dict[str, Dict[str, Any]] = {}
-# Lock for thread safety
-_lock = asyncio.Lock()
 # Global event loop reference (set by FastAPI app at startup)
 _global_event_loop: Optional[asyncio.AbstractEventLoop] = None
 

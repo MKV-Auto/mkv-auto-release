@@ -12,6 +12,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-07
+
+### Fixed
+
+- **The Layout setting no longer reverts to "Single episode" after you set it.** Choosing "Split across files" saved correctly but snapped back on the next refresh, because the layout values weren't included in the data the page reloads.
+
+- **The TMDB episode dropdown comes back on discs you've already linked.** On a disc labelled in an earlier session the episode picker was silently missing — the app looked for the TMDB link in one place and the disc had it in another, so no episode list was ever fetched. It now follows the disc's own link to the series, and fetches the season the title actually belongs to rather than only the disc's first season. The picker still appears only on titles typed as Episode.
+
+- **Clips you label inside a "play all" extra now appear under it in the title list.** They were kept and ripped, but stayed hidden behind the combined playlist so there was no way to see what you'd labelled. Labelled clips now sit indented beneath their playlist; unlabelled ones stay collapsed as before.
+
+- **Labelling a clip inside a "play all" extra now actually rips it.** Some discs bundle their featurettes into a single play-all playlist. You could already label the individual clips inside it, but they stayed hidden and only the long combined file was produced. A clip you label is now kept and ripped on its own, and the combined play-all steps aside so the same footage isn't written twice — set a type on the play-all itself if you want both.
+
+- **On a series disc you can now name extras.** The labeling form used to decide which fields to show from the disc as a whole, so every title on a series disc got the episode dropdown and no name box — a featurette or trailer simply could not be named. Fields now follow each title's own type: pick Episode and you get the episode picker, pick anything else and you get a name field. The name, season and episode boxes also stay available on episodes now instead of disappearing once TMDB data loads, so you can correct entries where the disc and TMDB disagree.
+
+- **Episodes that don't line up one-to-one with files can now be labelled.** A new Layout setting on episode titles handles both cases discs actually present: an episode split across two files (written as `part1`/`part2`, which Plex and Jellyfin play as a single episode), and one file covering several episodes (written as `s03e01-e02`). The filename preview updates as you choose, so you can see what you'll get. Where TMDB numbers a two-parter as separate episodes with "(1)" and "(2)" in the name, that's now recognised automatically and the marker is dropped from the filename — anything you set by hand still wins.
+
+- **A disc that splits one episode across two files no longer loses the second one.** When two titles were labelled with the same season and episode, they produced the same filename — and post-processing treated the second one as "already done", left it behind, and still reported the job as successful. It now stops with a message naming both titles so you can give them distinct episode numbers. (Star Wars Rebels season 3 does this: the premiere "Steps Into Shadow" is two files on disc but one entry in TMDB.)
+
+- **A transfer can no longer run twice at once.** The app had two separate ways of starting a file transfer and neither checked whether one was already running, so the same job could be sent twice and two copies would write to the same destination file at the same time. On an SMB share this showed up as write timeouts part-way through a batch. Only one transfer per job can now be started, whichever path asks for it.
+
+- **The notifications panel no longer opens off the edge of the screen.** On desktop the bell sat next to the app name in the top-left, so its right-aligned panel opened leftward and was clipped by the window — about 80px lost at 1600px wide, and 160px at 1280px. The bell now sits at the far right of the header with the other icons, and the panel is capped at the window width so it cannot overflow on narrow phones either. The panel is also no longer see-through — page content used to read through it.
+
+- **A drive MakeMKV can't see now tells you why, instead of "Disc not found".** MakeMKV finds optical drives through a different device node than the rest of the system (`/dev/sg*`), so a drive that works everywhere else — it shows up, it mounts, you can read from it — can still be invisible to the ripper. That showed up as a bare "Disc not found", pointing you at the disc when the disc was never the problem. The app now recognises the case and tells you which of the two causes you have: the host is missing the SCSI generic kernel module, or the module is loaded and those nodes never reached the container. Each gets its own instructions, including that loading the module needs a container restart to take effect and needs a config file to survive a reboot. Full walkthrough in `docs/HOST_OPTICAL_SETUP.md`.
+
+- **A slow download can no longer be mistaken for a broken FFmpeg version.** The daily compatibility check treats a version pair as untested when it cannot fetch the sources, rather than recording it as a build failure. Previously one timed-out download was remembered as a permanent verdict and the pair was never retried — which would have held the app on an older FFmpeg indefinitely. Genuine build failures are still recorded.
+
 ## [1.3.0] - 2026-08-06
 
 ### Changed

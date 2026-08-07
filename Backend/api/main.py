@@ -18,6 +18,7 @@ from sqlalchemy import text
 from api import database, crud
 from api import models as db_models
 from workers.tasks import gather_final_outputs
+from core.loop_local import LoopLocalLock
 from core.utils import get_mkvauto_tmp, get_mkvauto_root
 from core.job_state import apply_job_state
 from core.logging_utils import get_logger, _get_log_level_from_env
@@ -1025,9 +1026,10 @@ def _migration_failure_reason() -> Optional[str]:
 # SessionLocal + SELECT 1 round-trip while the event loop is blocked,
 # serializing the request burst instead of dispatching to handlers in
 # parallel. With the lock, the first caller pays the round-trip and every
-# other concurrent caller awaits the same result. The lock is created
-# lazily so the module imports cleanly outside an event loop (tests).
-_readiness_lock: Optional[asyncio.Lock] = None
+# other concurrent caller awaits the same result. LoopLocalLock because a
+# module-level asyncio.Lock sticks to the first loop that contends on it;
+# see core/loop_local.py.
+_readiness_lock = LoopLocalLock()
 
 
 def _readiness_ttl_for_current_state() -> float:
@@ -1103,13 +1105,6 @@ async def _check_db_ready_async() -> tuple[bool, Optional[str]]:
     now = time.monotonic()
     if state["ready"] and (now - state["checked_at"]) < _readiness_ttl_for_current_state():
         return True, None
-
-    global _readiness_lock
-    if _readiness_lock is None:
-        # Created lazily — the module may import before an event loop exists
-        # (tests, command-line uses), and ``asyncio.Lock()`` constructed
-        # outside a running loop on Python 3.10+ binds to the wrong loop.
-        _readiness_lock = asyncio.Lock()
 
     async with _readiness_lock:
         # Recheck: another caller may have just refreshed while we waited.

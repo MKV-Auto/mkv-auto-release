@@ -119,6 +119,115 @@ def _enumerate_devices() -> list[str]:
     return sorted(glob.glob("/dev/sr*"))
 
 
+def _enumerate_scsi_generic() -> list[str]:
+    """Return sorted ``/dev/sg*`` paths. Indirected for test monkeypatching."""
+    return sorted(glob.glob("/dev/sg*"))
+
+
+def _enumerate_host_scsi_generic() -> list[str]:
+    """SCSI generic devices the *kernel* knows about, from sysfs.
+
+    This is the host's view, not ours. ``/sys`` is the host's sysfs even in a
+    container that was given no ``/dev/sg*`` nodes and no privileges — verified
+    on an unprivileged container that saw ``sg0 sg1 sg2`` here while its own
+    ``/dev/sg*`` was empty.
+
+    That gap is the whole diagnosis. Nothing here means the host has no SCSI
+    generic support at all (the ``sg`` module is not loaded). Entries here with
+    no matching ``/dev/sg*`` means the host is fine and the container simply
+    was not given the nodes.
+    """
+    try:
+        return sorted(os.listdir("/sys/class/scsi_generic"))
+    except OSError:
+        return []
+
+
+def scsi_generic_missing() -> bool:
+    """True when optical drives exist but no SCSI generic node does.
+
+    MakeMKV enumerates optical drives through SCSI generic, not through
+    ``/dev/sr*``, so with no ``/dev/sg*`` it reports zero usable drives.
+    Conservative by design: False when there are no optical drives at all
+    (nothing to diagnose) and False when any ``sg`` node exists.
+    """
+    if not _enumerate_devices():
+        return False
+    return not _enumerate_scsi_generic()
+
+
+def diagnose_no_drives_environment() -> tuple[str, str]:
+    """Why might MakeMKV see no drives here? Returns ``(reason, detail)``.
+
+    Ordered cheapest-and-most-decisive first. ``reason`` is a stable slug for
+    callers and tests; ``detail`` is a human sentence naming what was observed.
+
+    The reason this enumerates causes rather than asserting one: the first
+    report of #802 looked exactly like a missing ``sg`` kernel module, and it
+    was not — the reporter's host had ``sg`` loaded and all three ``/dev/sg*``
+    nodes were visible inside the container. A probe that bets on one cause
+    gives confidently wrong advice. This one reports what it can actually see
+    and says ``unknown`` when that is the honest answer.
+    """
+    try:
+        sr_nodes = _enumerate_devices()
+        sg_nodes = _enumerate_scsi_generic()
+        host_sg = _enumerate_host_scsi_generic()
+    except Exception as exc:  # noqa: BLE001 - diagnosis must never raise
+        logger.debug("drive environment probe failed: %s", exc)
+        return "unknown", "The drive environment could not be inspected."
+
+    # Order matters. "Nothing at all" first, then the host/container split
+    # before "no sg nodes" — those two look identical from /dev alone, and two
+    # separate reporters were told to run `modprobe sg` when they had already
+    # done so and the real problem was that the nodes never reached their
+    # container.
+    if not sr_nodes and not sg_nodes and not host_sg:
+        return (
+            "no_devices",
+            "No optical drives (/dev/sr*) and no SCSI generic nodes (/dev/sg*) "
+            "are visible here, and the host reports no SCSI generic devices "
+            "either. If a drive is attached to the host, it is not reaching "
+            "the container.",
+        )
+    if not sg_nodes and host_sg:
+        return (
+            "sg_not_passed_through",
+            f"The host has SCSI generic devices ({', '.join(host_sg)}) but none "
+            "of them reached this container (no /dev/sg*). The kernel module is "
+            "loaded; the container was not given the nodes.",
+        )
+    if not sg_nodes and not host_sg:
+        return (
+            "no_sg_nodes",
+            f"Optical drives are visible ({', '.join(sr_nodes) or 'none'}) but the "
+            "host has no SCSI generic support at all — nothing in "
+            "/sys/class/scsi_generic and no /dev/sg*. MakeMKV enumerates drives "
+            "through SCSI generic.",
+        )
+    if not sr_nodes:
+        return (
+            "no_sr_nodes",
+            f"SCSI generic nodes exist ({', '.join(sg_nodes)}) but no optical "
+            "drive node (/dev/sr*) is visible here.",
+        )
+
+    unreadable = [node for node in sg_nodes if not os.access(node, os.R_OK | os.W_OK)]
+    if unreadable:
+        return (
+            "sg_not_accessible",
+            f"SCSI generic nodes exist but are not readable/writable by this "
+            f"process: {', '.join(unreadable)}.",
+        )
+
+    return (
+        "unknown",
+        f"Optical drives ({', '.join(sr_nodes)}) and SCSI generic nodes "
+        f"({', '.join(sg_nodes)}) are both visible and accessible, so the cause "
+        "is not a missing device node or a permission problem.",
+    )
+
+
 def _media_present(dev: str) -> bool:
     """Return True if media is loaded in ``dev``. Indirected for testing.
 

@@ -4597,6 +4597,18 @@ def _maybe_auto_dispatch_remote_transfer(job_id: str, task_self) -> None:
                 src_root, job_id,
             )
             return
+        # Claim the job BEFORE enqueueing. Leaving transfer_state='ready'
+        # here is what allowed POST /jobs/{id}/transfer to enqueue a second
+        # transfer_remote for the same job and race us over the same
+        # destination file (see claim_transfer_for_dispatch).
+        from core.job_state import claim_transfer_for_dispatch
+
+        if not claim_transfer_for_dispatch(db, job_id):
+            log.info(
+                "Job %s: transfer already claimed; not auto-dispatching a duplicate",
+                job_id,
+            )
+            return
         task_result = transfer_remote.delay(job_id, str(src_root), str(config.id))
         task_id = getattr(task_result, "id", "unknown") if task_result else "unknown"
         log.info(
@@ -5376,6 +5388,8 @@ def _run_prep_phase(self, job_id: str):
                     title_id_to_resolution = {}
                     title_id_to_season = {}
                     title_id_to_episode = {}
+                    title_id_to_part = {}
+                    title_id_to_episode_end = {}
                     def _normalize_resolution_from_title(title_obj) -> str | None:
                         try:
                             metadata_scan = getattr(title_obj, "metadata_scan", None)
@@ -5446,6 +5460,11 @@ def _run_prep_phase(self, job_id: str):
                                         title_id_to_season[title_id_str] = title.season
                                     if getattr(title, "episode", None) is not None:
                                         title_id_to_episode[title_id_str] = title.episode
+                                    # Multi-part layout (#796)
+                                    if getattr(title, "part", None) is not None:
+                                        title_id_to_part[title_id_str] = title.part
+                                    if getattr(title, "episode_end", None) is not None:
+                                        title_id_to_episode_end[title_id_str] = title.episode_end
                                     res = _normalize_resolution_from_title(title)
                                     if res:
                                         title_id_to_resolution[title_id_str] = res
@@ -5498,6 +5517,8 @@ def _run_prep_phase(self, job_id: str):
                             title_id_to_resolution=title_id_to_resolution,
                             title_id_to_season=title_id_to_season,
                             title_id_to_episode=title_id_to_episode,
+                            title_id_to_part=title_id_to_part,
+                            title_id_to_episode_end=title_id_to_episode_end,
                             progress_cb=update_rename_progress,
                             source_hashes=source_hashes_rename,
                             media_server=settings.get_media_server(),

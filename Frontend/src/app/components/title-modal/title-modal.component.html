@@ -69,8 +69,8 @@
 
       <!-- Title Name -->
       <div class="form-group">
-        <label class="form-label">{{ isSeries ? 'Episode Title' : 'Title Name' }}</label>
-        <input type="text" class="form-input" [(ngModel)]="title.title" [placeholder]="isSeries ? 'Episode title' : 'Enter title name...'" (ngModelChange)="onTitleNameChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
+        <label class="form-label">{{ isEpisodeType() ? 'Episode Title' : 'Title Name' }}</label>
+        <input type="text" class="form-input" [(ngModel)]="title.title" [placeholder]="isEpisodeType() ? 'Episode title' : 'Enter title name...'" (ngModelChange)="onTitleNameChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
       </div>
 
       <!-- Type -->
@@ -85,14 +85,14 @@
         </button>
       </div>
 
-      <!-- Edition (non-series) -->
-      <div class="form-group" *ngIf="!isSeries && !isIgnored()">
+      <!-- Edition — main-movie rows only -->
+      <div class="form-group" *ngIf="isMainMovie() && !isIgnored()">
         <label class="form-label">Edition (Optional)</label>
         <input type="text" class="form-input" [(ngModel)]="title.edition" placeholder="e.g., Extended, Director's Cut..." (ngModelChange)="onEditionChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
       </div>
 
-      <!-- Season/Episode (Series only) -->
-      <div class="form-row" *ngIf="isSeries && !isIgnored()">
+      <!-- Season/Episode — Episode rows only -->
+      <div class="form-row" *ngIf="isEpisodeType() && !isIgnored()">
         <div class="form-group">
           <label class="form-label">Season</label>
           <input type="number" class="form-input" [(ngModel)]="title.season" placeholder="Season #" min="1" (ngModelChange)="onSeasonChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
