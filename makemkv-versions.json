@@ -1,14 +1,14 @@
 {
-  "generated_at": "2026-08-06T12:17:25+00:00",
+  "generated_at": "2026-08-07T06:16:41+00:00",
   "known_incompatible": [],
   "latest_validated": "1.18.4",
   "schema": 1,
   "validated": {
     "1.18.4": {
-      "ffmpeg_version": "8.1.1",
+      "ffmpeg_version": "8.1.2",
       "hashes_withheld": "sources were not fetched from the vendor; hashes cannot attest vendor authenticity",
       "sha256": {},
-      "validated_at": "2026-08-06T12:17:25+00:00"
+      "validated_at": "2026-08-07T06:16:41+00:00"
     }
   }
 }
