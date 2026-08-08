@@ -3,6 +3,7 @@
 [![Image pulls](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMKV-Auto%2Fmkv-auto-release%2Fbadges%2Fghcr-pulls.json&style=flat-square&logo=docker&logoColor=white)](https://github.com/MKV-Auto/mkv-auto-release/pkgs/container/mkv-auto-release)
 [![Release](https://img.shields.io/github/v/release/MKV-Auto/mkv-auto-release?style=flat-square&color=06b6d4)](https://github.com/MKV-Auto/mkv-auto-release/releases/latest)
 [![License](https://img.shields.io/github/license/MKV-Auto/mkv-auto-release?style=flat-square&color=ec4899)](LICENSE)
+[![Buy me a beer](https://img.shields.io/badge/Buy%20me%20a%20beer-5F7FFF?style=flat-square&logo=buymeacoffee&logoColor=white)](https://buymeacoffee.com/mkvauto)
 
 Self-hosted automated disc ripping and media management. Insert a Blu-ray, UHD, or DVD; get organized files on your Plex or Jellyfin share — with disc identification via [TheDiscDB](https://thediscdb.com), title/episode metadata via [TMDB](https://www.themoviedb.org/), and transfers over local or SMB (for NFS or other network storage, mount it into the container and use local).
 
@@ -142,6 +143,7 @@ Images are published to GitHub Container Registry:
 - **TMDB** — [themoviedb.org](https://www.themoviedb.org/) (title & episode metadata; product uses the TMDB API but is not endorsed or certified by TMDB)
 - **MakeMKV** — [makemkv.com](https://www.makemkv.com/) (ripping engine)
 - **Issues** — [GitHub Issues](https://github.com/MKV-Auto/mkv-auto-release/issues)
+- **Buy me a beer** — [buymeacoffee.com/mkvauto](https://buymeacoffee.com/mkvauto) (entirely optional; MKV-Auto stays free either way)
 
 ## License
 

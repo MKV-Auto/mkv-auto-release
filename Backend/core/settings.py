@@ -5,6 +5,7 @@ Stored in a single settings.json under get_mkvauto_root()/backend.
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -41,7 +42,20 @@ _KNOWN_TOP_LEVEL = frozenset({
     # Empty/None means TMDB enrichment is disabled (existing scrape path
     # for URL-paste in /movies/lookup still works without a key).
     "tmdb_api_key",
+    # State for the one-off "support the project" prompt in the bell panel.
+    # Lives server-side rather than in localStorage so a dismissal sticks
+    # across every browser and device pointed at this install — dismissing
+    # on a desktop and then being asked again on a phone reads as the app
+    # ignoring the answer.
+    "support_prompt",
 })
+
+# Successful rips required before the support prompt is eligible to appear.
+SUPPORT_PROMPT_MIN_RIPS = 5
+# "Maybe later" pushes the prompt out by this long.
+SUPPORT_PROMPT_SNOOZE_DAYS = 90
+# After this many "maybe later"s, stop asking permanently.
+SUPPORT_PROMPT_MAX_DISMISSALS = 3
 
 
 def _default_settings() -> dict:
@@ -77,6 +91,11 @@ def _default_settings() -> dict:
         "setup_step": 1,
         "auto_rip_enabled": False,
         "tmdb_api_key": None,
+        "support_prompt": {
+            "dismissed_forever": False,
+            "snoozed_until": None,  # ISO-8601 UTC timestamp, or None
+            "dismiss_count": 0,
+        },
     }
 
 
@@ -477,3 +496,63 @@ def set_setup_step(step: int) -> None:
     """Set setup wizard step (1-6). Values outside range are clamped."""
     clamped = max(1, min(6, int(step)))
     save_settings({"setup_step": clamped})
+
+
+def get_support_prompt_dict() -> dict:
+    """Return support-prompt state, filling defaults for missing/corrupt fields."""
+    raw = load_settings().get("support_prompt")
+    defaults = _default_settings()["support_prompt"]
+    if not isinstance(raw, dict):
+        return dict(defaults)
+    snoozed = raw.get("snoozed_until")
+    count = raw.get("dismiss_count")
+    return {
+        "dismissed_forever": bool(raw.get("dismissed_forever", defaults["dismissed_forever"])),
+        "snoozed_until": snoozed if isinstance(snoozed, str) and snoozed else None,
+        "dismiss_count": count if isinstance(count, int) and count >= 0 else 0,
+    }
+
+
+def support_prompt_is_suppressed(now: Optional[datetime] = None) -> bool:
+    """Whether dismissal state alone rules the prompt out, ignoring rip count.
+
+    An unparseable ``snoozed_until`` is treated as suppressing rather than
+    showing: a corrupt timestamp should not turn into a re-prompt.
+    """
+    state = get_support_prompt_dict()
+    if state["dismissed_forever"]:
+        return True
+    snoozed_until = state["snoozed_until"]
+    if not snoozed_until:
+        return False
+    current = now or datetime.now(timezone.utc)
+    try:
+        deadline = datetime.fromisoformat(snoozed_until)
+    except ValueError:
+        return True
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    return current < deadline
+
+
+def record_support_prompt_dismissal(forever: bool, now: Optional[datetime] = None) -> dict:
+    """Record a dismissal and return the resulting state.
+
+    ``forever=True`` silences the prompt permanently. Otherwise it snoozes for
+    ``SUPPORT_PROMPT_SNOOZE_DAYS`` and, once the user has deferred
+    ``SUPPORT_PROMPT_MAX_DISMISSALS`` times, stops asking for good — repeatedly
+    declining is an answer.
+    """
+    state = get_support_prompt_dict()
+    if forever:
+        state["dismissed_forever"] = True
+    else:
+        current = now or datetime.now(timezone.utc)
+        state["dismiss_count"] += 1
+        state["snoozed_until"] = (
+            current + timedelta(days=SUPPORT_PROMPT_SNOOZE_DAYS)
+        ).isoformat()
+        if state["dismiss_count"] >= SUPPORT_PROMPT_MAX_DISMISSALS:
+            state["dismissed_forever"] = True
+    save_settings({"support_prompt": state})
+    return state

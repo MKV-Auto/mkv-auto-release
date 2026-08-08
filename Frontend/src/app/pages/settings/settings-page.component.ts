@@ -169,7 +169,7 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
               class="settings-shell__nav-btn"
               [class.is-active]="activeTab === s.id"
               [attr.aria-current]="activeTab === s.id ? 'page' : null"
-              (click)="activeTab = s.id">
+              (click)="selectTab(s.id)">
               <ui-icon [name]="s.icon" [size]="14"></ui-icon>
               {{ s.label }}
             </button>
@@ -1263,6 +1263,36 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                   </div>
               </div>
             </div>
+
+            <!-- Support bundle (#804). Sits outside the accordion: it is an
+                 action, not reading material, and someone whose drives are
+                 not detected should not have to expand anything to find it. -->
+            <div class="support-bundle">
+              <div class="support-bundle__head">
+                <h3 class="support-bundle__title">Diagnostics</h3>
+                <p class="support-bundle__subtitle">
+                  Collects logs and drive information into a single file you can attach to a
+                  bug report. Passwords and API keys are removed before it is written.
+                </p>
+              </div>
+              <button
+                type="button"
+                class="support-bundle__btn"
+                [disabled]="bundleState === 'working' || !!bundleBlocked"
+                (click)="downloadSupportBundle()">
+                {{ bundleState === 'working' ? 'Collecting…' : 'Download support bundle' }}
+              </button>
+              <p *ngIf="bundleBlocked" class="support-bundle__blocked">{{ bundleBlocked }}</p>
+              <p *ngIf="bundleNote" class="support-bundle__note">{{ bundleNote }}</p>
+              <p *ngIf="bundleError" class="support-bundle__error">{{ bundleError }}</p>
+              <p class="support-bundle__hint">
+                This is collected from inside the container, which cannot see how Docker itself
+                is configured. If a drive is missing and the bundle does not explain why, run
+                <code>scripts/mkv-support-bundle.sh</code> on the Docker host — copy it out of
+                this image with
+                <code>docker cp mkv-auto:/app/scripts/mkv-support-bundle.sh .</code>
+              </p>
+            </div>
           </div>
             </div>
           </ui-card>
@@ -1878,6 +1908,71 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
     .help-section__chevron.is-open { transform: rotate(180deg); }
     @media (prefers-reduced-motion: reduce) {
       .help-section__chevron { transition: none; }
+    }
+    .support-bundle {
+      margin-top: 1.5rem;
+      padding: 1.25rem;
+      border-radius: 0.75rem;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .support-bundle__title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: white;
+      margin: 0 0 0.25rem 0;
+    }
+    .support-bundle__subtitle {
+      font-size: 0.875rem;
+      color: rgba(255, 255, 255, 0.6);
+      line-height: 1.5;
+      margin: 0;
+    }
+    .support-bundle__btn {
+      align-self: flex-start;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      background: rgba(99, 102, 241, 0.15);
+      color: #c7d2fe;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .support-bundle__btn:hover:not(:disabled) { background: rgba(99, 102, 241, 0.25); }
+    .support-bundle__btn:disabled { opacity: 0.6; cursor: default; }
+    .support-bundle__blocked {
+      font-size: 0.8125rem;
+      color: rgba(253, 224, 71, 0.9);
+      margin: 0;
+    }
+    .support-bundle__note {
+      font-size: 0.8125rem;
+      color: rgba(134, 239, 172, 0.9);
+      margin: 0;
+    }
+    .support-bundle__error {
+      font-size: 0.8125rem;
+      color: rgba(252, 165, 165, 0.95);
+      margin: 0;
+    }
+    .support-bundle__hint {
+      font-size: 0.8125rem;
+      color: rgba(255, 255, 255, 0.45);
+      line-height: 1.6;
+      margin: 0;
+    }
+    .support-bundle__hint code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.78125rem;
+      padding: 0.1rem 0.3rem;
+      border-radius: 0.25rem;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.75);
     }
     .help-section__body {
       padding: 6px 18px 18px;
@@ -2595,6 +2690,103 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
     return summary.movies_skipped + summary.releases_skipped + summary.discs_skipped + 
            summary.jobs_skipped + summary.disc_titles_skipped + summary.title_streams_skipped +
            summary.boxsets_skipped + summary.boxset_releases_skipped;
+  }
+
+  // ── Support bundle (#804) ───────────────────────────────────────────
+  bundleState: 'idle' | 'working' = 'idle';
+  bundleNote = '';
+  bundleError = '';
+  bundleBlocked = '';
+
+  /** Ask before showing the button whether collection is possible.
+   *
+   *  Collecting takes MakeMKV's drive lock, so it is refused during a rip —
+   *  a bundle missing the drive enumeration is not worth interrupting a rip
+   *  for. Checking up front means the user sees "come back after your rip"
+   *  instead of clicking into an error.
+   */
+  refreshBundleAvailability(): void {
+    this.systemSvc.supportBundleAvailability().subscribe({
+      next: a => (this.bundleBlocked = a.available ? '' : a.message ?? 'Unavailable right now.'),
+      // A failed check must not disable the button — the POST enforces this
+      // anyway, so fall back to letting them try.
+      error: () => (this.bundleBlocked = ''),
+    });
+  }
+
+  downloadSupportBundle(): void {
+    this.bundleState = 'working';
+    this.bundleNote = '';
+    this.bundleError = '';
+
+    this.systemSvc.downloadSupportBundle().subscribe({
+      next: res => {
+        const blob = res.body;
+        if (!blob || blob.size === 0) {
+          // A 200 with nothing attached is worse than an error: the user sends
+          // an empty file and we both waste a round trip working out why.
+          this.bundleState = 'idle';
+          this.bundleError = 'The server returned an empty bundle. Please report this.';
+          return;
+        }
+
+        const name =
+          this.filenameFromDisposition(res.headers.get('content-disposition')) ??
+          `mkv-auto-support-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)}.tar.gz`;
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        this.bundleState = 'idle';
+        this.bundleNote =
+          res.headers.get('X-Support-Bundle-Makemkv-Probe') === 'skipped'
+            ? 'Saved. The drive scan was skipped because a rip is in progress — ' +
+              'running it would have stalled the rip. Everything else is included.'
+            : 'Saved.';
+        this.toastSvc.show('Support bundle downloaded', 'success');
+      },
+      error: async err => {
+        this.bundleState = 'idle';
+        // responseType 'blob' means an error body arrives as a Blob too, so the
+        // usual err.error?.detail is undefined and the user would see a bare
+        // "Http failure response". Read it back as text to recover the reason.
+        this.bundleError = await this.errorDetailFromBlob(err);
+        this.toastSvc.show(this.bundleError, 'error');
+        this.refreshBundleAvailability();
+      },
+    });
+  }
+
+  private filenameFromDisposition(header: string | null): string | null {
+    const match = header?.match(/filename="?([^";]+)"?/i);
+    return match ? match[1] : null;
+  }
+
+  private async errorDetailFromBlob(err: unknown): Promise<string> {
+    const e = err as { error?: unknown; message?: string; status?: number };
+    if (e?.error instanceof Blob) {
+      try {
+        const parsed = JSON.parse(await e.error.text());
+        if (parsed?.detail) return String(parsed.detail);
+      } catch {
+        /* not JSON — fall through to the generic message */
+      }
+    }
+    const detail = (e?.error as { detail?: string } | undefined)?.detail;
+    return detail || e?.message || 'Could not collect the support bundle.';
+  }
+
+  selectTab(id: SettingsSection): void {
+    this.activeTab = id;
+    // Check on entry rather than on a timer: whether a rip is running can
+    // change while the page is open, and this is the moment it matters.
+    if (id === 'help') this.refreshBundleAvailability();
   }
 
   toggleHelpSection(sectionId: number): void {

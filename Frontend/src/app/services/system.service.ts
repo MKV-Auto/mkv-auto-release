@@ -1,8 +1,14 @@
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
 import { Observable, shareReplay } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { environment } from '../environments/environment';
+
+export interface SupportBundleAvailability {
+  available: boolean;
+  reason: 'rip_in_progress' | 'script_missing' | null;
+  message: string | null;
+}
 
 export interface SetupStatus {
   first_time_setup_complete: boolean;
@@ -475,6 +481,13 @@ export interface SystemHealth {
   };
 }
 
+/** Shape of GET /system/support-prompt. */
+export interface SupportPromptStatus {
+  should_show: boolean;
+  completed_rips: number;
+  dismissed_forever: boolean;
+}
+
 @Injectable({ providedIn: 'root' })
 export class SystemService {
   private readonly apiUrl = environment.apiBase ?? 'http://localhost:8000';
@@ -482,6 +495,20 @@ export class SystemService {
   /** #699: running version vs newest published release (backend caches 6h). */
   getUpdateStatus(): Observable<UpdateStatus> {
     return this.http.get<UpdateStatus>(`${this.apiUrl}/system/update-status`);
+  }
+
+  /** Whether to show the bell-panel support prompt. Eligibility is decided by
+   *  the backend so dismissals stick across browsers and devices. */
+  getSupportPromptStatus(): Observable<SupportPromptStatus> {
+    return this.http.get<SupportPromptStatus>(`${this.apiUrl}/system/support-prompt`);
+  }
+
+  /** Record a dismissal. ``forever`` silences it for good; otherwise snooze. */
+  dismissSupportPrompt(forever: boolean): Observable<SupportPromptStatus> {
+    return this.http.post<SupportPromptStatus>(
+      `${this.apiUrl}/system/support-prompt/dismiss`,
+      { forever },
+    );
   }
 
   /** #718: running app version (MKVAUTO_VERSION; "dev" locally). Cached — it
@@ -844,6 +871,29 @@ export class SystemService {
     if (days) params.push(`days=${days}`);
     const query = params.length > 0 ? `?${params.join('&')}` : '';
     return this.http.get<TransferStatistics>(`${this.apiUrl}/system/transfer/statistics${query}`);
+  }
+
+  /** #804: can a bundle be collected right now? Lets the button disable
+   *  itself with a reason instead of the user clicking into a 409. */
+  supportBundleAvailability(): Observable<SupportBundleAvailability> {
+    return this.http.get<SupportBundleAvailability>(
+      `${this.apiUrl}/system/support-bundle/availability`,
+    );
+  }
+
+  /** #804: diagnostic bundle for support.
+   *
+   *  `observe: 'response'` so the caller can read X-Support-Bundle-Makemkv-Probe.
+   *  The backend skips the MakeMKV drive probe while a rip is in flight — that
+   *  probe takes MakeMKV's drive lock and would stall the rip — and the user
+   *  needs telling, or they will send a bundle missing the drive enumeration
+   *  and not know why.
+   */
+  downloadSupportBundle(): Observable<HttpResponse<Blob>> {
+    return this.http.post(`${this.apiUrl}/system/support-bundle`, {}, {
+      responseType: 'blob',
+      observe: 'response',
+    });
   }
 
   exportHistory(): Observable<Blob> {

@@ -25,6 +25,42 @@ describe('SystemService', () => {
     expect(service).toBeTruthy();
   });
 
+  describe('support prompt', () => {
+    it('GETs /system/support-prompt and returns the status', (done) => {
+      service.getSupportPromptStatus().subscribe(data => {
+        expect(data.should_show).toBe(true);
+        expect(data.completed_rips).toBe(7);
+        done();
+      });
+      httpMock.expectOne(`${apiUrl}/system/support-prompt`).flush({
+        should_show: true,
+        completed_rips: 7,
+        dismissed_forever: false,
+      });
+    });
+
+    it('POSTs forever=true when silencing permanently', (done) => {
+      service.dismissSupportPrompt(true).subscribe(data => {
+        expect(data.dismissed_forever).toBe(true);
+        done();
+      });
+      const req = httpMock.expectOne(`${apiUrl}/system/support-prompt/dismiss`);
+      expect(req.request.method).toBe('POST');
+      expect(req.request.body).toEqual({ forever: true });
+      req.flush({ should_show: false, completed_rips: 7, dismissed_forever: true });
+    });
+
+    it('POSTs forever=false when snoozing', (done) => {
+      service.dismissSupportPrompt(false).subscribe(data => {
+        expect(data.should_show).toBe(false);
+        done();
+      });
+      const req = httpMock.expectOne(`${apiUrl}/system/support-prompt/dismiss`);
+      expect(req.request.body).toEqual({ forever: false });
+      req.flush({ should_show: false, completed_rips: 7, dismissed_forever: false });
+    });
+  });
+
   describe('getRsyncConfig', () => {
     it('GETs /system/transfer/rsync/config and returns RsyncConfigResponse', (done) => {
       const res = { config: null, hasKey: false };

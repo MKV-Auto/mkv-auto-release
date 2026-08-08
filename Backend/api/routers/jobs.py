@@ -358,30 +358,12 @@ def _download_cover(url: str, base_dir: Path, filename: str) -> str | None:
         return None
 
 
-def _validate_all_titles_labeled(disc, db: Session) -> tuple[bool, list[str]]:
-    """
-    Validate that all titles for a disc are labeled according to their type.
-    Returns (is_valid, unlabeled_title_ids).
-    
-    Validation rules:
-    - If type is null: validation fails — except for a sole ``active=True`` primary in a
-      multi-member segment_map group whose other members are all ``type='ignore'``; that
-      row is accepted because ``core.duplicate_group_sync.apply_primary_duplicate_row``
-      will/did fill its type with ``'ignore'`` from sibling consensus. This handles
-      pre-fix discs where sync demoted secondaries but never set the primary's type.
-    - If type == "ignore": no fields required
-    - If type == "episode": requires season, episode, and title (name) to be non-empty
-    - If type is anything else: requires title (name) to be non-empty
+def _title_duplicate_group_predicates(all_titles: list):
+    """Build the duplicate-segment_map predicates shared by the title validators.
 
-    When a duplicate segment_map group has exactly one ``active=True`` primary, other
-    members are skipped: the Ripper UI only validates the primary (``areLabelTitlesComplete``),
-    and rows may still carry stale types or cleared names from ``sync_duplicate_group_labels``.
+    Returns ``(is_non_primary_duplicate_member, is_sole_active_primary_with_all_ignore_siblings)``.
     """
     from core.duplicate_info import _normalize_segment_map
-
-    all_titles = db.query(db_models.DiscTitle).filter(
-        db_models.DiscTitle.disc_id == disc.id
-    ).all()
 
     by_seg: dict[str, list] = {}
     for t in all_titles:
@@ -416,6 +398,116 @@ def _validate_all_titles_labeled(disc, db: Session) -> tuple[bool, list[str]]:
         return bool(siblings) and all(
             (m.type or "").strip().lower() == "ignore" for m in siblings
         )
+
+    return _is_non_primary_duplicate_member, _is_sole_active_primary_with_all_ignore_siblings
+
+
+def _find_ambiguous_titles(disc, db: Session) -> list[str]:
+    """IDs of titles that would collide with another title's output filename (#318).
+
+    Two titles sharing a name are fine as long as something in the generated filename
+    tells them apart. The identity below must therefore track every field that
+    ``core.disc.compute_expected_path`` folds into the name — including ``part`` and
+    ``episode_end`` (#796), which produce ``- part1``/``- part2`` and the ``s03e01-e02``
+    range form. Omitting them rejected correctly-labelled multi-part episodes as
+    duplicates.
+    """
+    all_titles = db.query(db_models.DiscTitle).filter(
+        db_models.DiscTitle.disc_id == disc.id
+    ).all()
+    is_non_primary, _ = _title_duplicate_group_predicates(all_titles)
+
+    non_ignore = [
+        t
+        for t in all_titles
+        if t.type and t.type.lower() != "ignore" and not is_non_primary(t)
+    ]
+    name_groups: dict[str, list] = {}
+    for t in non_ignore:
+        key = (t.title or "").strip().lower()
+        if key:
+            name_groups.setdefault(key, []).append(t)
+    ambiguous: list[str] = []
+    for name_key, titles_group in name_groups.items():
+        if len(titles_group) < 2:
+            continue
+        # Check each pair within the group for distinguishability
+        seen_identity: set[tuple] = set()
+        for t in titles_group:
+            identity = (
+                (t.edition or "").strip().lower(),
+                t.season,
+                t.episode,
+                (t.type or "").strip().lower(),
+                t.part,
+                t.episode_end,
+            )
+            if identity in seen_identity:
+                ambiguous.append(str(t.id))
+            else:
+                seen_identity.add(identity)
+    return ambiguous
+
+
+def _title_ids_detail(ids: list[str]) -> str:
+    """``id, id, id (and N more)`` — caps the list so the message stays readable."""
+    shown = ", ".join(ids[:10])
+    return shown + (f" (and {len(ids) - 10} more)" if len(ids) > 10 else "")
+
+
+def _reject_if_titles_invalid(disc, db: Session) -> None:
+    """Raise 400 if the disc's titles can't be finalised, wording the cause accurately.
+
+    Unlabeled and ambiguous are separate problems needing separate fixes: one wants a
+    field filled in, the other wants two titles told apart. Reporting both as "not
+    properly labeled" sends users looking for a blank field that isn't there.
+    """
+    unlabeled = _find_unlabeled_titles(disc, db)
+    if unlabeled:
+        raise HTTPException(
+            400,
+            detail=(
+                f"Cannot complete labeling: {len(unlabeled)} title(s) are not properly "
+                f"labeled. Unlabeled title IDs: {_title_ids_detail(unlabeled)}"
+            ),
+        )
+
+    ambiguous = _find_ambiguous_titles(disc, db)
+    if ambiguous:
+        raise HTTPException(
+            400,
+            detail=(
+                f"Cannot complete labeling: {len(ambiguous)} title(s) share a name with "
+                f"another title and would produce the same filename. Give them a different "
+                f"name, edition, episode, or part. Conflicting title IDs: "
+                f"{_title_ids_detail(ambiguous)}"
+            ),
+        )
+
+
+def _find_unlabeled_titles(disc, db: Session) -> list[str]:
+    """IDs of titles that are not labeled according to their type.
+
+    Validation rules:
+    - If type is null: validation fails — except for a sole ``active=True`` primary in a
+      multi-member segment_map group whose other members are all ``type='ignore'``; that
+      row is accepted because ``core.duplicate_group_sync.apply_primary_duplicate_row``
+      will/did fill its type with ``'ignore'`` from sibling consensus. This handles
+      pre-fix discs where sync demoted secondaries but never set the primary's type.
+    - If type == "ignore": no fields required
+    - If type == "episode": requires season, episode, and title (name) to be non-empty
+    - If type is anything else: requires title (name) to be non-empty
+
+    When a duplicate segment_map group has exactly one ``active=True`` primary, other
+    members are skipped: the Ripper UI only validates the primary (``areLabelTitlesComplete``),
+    and rows may still carry stale types or cleared names from ``sync_duplicate_group_labels``.
+    """
+    all_titles = db.query(db_models.DiscTitle).filter(
+        db_models.DiscTitle.disc_id == disc.id
+    ).all()
+    _is_non_primary_duplicate_member, _is_sole_active_primary_with_all_ignore_siblings = (
+        _title_duplicate_group_predicates(all_titles)
+    )
 
     unlabeled = []
     for title in all_titles:
@@ -453,39 +545,24 @@ def _validate_all_titles_labeled(disc, db: Session) -> tuple[bool, list[str]]:
         has_name = bool(title.title and title.title.strip())
         if not has_name:
             unlabeled.append(str(title.id))
-    
+
+    return unlabeled
+
+
+def _validate_all_titles_labeled(disc, db: Session) -> tuple[bool, list[str]]:
+    """
+    Validate that all titles for a disc are labeled and unambiguous.
+    Returns (is_valid, offending_title_ids).
+
+    Prefer :func:`_reject_if_titles_invalid` when the caller reports the failure to a
+    user — the two conditions need different wording, and calling an ambiguous title
+    "not labeled" sends people hunting for a blank field that isn't there.
+    """
+    unlabeled = _find_unlabeled_titles(disc, db)
     if unlabeled:
         return False, unlabeled
 
-    # #318: Validate that titles with identical names are distinguishable by at least
-    # one of: edition, season, episode, or type. Prevents ambiguous output filenames.
-    non_ignore = [
-        t
-        for t in all_titles
-        if t.type and t.type.lower() != "ignore" and not _is_non_primary_duplicate_member(t)
-    ]
-    name_groups: dict[str, list] = {}
-    for t in non_ignore:
-        key = (t.title or "").strip().lower()
-        if key:
-            name_groups.setdefault(key, []).append(t)
-    ambiguous: list[str] = []
-    for name_key, titles_group in name_groups.items():
-        if len(titles_group) < 2:
-            continue
-        # Check each pair within the group for distinguishability
-        seen_identity: set[tuple] = set()
-        for t in titles_group:
-            identity = (
-                (t.edition or "").strip().lower(),
-                t.season,
-                t.episode,
-                (t.type or "").strip().lower(),
-            )
-            if identity in seen_identity:
-                ambiguous.append(str(t.id))
-            else:
-                seen_identity.add(identity)
+    ambiguous = _find_ambiguous_titles(disc, db)
     if ambiguous:
         return False, ambiguous
 
@@ -5441,12 +5518,7 @@ def save_label(job_id: str, label: LabelRequest, db: Session = Depends(get_db)):
         log.warning("save_label sync_duplicate_group_labels_for_disc failed disc_id=%s: %s", disc.id, exc)
 
     # Validate that all titles are properly labeled before marking as completed
-    is_valid, unlabeled_title_ids = _validate_all_titles_labeled(disc, db)
-    if not is_valid:
-        raise HTTPException(
-            400,
-            detail=f"Cannot complete labeling: {len(unlabeled_title_ids)} title(s) are not properly labeled. Unlabeled title IDs: {', '.join(unlabeled_title_ids[:10])}" + (f" (and {len(unlabeled_title_ids) - 10} more)" if len(unlabeled_title_ids) > 10 else "")
-        )
+    _reject_if_titles_invalid(disc, db)
     
     payload = job.disc_payload or {}
     payload["label_ready"] = True
@@ -5564,12 +5636,7 @@ def complete_label(
     except Exception as exc:
         log.warning("complete_label sync_duplicate_group_labels_for_disc failed disc_id=%s: %s", disc.id, exc)
 
-    is_valid, unlabeled_title_ids = _validate_all_titles_labeled(disc, db)
-    if not is_valid:
-        raise HTTPException(
-            400,
-            detail=f"Cannot complete labeling: {len(unlabeled_title_ids)} title(s) are not properly labeled. Unlabeled title IDs: {', '.join(unlabeled_title_ids[:10])}" + (f" (and {len(unlabeled_title_ids) - 10} more)" if len(unlabeled_title_ids) > 10 else "")
-        )
+    _reject_if_titles_invalid(disc, db)
 
     payload = job.disc_payload or {}
     payload["label_ready"] = True

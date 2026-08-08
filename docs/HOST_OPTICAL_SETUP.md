@@ -170,25 +170,38 @@ Everything above is about a disc that **ejects and gets pulled back in**. This
 section is a different failure: the drive never appears, and scanning a disc
 reports that it could not be found.
 
-### Start here: run the triage script
+### Start here
 
-`scripts/mkv-support-bundle.sh` diagnoses this automatically and prints what to
-do. It works from the Docker **host** or from **inside the container**, works
-out which on its own, and changes nothing:
+**From the web UI:** Settings → Help → Diagnostics → **Download support bundle**.
+That collects everything reachable from inside the container and hands you a
+file you can attach to a bug report. It is the fastest route and needs no shell.
+
+**From a shell**, `scripts/mkv-support-bundle.sh` does the same and prints a
+diagnosis. It runs on the Docker **host** or **inside the container**, works out
+which on its own, and changes nothing:
 
 ```bash
 ./scripts/mkv-support-bundle.sh                 # print a diagnosis
 ./scripts/mkv-support-bundle.sh --bundle        # also write a .tar.gz for support
 ```
 
-Inside the container, write the bundle somewhere you can reach:
+You do not need to clone anything to get it — it ships inside the image, so
+copy the copy that matches the version you are running:
 
 ```bash
-docker exec mkv-auto /app/scripts/mkv-support-bundle.sh --bundle /data
+docker cp mkv-auto:/app/scripts/mkv-support-bundle.sh .
 ```
 
-Prefer running it on the host when you can — only there can it see the Docker
-engine's own configuration, which is one of the possible causes. The rest of
+Inside the container it writes to `/data` by default, which is the mounted
+volume and the one directory you can reach from the host:
+
+```bash
+docker exec mkv-auto /app/scripts/mkv-support-bundle.sh --bundle
+```
+
+**Prefer the host when you can.** Only there can it see how Docker itself is
+configured — a snap-packaged, rootless or Docker Desktop engine cannot pass
+optical drives through at all, and that is invisible from inside. The rest of
 this section explains what it is checking and why.
 
 ### The one fact that explains it

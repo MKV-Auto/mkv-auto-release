@@ -51,6 +51,13 @@ export class ShellComponent implements OnInit, OnDestroy {
   devMenuOpen = false;
   /** When true, notification panel dropdown is visible. */
   notifPanelOpen = false;
+  /** Backend says this install has earned the support prompt (enough completed
+   * rips, not dismissed or snoozed). Eligibility lives server-side so a
+   * dismissal carries across every browser and device on this install. */
+  private supportPromptEligible = false;
+  /** True while a job is mid-flight; suppresses the prompt so it never lands
+   * on someone watching a rip. */
+  private jobInFlight = false;
   /** When true, Setup wizard modal is open. */
   setupModalOpen = false;
   /** Configuration for setup modal (e.g. target step, close on complete) */
@@ -105,6 +112,14 @@ export class ShellComponent implements OnInit, OnDestroy {
         error: () => {},
       })
     );
+    this.refreshSupportPrompt();
+    this.subs.add(
+      this.workflowService.getJobStatus$().subscribe((status) => {
+        const state = status?.job_status;
+        this.jobInFlight = !!state && state !== 'completed' && state !== 'failed';
+      })
+    );
+
     this.subs.add(
       this.router.events.pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd)).subscribe(() => {
         this.updateHistoryRoute(this.router.url);
@@ -287,6 +302,7 @@ export class ShellComponent implements OnInit, OnDestroy {
     if (this.notifPanelOpen) {
       this.notifHistory.markAllRead();
       this.browserNotif.refreshPromptVisibility();
+      this.refreshSupportPrompt();
     }
   }
 
@@ -298,6 +314,36 @@ export class ShellComponent implements OnInit, OnDestroy {
   onDismissOsNotifPrompt(event: Event): void {
     event.stopPropagation();
     this.browserNotif.dismissOsNotifPrompt();
+  }
+
+  /** Show the support prompt only once the backend says this install has
+   * earned it and no job is mid-flight. */
+  get supportPromptVisible(): boolean {
+    return this.supportPromptEligible && !this.jobInFlight;
+  }
+
+  /** "Maybe later" snoozes; "Don't show again" silences permanently. Both hide
+   * it immediately rather than waiting on the response — the user has answered,
+   * and a slow request shouldn't leave the prompt sitting there. */
+  onDismissSupportPrompt(event: Event, forever: boolean): void {
+    event.stopPropagation();
+    this.supportPromptEligible = false;
+    this.subs.add(
+      this.systemSvc.dismissSupportPrompt(forever).subscribe({ error: () => {} })
+    );
+  }
+
+  private refreshSupportPrompt(): void {
+    this.subs.add(
+      this.systemSvc.getSupportPromptStatus().subscribe({
+        next: (s) => {
+          this.supportPromptEligible = !!s?.should_show;
+        },
+        error: () => {
+          this.supportPromptEligible = false;
+        },
+      })
+    );
   }
 
   closeNotifPanel(): void {

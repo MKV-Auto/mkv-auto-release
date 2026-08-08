@@ -411,6 +411,20 @@ class MediaServerSettings(BaseModel):
     media_server: Literal["plex", "jellyfin"] = "plex"
 
 
+class SupportPromptStatus(BaseModel):
+    """Whether the bell-panel "support the project" prompt should be shown."""
+
+    should_show: bool = False
+    completed_rips: int = 0
+    dismissed_forever: bool = False
+
+
+class SupportPromptDismissRequest(BaseModel):
+    """``forever`` silences the prompt for good; otherwise it snoozes."""
+
+    forever: bool = False
+
+
 class DiscDbLookupSettings(BaseModel):
     """Copy settings: DiscDB prefill toggle and eject-on-finish toggle."""
 

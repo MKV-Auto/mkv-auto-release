@@ -28,6 +28,8 @@ from api.schemas import (
     DiscordSettings,
     MediaServerSettings,
     DiscDbLookupSettings,
+    SupportPromptStatus,
+    SupportPromptDismissRequest,
     TmdbConfigRequest,
     TmdbConfigResponse,
     TransferConfigCreate,
@@ -73,8 +75,13 @@ from core.transfer import monitoring as transfer_health
 from core import path_templates
 from api.database import get_db
 from api import export_import
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from fastapi import Depends
+from starlette.background import BackgroundTask
+
+from api import models as db_models
+from api.models import Job
 from typing import List, Optional
 from datetime import datetime, timedelta
 from pydantic import BaseModel
@@ -1169,6 +1176,46 @@ async def save_media_server_config(payload: MediaServerSettings) -> MediaServerS
     return MediaServerSettings(media_server=settings.get_media_server())
 
 
+@router.get("/support-prompt", response_model=SupportPromptStatus)
+async def get_support_prompt_status(db: Session = Depends(get_db)) -> SupportPromptStatus:
+    """Whether to show the "support the project" prompt in the bell panel.
+
+    Gated on delivered value rather than elapsed time: the prompt only appears
+    once the install has actually completed rips, so it never lands on someone
+    still fighting to get their first disc through.
+    """
+    state = settings.get_support_prompt_dict()
+    completed_rips = (
+        db.query(func.count(Job.id)).filter(Job.rip_state == "completed").scalar() or 0
+    )
+    should_show = (
+        not settings.support_prompt_is_suppressed()
+        and completed_rips >= settings.SUPPORT_PROMPT_MIN_RIPS
+    )
+    return SupportPromptStatus(
+        should_show=should_show,
+        completed_rips=int(completed_rips),
+        dismissed_forever=state["dismissed_forever"],
+    )
+
+
+@router.post("/support-prompt/dismiss", response_model=SupportPromptStatus)
+async def dismiss_support_prompt(
+    payload: SupportPromptDismissRequest,
+    db: Session = Depends(get_db),
+) -> SupportPromptStatus:
+    """Record a dismissal. Always returns should_show=False."""
+    state = settings.record_support_prompt_dismissal(forever=payload.forever)
+    completed_rips = (
+        db.query(func.count(Job.id)).filter(Job.rip_state == "completed").scalar() or 0
+    )
+    return SupportPromptStatus(
+        should_show=False,
+        completed_rips=int(completed_rips),
+        dismissed_forever=state["dismissed_forever"],
+    )
+
+
 @router.get("/discdb-lookup/config", response_model=DiscDbLookupSettings)
 async def get_discdb_lookup_config() -> DiscDbLookupSettings:
     """Copy settings: DiscDB prefill toggle + eject on finish."""
@@ -1585,3 +1632,147 @@ async def frontend_log(req: FrontendLogRequest):
     except Exception as exc:
         log.warning("Failed to write frontend log: %s", exc)
         return {"status": "error", "message": str(exc)}
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Support bundle (#804)
+# ──────────────────────────────────────────────────────────────────────
+
+# Overridable so a dev checkout (where /app does not exist) and the tests can
+# point at the repo copy. The default is the path inside the image.
+SUPPORT_BUNDLE_SCRIPT = Path(
+    os.getenv("MKVAUTO_SUPPORT_BUNDLE_SCRIPT", "/app/scripts/mkv-support-bundle.sh")
+)
+# Generous: the script shells out to several probes. Well under the point
+# where a browser would give up, and the makemkvcon probe (the only slow
+# part) is skipped whenever a rip is in flight.
+SUPPORT_BUNDLE_TIMEOUT_SECONDS = 180
+
+
+def _rip_in_flight(db: Session) -> bool:
+    """True when any job holds or is waiting on a drive.
+
+    The bundle's ``makemkvcon info disc:9999`` probe takes MakeMKV's drive
+    lock, so collection is refused while this is True (#545, #547) rather
+    than producing a bundle missing its most useful section.
+    """
+    return (
+        db.query(db_models.Job)
+        .filter(db_models.Job.rip_state.in_(["pending", "running"]))
+        .first()
+        is not None
+    )
+
+
+@router.get("/support-bundle/availability")
+async def support_bundle_availability(db: Session = Depends(get_db)):
+    """Can a bundle be collected right now?
+
+    Lets the UI disable the button up front with a reason, instead of the user
+    clicking and getting a 409 back. The POST enforces this too — this is a
+    courtesy for the client, not the guard.
+    """
+    if _rip_in_flight(db):
+        return {
+            "available": False,
+            "reason": "rip_in_progress",
+            "message": (
+                "A rip is in progress. Collecting drive information would "
+                "interrupt it — try again once the rip finishes."
+            ),
+        }
+    if not SUPPORT_BUNDLE_SCRIPT.is_file():
+        return {
+            "available": False,
+            "reason": "script_missing",
+            "message": (
+                "The collection script is not present in this image. Run "
+                "scripts/mkv-support-bundle.sh on the Docker host instead."
+            ),
+        }
+    return {"available": True, "reason": None, "message": None}
+
+
+@router.post("/support-bundle")
+async def create_support_bundle(db: Session = Depends(get_db)):
+    """Generate a redacted diagnostic bundle and return it as a download.
+
+    Runs the same ``scripts/mkv-support-bundle.sh`` a user would run by hand,
+    so there is one implementation of the diagnosis rather than a shell one
+    and a Python one that drift apart. Collected from inside the container,
+    which reaches almost everything: ``/proc/modules``, ``/sys/block`` and
+    ``/sys/class/scsi_generic`` are the *host's* even in here, because a
+    container shares the host kernel. What it cannot see is the Docker
+    engine's own configuration — for that the user runs the script on the
+    host, and the response header below says so.
+    """
+    if not SUPPORT_BUNDLE_SCRIPT.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Support bundle script is not present in this image. Run "
+                "scripts/mkv-support-bundle.sh on the Docker host instead."
+            ),
+        )
+
+    # Refuse rather than quietly degrade. The drive enumeration is the single
+    # most useful field in the bundle, and collecting it takes MakeMKV's drive
+    # lock — which would stall an in-flight rip (#545, #547). Returning a
+    # bundle that silently omits the one thing the user is usually trying to
+    # diagnose is worse than telling them to come back in a few minutes.
+    if _rip_in_flight(db):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A rip is in progress. Collecting drive information would "
+                "interrupt it, and a bundle without that information is not "
+                "much use. Try again once the rip finishes."
+            ),
+        )
+
+    workdir = tempfile.mkdtemp(prefix="support-bundle-")
+    cmd = ["bash", str(SUPPORT_BUNDLE_SCRIPT), "--bundle", workdir]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(), timeout=SUPPORT_BUNDLE_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            shutil.rmtree(workdir, ignore_errors=True)
+            raise HTTPException(
+                status_code=504,
+                detail=f"Bundle collection timed out after {SUPPORT_BUNDLE_TIMEOUT_SECONDS}s",
+            )
+
+        archives = sorted(Path(workdir).glob("mkv-auto-support-*.tar.gz"))
+        if proc.returncode != 0 or not archives:
+            shutil.rmtree(workdir, ignore_errors=True)
+            tail = (stdout or b"").decode("utf-8", "replace")[-2000:]
+            log.error("Support bundle failed (rc=%s): %s", proc.returncode, tail)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Bundle collection failed (exit {proc.returncode}). {tail}",
+            )
+
+        archive = archives[-1]
+        # Deleted after the response is sent; FileResponse streams from disk,
+        # so removing it any earlier would truncate the download.
+        return FileResponse(
+            path=str(archive),
+            media_type="application/gzip",
+            filename=archive.name,
+            headers={"X-Support-Bundle-Scope": "container"},
+            background=BackgroundTask(shutil.rmtree, workdir, ignore_errors=True),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        shutil.rmtree(workdir, ignore_errors=True)
+        log.exception("Support bundle generation failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

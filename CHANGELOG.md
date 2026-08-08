@@ -12,6 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-08
+
+### Added
+
+- **A "Download support bundle" button under Settings → Help.** If a disc or drive isn't behaving, this collects the logs and everything about how your drives are wired into one file you can attach to a bug report — instead of us asking you to run a series of commands and paste the output back. Passwords and API keys are stripped before the file is written, and it's a plain `.tar.gz` you can open and check first. It also prints what it found: most drive problems have a specific cause, and the bundle names it. The button is unavailable while a rip is running, because collecting drive information would interrupt the rip — come back once it finishes. Reading how Docker itself is set up isn't possible from inside the container, so for those cases there's a script you can run on the host, and the page tells you how to get it.
+
+- **A "Buy me a beer" link in the header.** MKV-Auto stays free and always will be — this is just a way to chip in if it's saved you some time. It sits with the existing Website / GitHub / TheDiscDB links, and in the menu on mobile.
+
+- **A one-off support note in the notifications panel, after five successful rips.** It only ever appears once the app has actually got five discs through for you, never while a job is running, and it waits behind the bell rather than interrupting. "Don't show again" means exactly that, and three "maybe later"s are taken as a no. The choice is stored on the server, so dismissing it on your desktop also dismisses it on your phone.
+
+### Fixed
+
+- **A multi-part episode no longer blocks you from finishing a disc.** When a disc splits one episode across two playlists and you labelled both as the same episode with Part 1 and Part 2, finishing the disc failed and claimed a title wasn't labelled properly — even though the list showed everything filled in. The check that guards against two titles producing the same filename wasn't looking at the part number, so it treated the two halves as the same file. It now accounts for both the part number and the episode range.
+
+- **The "not properly labeled" error now tells you which problem you actually have.** Two different failures shared one message: a title genuinely missing a field, and two titles that would write to the same filename. The second now says so and suggests what to change, instead of sending you looking for a blank box that isn't there.
+
 ## [1.4.0] - 2026-08-07
 
 ### Fixed
