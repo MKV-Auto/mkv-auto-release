@@ -1500,8 +1500,13 @@ export class RipperPageComponent implements OnInit, OnDestroy {
     if (context?.labelForm) {
       this.saveLabelDraft();
     }
-    // Prevent duplicate submissions
-    const isRipping = context?.jobStatus?.job_status === 'running' || context?.jobStatus?.job_status === 'pending' || false;
+    // Prevent duplicate submissions. `job_status` alone isn't enough: it stays
+    // 'running' through labeling and transfer, so a job parked awaiting labels
+    // would make this refuse to start a new rip. Same guard the CTA logic uses.
+    const jobStatus = context?.jobStatus;
+    const isRipping =
+      (jobStatus?.job_status === 'running' || jobStatus?.job_status === 'pending') &&
+      jobStatus?.rip_state !== 'completed';
     if (isRipping) {
       this.logger.warn('[Ripper] startRip called while already ripping, ignoring duplicate request');
       return;

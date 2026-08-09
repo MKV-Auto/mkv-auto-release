@@ -25,6 +25,33 @@ _EXTRAS_SUBFOLDERS: dict[str, tuple[str, str]] = {
 }
 
 
+# Plex's episode-level extras use a filename suffix, not a folder:
+#   <episode filename>-<Descriptive Name>-<suffix>.ext
+# The suffix vocabulary is Plex's, and smaller than the folder set — types
+# without a dedicated suffix fall back to "other". Jellyfin has no
+# episode-level extras at all; its callers never reach this map.
+_PLEX_EPISODE_EXTRA_SUFFIXES: dict[str, str] = {
+    "BehindTheScenes": "behindthescenes",
+    "DeletedScene": "deleted",
+    "Featurette": "featurette",
+    "Interview": "interview",
+    "Scene": "scene",
+    "Short": "short",
+    "Trailer": "trailer",
+}
+
+
+def plex_episode_extra_suffix_for_type(canonical_type: str | None) -> str | None:
+    """Plex filename suffix for an episode-level extra, or None for non-extras.
+
+    Returns None exactly when :func:`extras_subfolder_for_type` would — main
+    content and ignored rows are not extras and get no suffix.
+    """
+    if extras_subfolder_for_type(canonical_type, "plex") is None:
+        return None
+    return _PLEX_EPISODE_EXTRA_SUFFIXES.get(str(canonical_type).strip(), "other")
+
+
 def extras_subfolder_for_type(canonical_type: str | None, media_server: str) -> str | None:
     """Return the extras subfolder for this title type, or None for main content rows.
 

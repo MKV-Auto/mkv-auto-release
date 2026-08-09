@@ -475,4 +475,55 @@
     line-height: 1.5;
     color: rgba(255, 255, 255, 0.65);
   }
+
+  /* Belongs to — extras scope group. One bordered container so season +
+     episode read as a single decision rather than loose boxes. */
+  &__scope {
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 10px;
+    padding: 12px 13px 11px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  &__scope-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  &__scope-label {
+    margin-bottom: 0;
+  }
+
+  &__scope-auto {
+    font-size: 9px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: #6ee7b7;
+    background: rgba(16, 185, 129, 0.12);
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+
+  &__scope-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+
+    @media (max-width: 640px) {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  &__scope-none {
+    color: rgba(255, 255, 255, 0.25);
+    border-style: dashed;
+    text-align: center;
+  }
+
+  &__scope-note {
+    margin-top: 8px;
+  }
 }

@@ -4382,12 +4382,37 @@ def rename_disc_titles(
     if active_job:
         raise HTTPException(409, detail="Cannot rename — transfer is in progress")
 
+    # Episode titles by (season, episode): a Plex episode-level extra's
+    # filename must begin with its episode's filename, so compute_expected_path
+    # needs the sibling Episode row's title (episode_ref_name).
+    episode_name_by_se: dict[tuple[int, int], str] = {}
+    for t in disc.titles:
+        if (_normalize_title_type(t.type) or "").lower() != "episode":
+            continue
+        if t.season is None or t.episode is None or not t.title:
+            continue
+        try:
+            episode_name_by_se[(int(t.season), int(t.episode))] = t.title
+        except (TypeError, ValueError):
+            continue
+
     results: list[dict] = []
     for title in disc.titles:
         if not title.file_path:
             continue
         if title.type and title.type.strip().lower() == "ignore":
             continue
+
+        episode_ref_name = None
+        if (
+            (_normalize_title_type(title.type) or "").lower() not in ("episode", "mainmovie", "")
+            and title.season is not None
+            and title.episode is not None
+        ):
+            try:
+                episode_ref_name = episode_name_by_se.get((int(title.season), int(title.episode)))
+            except (TypeError, ValueError):
+                episode_ref_name = None
 
         title_meta = {
             "title": title.title,
@@ -4396,6 +4421,7 @@ def rename_disc_titles(
             "episode": title.episode,
             "edition": title.edition,
             "description": title.description,
+            "episode_ref_name": episode_ref_name,
         }
         release_meta = {"release_type": release_type, "release_name": release_name}
         movie_meta = {"movie_name": movie_name, "production_year": production_year}

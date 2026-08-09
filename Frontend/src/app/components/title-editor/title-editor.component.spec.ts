@@ -411,8 +411,259 @@ describe('TitleEditorComponent', () => {
       expect(root.querySelector('select[aria-label="TMDB episode picker"]')).toBeNull();
       const labels = Array.from(root.querySelectorAll('label')).map((l) => (l.textContent || '').trim());
       expect(labels).toContain('Title name');
-      expect(labels).not.toContain('Season');
       expect(labels).not.toContain('Episode');
+      // Season IS offered on an extra — it scopes the extra to one season's
+      // folder rather than the show root. What #798 was about is the episode
+      // machinery above: no TMDB picker, no Episode number.
+      expect(root.querySelector('[aria-label="Season this extra belongs to"]')).not.toBeNull();
+    });
+  });
+
+  describe('season-scoped extras', () => {
+    const extra = (over: Record<string, unknown> = {}) =>
+      makeTitle({ type: 'Featurette', season: null, ...over });
+
+    const render = async (title: any, isSeries = true) => {
+      fixture.componentRef.setInput('title', title);
+      fixture.componentRef.setInput('isSeries', isSeries);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      return fixture.nativeElement as HTMLElement;
+    };
+
+    const seasonInput = (root: HTMLElement) =>
+      root.querySelector('[aria-label="Season this extra belongs to"]') as HTMLElement | null;
+
+    it('offers a season control on a series extra', async () => {
+      expect(seasonInput(await render(extra()))).not.toBeNull();
+    });
+
+    it('uses a dropdown of seasons when TMDB knows the count', async () => {
+      (fixture.componentInstance as any).tvSeasonCount = 4;
+      const control = seasonInput(await render(extra()));
+      expect(control?.tagName).toBe('SELECT');
+      const options = Array.from((control as HTMLSelectElement).options).map((o) => o.textContent?.trim());
+      expect(options).toEqual(['Whole series', 'Season 1', 'Season 2', 'Season 3', 'Season 4']);
+    });
+
+    it('falls back to manual entry when the season count is unknown', async () => {
+      (fixture.componentInstance as any).tvSeasonCount = null;
+      const control = seasonInput(await render(extra()));
+      expect(control?.tagName).toBe('INPUT');
+      expect((control as HTMLInputElement).placeholder).toBe('Whole series');
+    });
+
+    /** Put a set of titles on the active workflow context. */
+    const seedDiscTitles = (titles: any[]) => {
+      const workflow = TestBed.inject(WorkflowService) as any;
+      workflow._activeContext$.next({ ...(workflow._activeContext$.value || {}), titles });
+      const cmp = fixture.componentInstance as any;
+      cmp._seasonScanKey = null; // drop the memo so the new titles are scanned
+    };
+
+    it('reads one season off a single-season disc', () => {
+      seedDiscTitles([
+        { type: 'Episode', season: 3, episode: 1 },
+        { type: 'Episode', season: 3, episode: 2 },
+        { type: 'Featurette', season: 3 },
+      ]);
+      const cmp = fixture.componentInstance as any;
+      expect(cmp.discSeasons).toEqual([3]);
+      expect(cmp.discIsSingleSeason).toBeTrue();
+      expect(cmp.impliedExtraSeason).toBe(3);
+    });
+
+    it('spots a disc whose titles span seasons', () => {
+      // The Game of Thrones CE bonus disc: extras tagged across seasons, no episodes.
+      seedDiscTitles([
+        { type: 'Extra', season: 4 },
+        { type: 'Extra', season: 5 },
+        { type: 'DeletedScene', season: 7 },
+      ]);
+      const cmp = fixture.componentInstance as any;
+      expect(cmp.discSeasons).toEqual([4, 5, 7]);
+      expect(cmp.discIsSingleSeason).toBeFalse();
+      expect(cmp.impliedExtraSeason).toBeNull();
+    });
+
+    it('ignores ignored rows and blank seasons when deciding', () => {
+      seedDiscTitles([
+        { type: 'Episode', season: 2 },
+        { type: 'ignore', season: 9 },
+        { type: 'Featurette', season: null },
+        { type: '', season: 8 },
+      ]);
+      expect((fixture.componentInstance as any).discSeasons).toEqual([2]);
+    });
+
+    it('treats an unlabelled disc as ambiguous rather than guessing', () => {
+      seedDiscTitles([{ type: 'ignore', season: null }]);
+      const cmp = fixture.componentInstance as any;
+      expect(cmp.discIsSingleSeason).toBeFalse();
+      expect(cmp.impliedExtraSeason).toBeNull();
+    });
+
+    it('keeps the control visible on a single-season disc, marked as auto', async () => {
+      // The control used to be replaced by a statement here; with episode
+      // scoping it must stay reachable — narrowing to an episode is always a
+      // valid next step. The auto tag says the season came from the disc.
+      seedDiscTitles([{ type: 'Episode', season: 3, episode: 1 }]);
+      const root = await render(extra({ season: 3 }));
+      expect(seasonInput(root)).not.toBeNull();
+      expect(root.querySelector('.title-editor__scope-auto')).not.toBeNull();
+    });
+
+    it('asks per extra when the disc spans seasons — no auto tag', async () => {
+      seedDiscTitles([{ type: 'Extra', season: 4 }, { type: 'Extra', season: 6 }]);
+      const root = await render(extra({ season: 4 }));
+      expect(seasonInput(root)).not.toBeNull();
+      expect(root.querySelector('.title-editor__scope-auto')).toBeNull();
+    });
+
+    it('dims the episode slot until a season is chosen', async () => {
+      const root = await render(extra({ season: null }));
+      expect(root.querySelector('.title-editor__scope-none')).not.toBeNull();
+      expect(root.querySelector('[aria-label="Episode this extra belongs to"]')).toBeNull();
+    });
+
+    it('changing the season clears a stale episode choice', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.title = extra({ season: 3, episode: 5 });
+      cmp.onExtraSeasonChange(4);
+      expect(cmp.title.season).toBe(4);
+      expect(cmp.title.episode).toBeNull();
+    });
+
+    it('re-picking the same season keeps the episode', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.title = extra({ season: 3, episode: 5 });
+      cmp.onExtraSeasonChange(3);
+      expect(cmp.title.episode).toBe(5);
+    });
+
+    it('onExtraEpisodeChange writes and clears the episode', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.title = extra({ season: 3 });
+      cmp.onExtraEpisodeChange(4);
+      expect(cmp.title.episode).toBe(4);
+      cmp.onExtraEpisodeChange('');
+      expect(cmp.title.episode).toBeNull();
+    });
+
+    it('defaults a new extra to the disc\'s single season', () => {
+      seedDiscTitles([{ type: 'Episode', season: 5, episode: 1 }]);
+      const cmp = fixture.componentInstance as any;
+      cmp.title = makeTitle({ type: '', season: null });
+      cmp.isSeries = true;
+      cmp.onTypeChange('Featurette');
+      expect(cmp.title.season).toBe(5);
+    });
+
+    it('does not guess a season on a disc that spans seasons', () => {
+      seedDiscTitles([{ type: 'Extra', season: 4 }, { type: 'Extra', season: 6 }]);
+      const cmp = fixture.componentInstance as any;
+      cmp.title = makeTitle({ type: '', season: null });
+      cmp.isSeries = true;
+      cmp.discPrimarySeason = 4; // must not be used as a fallback here
+      cmp.onTypeChange('Featurette');
+      expect(cmp.title.season).toBeNull();
+    });
+
+    it('previews the season folder for a season-scoped extra', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.isSeries = true;
+      cmp.mediaServer = 'plex';
+      cmp.title = makeTitle({ type: 'BehindTheScenes', title: 'Rebels Recon', season: 3 });
+      expect(cmp.getFilenamePreview()).toBe('Season 03/Behind The Scenes/Rebels Recon.mkv');
+      cmp.mediaServer = 'jellyfin';
+      expect(cmp.getFilenamePreview()).toBe('Season 03/behind the scenes/Rebels Recon.mkv');
+    });
+
+    it('previews the show-level folder when no season is set', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.isSeries = true;
+      cmp.mediaServer = 'plex';
+      cmp.title = makeTitle({ type: 'Featurette', title: 'Making Of', season: null });
+      expect(cmp.getFilenamePreview()).toBe('Featurettes/Making Of.mkv');
+    });
+
+    it('previews the Plex episode-attachment filename when a sibling episode exists', () => {
+      seedDiscTitles([{ type: 'Episode', season: 7, episode: 3, title: "The Queen's Justice" }]);
+      const cmp = fixture.componentInstance as any;
+      cmp.isSeries = true;
+      cmp.mediaServer = 'plex';
+      cmp.title = makeTitle({ type: 'DeletedScene', title: 'Winterfell', season: 7, episode: 3 });
+      expect(cmp.getFilenamePreview()).toBe(
+        "Season 07/… - s07e03 - The Queen's Justice-Winterfell-deleted.mkv");
+    });
+
+    it('previews the season folder on Jellyfin even with an episode chosen', () => {
+      seedDiscTitles([{ type: 'Episode', season: 7, episode: 3, title: "The Queen's Justice" }]);
+      const cmp = fixture.componentInstance as any;
+      cmp.isSeries = true;
+      cmp.mediaServer = 'jellyfin';
+      cmp.title = makeTitle({ type: 'DeletedScene', title: 'Winterfell', season: 7, episode: 3 });
+      expect(cmp.getFilenamePreview()).toBe('Season 07/deleted scenes/Winterfell.mkv');
+    });
+
+    it('falls back to the season folder when no sibling episode is on the disc', () => {
+      seedDiscTitles([]);
+      const cmp = fixture.componentInstance as any;
+      cmp.isSeries = true;
+      cmp.mediaServer = 'plex';
+      cmp.title = makeTitle({ type: 'DeletedScene', title: 'Winterfell', season: 7, episode: 3 });
+      expect(cmp.getFilenamePreview()).toBe('Season 07/Deleted Scenes/Winterfell.mkv');
+    });
+
+    it('builds season choices from the TMDB count', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.tvSeasonCount = 3;
+      expect(cmp.seasonChoices).toEqual([1, 2, 3]);
+      cmp.tvSeasonCount = null;
+      expect(cmp.seasonChoices).toEqual([]);
+      cmp.tvSeasonCount = 0;
+      expect(cmp.seasonChoices).toEqual([]);
+    });
+
+    it('does not offer one on a movie disc', async () => {
+      expect(seasonInput(await render(extra(), false))).toBeNull();
+    });
+
+    it('does not offer one on an episode or an ignored row', async () => {
+      expect(seasonInput(await render(makeTitle({ type: 'Episode', season: 3, episode: 1 })))).toBeNull();
+      expect(seasonInput(await render(makeTitle({ type: 'ignore' })))).toBeNull();
+    });
+
+    it('treats a blank season as whole-series', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.title = extra({ season: 3 });
+      cmp.onExtraSeasonChange('');
+      expect(cmp.title.season).toBeNull();
+      expect(cmp.extraSeason).toBeNull();
+    });
+
+    it('keeps a chosen season', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.title = extra();
+      cmp.onExtraSeasonChange(3);
+      expect(cmp.title.season).toBe(3);
+    });
+
+    it('never overwrites a season the user already set', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.title = makeTitle({ type: '', season: 1 });
+      cmp.isSeries = true;
+      cmp.onTypeChange('Featurette');
+      expect(cmp.title.season).toBe(1);
+    });
+
+    it('does not default a season on a movie disc', () => {
+      const cmp = fixture.componentInstance as any;
+      cmp.title = makeTitle({ type: '', season: null });
+      cmp.isSeries = false;
+      cmp.onTypeChange('Featurette');
+      expect(cmp.title.season).toBeNull();
     });
   });
 

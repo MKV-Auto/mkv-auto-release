@@ -82,6 +82,7 @@ eject button. **The disc should stay out** — if it gets pulled back in, see
 |---|---|
 | [Installation](INSTALLATION.md) | Full walkthrough — installing Docker, host setup, multi-drive, Unraid |
 | [Configuration](CONFIGURATION.md) | Environment variables, volumes, networking — including how to [skip the setup wizard](CONFIGURATION.md#unattended-setup-application-settings) by supplying your keys as variables |
+| [Extras](EXTRAS.md) | Where behind-the-scenes, featurettes and trailers land, and how to scope them to a season |
 | [Windows / macOS](VM_SETUP.md) | Running via a Linux VM |
 | [Troubleshooting](TROUBLESHOOTING.md) | When something does not work |
 | [Upgrading](UPGRADE.md) | Moving to a new version |

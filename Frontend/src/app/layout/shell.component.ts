@@ -55,9 +55,6 @@ export class ShellComponent implements OnInit, OnDestroy {
    * rips, not dismissed or snoozed). Eligibility lives server-side so a
    * dismissal carries across every browser and device on this install. */
   private supportPromptEligible = false;
-  /** True while a job is mid-flight; suppresses the prompt so it never lands
-   * on someone watching a rip. */
-  private jobInFlight = false;
   /** When true, Setup wizard modal is open. */
   setupModalOpen = false;
   /** Configuration for setup modal (e.g. target step, close on complete) */
@@ -113,12 +110,6 @@ export class ShellComponent implements OnInit, OnDestroy {
       })
     );
     this.refreshSupportPrompt();
-    this.subs.add(
-      this.workflowService.getJobStatus$().subscribe((status) => {
-        const state = status?.job_status;
-        this.jobInFlight = !!state && state !== 'completed' && state !== 'failed';
-      })
-    );
 
     this.subs.add(
       this.router.events.pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd)).subscribe(() => {
@@ -316,10 +307,17 @@ export class ShellComponent implements OnInit, OnDestroy {
     this.browserNotif.dismissOsNotifPrompt();
   }
 
-  /** Show the support prompt only once the backend says this install has
-   * earned it and no job is mid-flight. */
+  /** Show the support prompt once the backend says this install has earned it.
+   *
+   * Deliberately not gated on job state. An earlier version hid the prompt
+   * whenever a job was non-terminal, but `job_status` stays `running` right
+   * through labeling and transfer — long after the rip finishes — so on a
+   * working install the prompt almost never appeared. Worse, it depended on
+   * whether the workflow context had loaded yet, so the prompt would render on
+   * first paint and then vanish. The panel is opened deliberately and can't
+   * interrupt anything, which is what the gate was guarding against anyway. */
   get supportPromptVisible(): boolean {
-    return this.supportPromptEligible && !this.jobInFlight;
+    return this.supportPromptEligible;
   }
 
   /** "Maybe later" snoozes; "Don't show again" silences permanently. Both hide

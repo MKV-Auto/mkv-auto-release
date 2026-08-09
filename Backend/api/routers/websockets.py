@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from core.websocket_manager import get_websocket_manager
@@ -383,14 +384,21 @@ def _build_initial_coordinator_state_sync() -> Dict[str, Any]:
                 "last_modified_at": None,
             })
 
-        # Active-rip fallback: if a job is running (pending/running/validating)
-        # on a mount_point that isn't represented above, emit an in_drive card
-        # for it. This handles the case where the drive-manager cache is empty
-        # for a mount but the disc is physically loaded and being ripped —
-        # most commonly right after a uvicorn restart, where the startup
-        # insert-scan defers `info dev:` (rip in progress → MSG:5010 conflict)
-        # and thus doesn't populate disc_cache. Without this the disc silently
-        # disappears from the carousel until the rip finishes.
+        # Active-rip fallback: if a rip is genuinely in progress on a mount_point
+        # that isn't represented above, emit an in_drive card for it. This handles
+        # the case where the drive-manager cache is empty for a mount but the disc
+        # is physically loaded and being ripped — most commonly right after a
+        # uvicorn restart, where the startup insert-scan defers `info dev:`
+        # (rip in progress → MSG:5010 conflict) and thus doesn't populate
+        # disc_cache. Without this the disc silently disappears from the carousel
+        # until the rip finishes.
+        #
+        # `job_status` alone is NOT enough to mean "being ripped": it stays
+        # 'running' through labeling, postprocess and transfer, long after the
+        # rip itself is done. Filtering on it alone made every job ever parked
+        # on a mount claim the drive, so an empty drive showed a phantom
+        # "Now Reading" card for whichever stale job the database happened to
+        # return first. The rip must also be unfinished.
         represented_mounts_after_scanning = {
             m.get("mount_point")
             for m in inserted_discs_metadata
@@ -406,7 +414,15 @@ def _build_initial_coordinator_state_sync() -> Dict[str, Any]:
             .filter(
                 db_models.Job.job_status.in_(("pending", "running", "validating")),
                 db_models.Job.mount_point.isnot(None),
+                or_(
+                    db_models.Job.rip_state.is_(None),
+                    db_models.Job.rip_state.notin_(("completed", "skipped", "failed")),
+                ),
             )
+            # Newest first: if two jobs somehow contend for one mount, the most
+            # recent is the one actually in the drive. Unordered, the pick was
+            # whatever the database returned first.
+            .order_by(db_models.Job.created_at.desc())
             .all()
         )
         for job in active_rip_jobs:

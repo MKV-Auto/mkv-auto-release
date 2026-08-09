@@ -167,6 +167,27 @@ def is_rip_task_really_running(job: db_models.Job) -> bool:
     return False
 
 
+#: ``rip_state`` values meaning the rip is over, whatever the job is doing next.
+RIP_FINISHED_STATES = ("completed", "skipped", "failed")
+
+
+def rip_state_says_running(job_status: Optional[str], rip_state: Optional[str]) -> bool:
+    """Whether the DB state claims a rip is still in flight.
+
+    ``job_status`` alone cannot answer this: it stays ``'running'`` through
+    labeling, postprocess and transfer, long after ``rip_state`` reaches
+    ``'completed'``. Treating it as "the drive is busy" meant a job parked
+    awaiting labeling could block a new rip on the same mount, and could be
+    reconciled as a stale job and marked failed — while it was simply waiting
+    for the user.
+
+    A finished rip is never a running rip, regardless of ``job_status``.
+    """
+    if rip_state in RIP_FINISHED_STATES:
+        return False
+    return job_status == "running" or rip_state == "running"
+
+
 def is_rip_running_for_disc(
     db: Session,
     disc_hash: Optional[str],
@@ -318,7 +339,7 @@ def is_rip_running_for_disc(
         
         # Only return True if job is actually in running state (not just pending)
         # Pending jobs might not have started yet, so we should allow new rips
-        if job_status == "running" or rip_state == "running":
+        if rip_state_says_running(job_status, rip_state):
             logger.warning(
                 "is_rip_running_for_disc: Found job in running state but process/task inactive (stale job detected) "
                 "disc_num=%s mount_point=%s disc_hash=%s job_id=%s job_status=%s rip_state=%s. "
@@ -461,7 +482,7 @@ class DriveGatekeeper:
             if existing:
                 existing_job_status = existing.job_status
                 existing_rip_state = getattr(existing, "rip_state", None)
-                existing_is_running = existing_job_status == "running" or existing_rip_state == "running"
+                existing_is_running = rip_state_says_running(existing_job_status, existing_rip_state)
                 
                 logger.debug(
                     "can_start_rip rid=%s existing job analysis: job_status=%s rip_state=%s existing_is_running=%s",
@@ -515,7 +536,7 @@ class DriveGatekeeper:
                     
                     # Check if this is a stale job (DB says running but process check says not)
                     is_active = is_rip_task_active(active_job)
-                    if job_status == "running" or rip_state == "running":
+                    if rip_state_says_running(job_status, rip_state):
                         if not is_active:
                             # Stale job detected - reconcile immediately
                             logger.warning(
@@ -607,7 +628,7 @@ class DriveGatekeeper:
                 # This could be a race condition - check if it's a stale job
                 rip_state = getattr(existing, "rip_state", None)
                 job_status = existing.job_status
-                is_rip_running = rip_state == "running" or job_status == "running"
+                is_rip_running = rip_state_says_running(job_status, rip_state)
                 
                 if is_rip_running or job_status == "pending":
                     # Verify with unified pipeline check

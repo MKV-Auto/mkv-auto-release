@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-09
+
+### Added
+
+- **Extras can now belong to the whole show, one season, or a single episode.** Behind-the-scenes clips, featurettes, trailers and the rest used to be filed against the whole show, even when they plainly belonged to one season. Series extras now carry a "Belongs to" control: when everything on a disc is one season the answer is filled in for you, a boxset bonus disc asks per extra, and a deleted scene can be pinned to its exact episode. On Plex an episode-level extra attaches to the episode itself; Jellyfin has no episode extras, so it files by season — but the episode you chose is still recorded in full for TheDiscDB, so what you contribute is the same on either server. The filename preview under the form shows exactly where each choice lands the file. See [Extras](docs/Guides/EXTRAS.md) for the layout rules and Plex agent notes.
+
+### Fixed
+
+- **A disc waiting to be labelled no longer blocks the next rip.** The check for "is a rip already running on this drive" counted any job that hadn't been closed out — and a job stays open through labelling and transfer. On a drive with finished discs still waiting on you, starting the next rip could be refused, and in some paths the waiting job was written off as stale and marked failed.
+
+- **An empty drive no longer shows a disc as "Now Reading".** A disc you finished with days ago could reappear in the carousel as though it were sitting in the drive, then vanish the moment you inserted a real one. The check for "a rip is in progress" only looked at whether the job was closed out, and a job stays open through labelling and transfer — so every disc that had ever passed through that drive still claimed it.
+
+- **The support note in the notifications panel no longer flashes and disappears.** It was hidden whenever a job was still open, but a job stays open through labelling and transfer — long after the disc has finished ripping — so on a machine you actually use, the note appeared for a moment on page load and then vanished. It now stays put until you answer it.
+
 ## [1.5.0] - 2026-08-08
 
 ### Added

@@ -52,10 +52,21 @@ describe('ShellComponent support prompt', () => {
     expect(component.supportPromptVisible).toBe(true);
   });
 
-  it('stays hidden while a job is in flight', () => {
+  it('stays visible while a job is running', () => {
+    // Regression: the prompt used to hide whenever a job was non-terminal, but
+    // `job_status` stays 'running' through labeling and transfer, so it almost
+    // never showed on a working install — and it flickered, because visibility
+    // depended on whether the workflow context had loaded yet.
     (component as any).refreshSupportPrompt();
-    (component as any).jobInFlight = true;
-    expect(component.supportPromptVisible).toBe(false);
+    expect(component.supportPromptVisible).toBe(true);
+  });
+
+  it('does not subscribe to job status at all', () => {
+    const getJobStatus$ = jasmine.createSpy('getJobStatus$');
+    (component as any).workflowService = { getJobStatus$ };
+    (component as any).refreshSupportPrompt();
+    expect(component.supportPromptVisible).toBe(true);
+    expect(getJobStatus$).not.toHaveBeenCalled();
   });
 
   it('stays hidden when the backend says not to show it', () => {

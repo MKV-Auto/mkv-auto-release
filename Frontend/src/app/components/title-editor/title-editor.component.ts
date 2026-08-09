@@ -1,7 +1,7 @@
-import { ChangeDetectionStrategy, Component, EventEmitter, inject, Input, OnDestroy, Output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, EventEmitter, inject, Input, OnChanges, OnDestroy, Output, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Observable, of } from 'rxjs';
+import { BehaviorSubject, Observable, of, Subscription } from 'rxjs';
 import { map, switchMap, distinctUntilChanged, startWith } from 'rxjs/operators';
 import { PreviewViewerComponent } from '../preview-viewer/preview-viewer.component';
 import { IconComponent } from '../../ui/icon/icon.component';
@@ -10,6 +10,7 @@ import { BtnComponent } from '../../ui/btn/btn.component';
 import { ObfuscationBadgeComponent } from '../obfuscation-badge/obfuscation-badge.component';
 import { DuplicateCompareModalComponent } from '../duplicate-compare-modal/duplicate-compare-modal.component';
 import { TITLE_TYPE_SELECT_OPTIONS } from '../../constants/title-type-options';
+import { SystemService } from '../../services/system.service';
 import { WorkflowService, TmdbEpisodeSummary, TitlePatchRequest } from '../../services/workflow.service';
 
 const STATUS_TONE: Record<string, PillTone> = {
@@ -22,6 +23,35 @@ const STATUS_LABEL: Record<string, string> = {
   completed: 'Ripped',
   running: 'Ripping',
   failed: 'Rip failed',
+};
+
+/** Extras type → (plex folder, jellyfin folder). Mirrors
+ * core/title_type_extras_layout.py; preview cue only, backend is canonical. */
+const EXTRAS_FOLDERS: Record<string, [string, string]> = {
+  BehindTheScenes: ['Behind The Scenes', 'behind the scenes'],
+  DeletedScene: ['Deleted Scenes', 'deleted scenes'],
+  Featurette: ['Featurettes', 'featurettes'],
+  Interview: ['Interviews', 'interviews'],
+  Scene: ['Scenes', 'scenes'],
+  Short: ['Shorts', 'shorts'],
+  Trailer: ['Trailers', 'trailers'],
+  Other: ['Other', 'other'],
+  Extra: ['Other', 'extras'],
+  Sample: ['Other', 'samples'],
+  Clip: ['Other', 'clips'],
+  ThemeMusic: ['Other', 'theme-music'],
+  Backdrop: ['Other', 'backdrops'],
+};
+
+/** Plex filename suffix for episode-level extras. */
+const PLEX_EPISODE_EXTRA_SUFFIXES: Record<string, string> = {
+  BehindTheScenes: 'behindthescenes',
+  DeletedScene: 'deleted',
+  Featurette: 'featurette',
+  Interview: 'interview',
+  Scene: 'scene',
+  Short: 'short',
+  Trailer: 'trailer',
 };
 
 const STATUS_TOOLTIP: Record<string, string> = {
@@ -72,11 +102,32 @@ const STATUS_TOOLTIP: Record<string, string> = {
   templateUrl: './title-editor.component.html',
   styleUrls: ['./title-editor.component.scss'],
 })
-export class TitleEditorComponent implements OnDestroy {
+export class TitleEditorComponent implements OnChanges, OnDestroy {
   /** Last line of defence: tearing down mid-edit (navigating away, switching
    *  card) must not strand a buffered typed field unsaved. */
   ngOnDestroy(): void {
     this.flushPendingFieldEdits();
+    this.editorSubs.unsubscribe();
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if ('title' in changes) {
+      this.extraScopeSeason$.next(this.extraSeason);
+    }
+  }
+
+  private readonly editorSubs = new Subscription();
+  /** Plex needs a library setting enabled before season-scoped extras are
+   * honoured, so the hint only renders for Plex. */
+  mediaServer: 'plex' | 'jellyfin' | null = null;
+  /** Seasons TMDB knows about, or null when the catalog hasn't resolved. */
+  tvSeasonCount: number | null = null;
+
+  /** Seasons to offer in the extras scope dropdown. Empty when TMDB hasn't
+   * told us how many there are — the template falls back to a number box. */
+  get seasonChoices(): number[] {
+    if (!this.tvSeasonCount) return [];
+    return Array.from({ length: this.tvSeasonCount }, (_, i) => i + 1);
   }
 
   readonly titleTypeOptions = TITLE_TYPE_SELECT_OPTIONS;
@@ -152,6 +203,24 @@ export class TitleEditorComponent implements OnDestroy {
   // (if set) overrides the disc primary. When the value resolves to a
   // TmdbEpisodeSummary[] the picker renders; sentinels hide it.
   private readonly workflow = inject(WorkflowService);
+  private readonly systemSvc = inject(SystemService);
+
+  constructor() {
+    // Season count comes from TMDB. Without it we cannot list the seasons, so
+    // the control degrades to a plain number box rather than disappearing.
+    this.editorSubs.add(
+      this.workflow.getTvSeasonCount$().subscribe((n) => {
+        this.tvSeasonCount = typeof n === 'number' && n > 0 ? n : null;
+      })
+    );
+    this.editorSubs.add(
+      this.systemSvc.getMediaServerConfig().subscribe({
+        next: (cfg) => { this.mediaServer = cfg?.media_server ?? null; },
+        error: () => { this.mediaServer = null; },
+      })
+    );
+  }
+
   readonly episodeOptions$: Observable<TmdbEpisodeSummary[] | 'loading' | 'error' | 'unavailable'> =
     this.workflow.getPrimarySeason$().pipe(
       switchMap((primary) => {
@@ -176,6 +245,24 @@ export class TitleEditorComponent implements OnDestroy {
     startWith(false),
     distinctUntilChanged(),
   );
+
+  /** Season the extras scope dropdowns are pointed at. Driven by
+   * onExtraSeasonChange and by row switches (ngOnChanges) — unlike
+   * episodeOptions$ above, which keys off the disc primary and does not
+   * re-evaluate when this row's own season changes. */
+  private readonly extraScopeSeason$ = new BehaviorSubject<number | null>(null);
+
+  readonly extraEpisodeOptions$: Observable<TmdbEpisodeSummary[] | 'loading' | 'error' | 'unavailable'> =
+    this.extraScopeSeason$.pipe(
+      distinctUntilChanged(),
+      switchMap((season) => {
+        if (season === null || !Number.isFinite(Number(season)) || Number(season) < 0) {
+          return of('unavailable' as const);
+        }
+        this.workflow.ensureEpisodeSeasonLoaded(Number(season));
+        return this.workflow.getEpisodesForSeason$(Number(season));
+      }),
+    );
 
   /** Per-row effective season — track.season override, else disc primary. */
   private effectiveSeason(primary: number): number {
@@ -383,7 +470,17 @@ export class TitleEditorComponent implements OnDestroy {
         edition: null,
       });
     } else {
-      this.emitFieldPatch({ ...pending, type: normalizedType });
+      // An extra on a single-season disc belongs to that season, same as the
+      // episodes beside it — take it from what's actually labelled rather than
+      // the disc-level hint. On a disc that spans seasons there is no safe
+      // default, so leave it blank and let the dropdown ask.
+      const patch: Record<string, unknown> = { ...pending, type: normalizedType };
+      const implied = this.impliedExtraSeason;
+      if (this.isSeasonScopableExtra() && this.title.season === null && implied !== null) {
+        this.title.season = implied;
+        patch['season'] = implied;
+      }
+      this.emitFieldPatch(patch as any);
     }
     this.titleChanged.emit();
   }
@@ -472,6 +569,32 @@ export class TitleEditorComponent implements OnDestroy {
       }
       return `${safeName}.mkv`;
     }
+    // Series extras: show the scope in the preview — the folder (or, for a
+    // Plex episode-level extra, the filename attachment) is the whole point
+    // of the Belongs to control.
+    if (this.isSeasonScopableExtra()) {
+      const typeKey = (this.title.type || '').toString();
+      const folders = EXTRAS_FOLDERS[typeKey];
+      if (folders) {
+        const ms = this.mediaServer || 'plex';
+        const seasonN = this.extraSeason;
+        const episodeN = this.extraEpisode;
+        if (seasonN !== null && episodeN !== null && ms !== 'jellyfin') {
+          const ref = this.siblingEpisodeName(seasonN, episodeN);
+          if (ref) {
+            const ss = String(seasonN).padStart(2, '0');
+            const ee = String(episodeN).padStart(2, '0');
+            const suffix = PLEX_EPISODE_EXTRA_SUFFIXES[typeKey] || 'other';
+            return `Season ${ss}/… - s${ss}e${ee} - ${ref}-${safeName}-${suffix}.mkv`;
+          }
+        }
+        const folder = ms === 'jellyfin' ? folders[1] : folders[0];
+        if (seasonN !== null) {
+          return `Season ${String(seasonN).padStart(2, '0')}/${folder}/${safeName}.mkv`;
+        }
+        return `${folder}/${safeName}.mkv`;
+      }
+    }
     const edition = (this.title.edition || '').toString().trim();
     if (edition) {
       return `${safeName} (${edition}).mkv`;
@@ -518,6 +641,119 @@ export class TitleEditorComponent implements OnDestroy {
   /** True when this title carries an edition — a main movie, per-type. */
   isMainMovie(): boolean {
     return (this.title?.type || '').toString().toLowerCase() === 'mainmovie';
+  }
+
+  /** True when this row is a series extra that can be scoped to one season.
+   *
+   * Both Plex and Jellyfin read an extras folder nested inside a season folder
+   * as belonging to that season — `Season 03/Behind The Scenes/…` — and
+   * `core.disc.compute_expected_path` already emits that shape whenever an
+   * extra carries a season. Without a control the season could never be set,
+   * so every disc extra landed at show level.
+   */
+  isSeasonScopableExtra(): boolean {
+    if (!this.isSeries || this.isIgnored()) return false;
+    const t = (this.title?.type || '').toString().toLowerCase();
+    if (!t || t === 'episode' || t === 'mainmovie') return false;
+    return true;
+  }
+
+  private _seasonScanKey: unknown = null;
+  private _seasonScanResult: number[] = [];
+
+  /** Distinct seasons across everything labelled on this disc.
+   *
+   * Memoised on the titles array identity — this is read from the template on
+   * every change-detection pass, and the component runs Default CD.
+   */
+  get discSeasons(): number[] {
+    const titles = this.workflow.getCurrentContext()?.titles ?? [];
+    if (titles === this._seasonScanKey) return this._seasonScanResult;
+    const seen = new Set<number>();
+    for (const t of titles as any[]) {
+      const type = (t?.type || '').toString().toLowerCase();
+      if (!type || type === 'ignore') continue;
+      const raw = t?.season;
+      if (raw === null || raw === undefined || raw === '') continue;
+      const n = Number(raw);
+      if (!Number.isNaN(n)) seen.add(n);
+    }
+    this._seasonScanKey = titles;
+    this._seasonScanResult = Array.from(seen).sort((a, b) => a - b);
+    return this._seasonScanResult;
+  }
+
+  /** True when everything labelled on this disc sits in one season.
+   *
+   * Then an extra needs no decision — it belongs to that season, same as the
+   * episodes beside it — so the control is replaced by a statement of where
+   * the file lands. Only a disc that genuinely spans seasons (a boxset bonus
+   * disc, where TheDiscDB tags extras individually across seasons) has an
+   * ambiguity worth asking about.
+   */
+  get discIsSingleSeason(): boolean {
+    return this.discSeasons.length === 1;
+  }
+
+  /** The season an extra takes automatically on a single-season disc. */
+  get impliedExtraSeason(): number | null {
+    return this.discIsSingleSeason ? this.discSeasons[0] : null;
+  }
+
+  /** Season this extra belongs to; null means the whole series. */
+  get extraSeason(): number | null {
+    const v = this.title?.season;
+    return v === null || v === undefined || v === '' ? null : Number(v);
+  }
+
+  /** Season this extra belongs to; changing it invalidates any episode
+   * choice, since an episode only means something inside its season. Dropdown
+   * picks save immediately (same contract as onTypeChange). */
+  onExtraSeasonChange(value: unknown): void {
+    if (!this.title) return;
+    const raw = value === '' || value === null || value === undefined ? null : Number(value);
+    const normalized = raw === null || Number.isNaN(raw) || raw < 0 ? null : raw;
+    const pending = this.takePendingFieldsFor(this.title.title_id);
+    const patch: Record<string, unknown> = { ...pending, season: normalized };
+    if (normalized !== this.extraSeason && this.title.episode != null) {
+      this.title.episode = null;
+      patch['episode'] = null;
+    }
+    this.title.season = normalized;
+    this.extraScopeSeason$.next(normalized);
+    this.emitFieldPatch(patch as any);
+    this.titleChanged.emit();
+  }
+
+  /** Episode this extra is attached to; null means all of the season. */
+  get extraEpisode(): number | null {
+    const v = this.title?.episode;
+    return v === null || v === undefined || v === '' ? null : Number(v);
+  }
+
+  onExtraEpisodeChange(value: unknown): void {
+    if (!this.title) return;
+    const raw = value === '' || value === null || value === undefined ? null : Number(value);
+    const normalized = raw === null || Number.isNaN(raw) || raw < 1 ? null : raw;
+    const pending = this.takePendingFieldsFor(this.title.title_id);
+    this.title.episode = normalized;
+    this.emitFieldPatch({ ...pending, episode: normalized } as any);
+    this.titleChanged.emit();
+  }
+
+  /** Title of the sibling Episode row at (season, episode) on this disc, or
+   * null. Plex attaches an episode-level extra by filename prefix built from
+   * exactly this — mirrors the backend's sibling lookup in _rename_series. */
+  siblingEpisodeName(season: number, episode: number): string | null {
+    const titles = this.workflow.getCurrentContext()?.titles ?? [];
+    for (const t of titles as any[]) {
+      if ((t?.type || '').toString().toLowerCase() !== 'episode') continue;
+      if (Number(t?.season) === season && Number(t?.episode) === episode) {
+        const name = (t?.title || '').toString().trim();
+        if (name) return name;
+      }
+    }
+    return null;
   }
 
   /** The three shapes an episode can take on disc (#796).

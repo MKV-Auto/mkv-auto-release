@@ -16,7 +16,7 @@ from typing import Callable, Optional
 import logging
 from core.logging_utils import get_logger
 from core import settings as app_settings
-from core.title_type_extras_layout import extras_subfolder_for_type
+from core.title_type_extras_layout import extras_subfolder_for_type, plex_episode_extra_suffix_for_type
 from core.title_type_normalize import normalize_title_type_for_api
 
 logger = get_logger("core.disc")
@@ -165,6 +165,39 @@ def compute_expected_path(
     # Sub-directory within show folder (season, Plex/Jellyfin extras folder)
     canon_type = normalize_title_type_for_api(title_type) or ""
     extra_sub = extras_subfolder_for_type(canon_type, ms)
+
+    # Episode-level extra (Plex only). Plex attaches an extra to an episode by
+    # FILENAME, not folder: the file sits in the season folder and must begin
+    # with the episode's own filename, then the extra's name, then the type
+    # suffix — three segments, hyphen-joined. The episode's filename is
+    # reconstructed from ``episode_ref_name`` (the sibling Episode row's
+    # title), which the caller resolves; without it we cannot build a prefix
+    # Plex would match, so we fall back to the season folder — same as
+    # Jellyfin, which has no episode-level extras at all. No resolution or
+    # edition suffix: the prefix must stay identical to the episode filename.
+    episode_ref_name = (title_metadata.get("episode_ref_name") or "").strip()
+    if (
+        extra_sub
+        and is_series
+        and ms != "jellyfin"
+        and season is not None
+        and episode is not None
+        and episode_ref_name
+        and safe_movie
+        and title_name
+    ):
+        suffix_word = plex_episode_extra_suffix_for_type(canon_type) or "other"
+        designator = format_episode_designator(season, episode, None, ms)
+        episode_base = f"{safe_movie} - {designator} - {sanitize_path_component(episode_ref_name)}"
+        extra_seg = sanitize_path_component(title_name) or title_name
+        filename = sanitize_filepath(f"{episode_base}-{extra_seg}-{suffix_word}.mkv")
+        parts = [type_dir]
+        if folder_name:
+            parts.append(folder_name)
+        parts.append(f"Season {int(season):02}")
+        parts.append(filename)
+        return os.path.join(*parts)
+
     sub_dir = ""
     if is_series:
         if season is not None:
@@ -177,9 +210,12 @@ def compute_expected_path(
             seg = sanitize_path_component(extra_sub) or extra_sub
             sub_dir = seg
 
-    # Base name
+    # Base name. The episode-designator form is for Episode rows only: an
+    # extra carrying season+episode (scoped, but degraded to the folder form)
+    # keeps its own name — naming it "Show - s07e03 - X" would make the media
+    # server read the extra as the episode itself.
     base_name = ""
-    if is_series and season is not None and episode is not None and safe_movie:
+    if is_series and not extra_sub and season is not None and episode is not None and safe_movie:
         designator = format_episode_designator(
             season, episode, title_metadata.get("episode_end"), ms
         )
@@ -1040,6 +1076,23 @@ class Disc:
                     if out_filename:
                         output_to_source_series[out_filename] = src_file
 
+        # Episode titles by (season, episode), for Plex episode-level extras:
+        # the extra's filename must begin with its episode's filename, so we
+        # need the sibling Episode row's title to reconstruct that prefix.
+        episode_name_by_se: dict[tuple[int, int], str] = {}
+        for tid_, ty_ in (title_id_to_type or {}).items():
+            if (normalize_title_type_for_api(ty_) or "").lower() != "episode":
+                continue
+            s_ = (title_id_to_season or {}).get(tid_)
+            e_ = (title_id_to_episode or {}).get(tid_)
+            nm_ = (title_id_to_title or {}).get(tid_)
+            if s_ is None or e_ is None or not nm_:
+                continue
+            try:
+                episode_name_by_se[(int(s_), int(e_))] = str(nm_)
+            except (TypeError, ValueError):
+                continue
+
         for fn in extracted_files:
             try:
                 if not fn.lower().endswith(".mkv"):
@@ -1193,10 +1246,28 @@ class Disc:
                     os.makedirs(season_folder, exist_ok=True)
                     dest_dir = season_folder
 
-                # For series: extras live under Season XX/<Plex|Jellyfin extras folder> when applicable
+                # For series: extras live under Season XX/<Plex|Jellyfin extras folder> when applicable.
+                # Exception: a Plex extra scoped to a specific EPISODE stays in
+                # the season folder itself — Plex attaches it by filename
+                # (<episode filename>-<name>-<suffix>), not by folder. Only
+                # taken when the sibling Episode row is on this disc, because
+                # its title is needed to reconstruct the episode filename;
+                # otherwise (and always on Jellyfin, which has no episode
+                # extras) it degrades to the season extras folder.
                 canon_t = normalize_title_type_for_api(title_type) or ""
                 extra_sub = extras_subfolder_for_type(canon_t, media_server)
-                if extra_sub:
+                episode_extra_ref: str | None = None
+                if (
+                    extra_sub
+                    and (media_server or "plex").strip().lower() != "jellyfin"
+                    and season is not None and season != ''
+                    and episode is not None and episode != ''
+                ):
+                    try:
+                        episode_extra_ref = episode_name_by_se.get((int(season), int(episode)))
+                    except (TypeError, ValueError):
+                        episode_extra_ref = None
+                if extra_sub and not episode_extra_ref:
                     seg = sanitize_path_component(extra_sub) or extra_sub
                     dest_dir = os.path.join(dest_dir, seg)
                     os.makedirs(dest_dir, exist_ok=True)
@@ -1218,8 +1289,22 @@ class Disc:
                     episode_title_from_db = sanitize_path_component(raw) if raw else None
                 episode_part = episode_title_from_db or ep_name_s or ""
                 
-                # Prefer full "Show - s01e01 - EpisodeTitle" when we have season, episode, and show name
-                if season is not None and episode is not None and show_name_s:
+                # Plex episode-level extra: <episode filename>-<own name>-<suffix>.
+                # episode_title_from_db here is THIS row's title — the extra's
+                # own name — while episode_extra_ref is the sibling Episode
+                # row's title, which supplies the prefix Plex matches on.
+                if episode_extra_ref and show_name_s:
+                    designator = format_episode_designator(season, episode, None, media_server)
+                    ref_s = sanitize_path_component(episode_extra_ref) or episode_extra_ref
+                    own_name = episode_title_from_db or ep_name_s or f"Track{tid}"
+                    suffix_word = plex_episode_extra_suffix_for_type(canon_t) or "other"
+                    base_name = f"{show_name_s} - {designator} - {ref_s}-{own_name}-{suffix_word}"
+
+                # Prefer full "Show - s01e01 - EpisodeTitle" when we have season, episode, and show name.
+                # Never for extras: an extra with season+episode set is not an
+                # episode file, and naming it like one would make Plex/Jellyfin
+                # treat it as the episode itself.
+                if not base_name and not extra_sub and season is not None and episode is not None and show_name_s:
                     designator = format_episode_designator(
                         season, episode, episode_end, media_server
                     )
@@ -1256,6 +1341,11 @@ class Disc:
                     res = title_id_to_resolution.get(title_id_from_final_paths)
                 if not res:
                     res = getattr(self, "resolution", None)
+                # Episode-extra names carry no resolution suffix: the prefix
+                # must stay identical to the episode filename for Plex to
+                # attach the file.
+                if episode_extra_ref:
+                    res = None
                 if res:
                     res_str = str(res).strip()
                     if (media_server or "plex").lower() == "jellyfin":

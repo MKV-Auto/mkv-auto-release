@@ -83,7 +83,11 @@ def test_snapshot_includes_pending_unfinished_job(mock_cached, test_db_session):
         "pending unfinished job must appear in coordinator snapshot "
         "(parity with /jobs/unfinished/summaries)"
     )
-    assert matches[0].get("disc_state") == "in_drive"
+    # The rip is already complete and the drive cache is empty, so this is an
+    # unfinished job — not a disc sitting in the drive. The active-rip fallback
+    # used to claim it as `in_drive` because it only looked at `job_status`,
+    # which produced phantom "Now Reading" cards on an empty drive.
+    assert matches[0].get("disc_state") == "unfinished"
     assert matches[0].get("job_status") == "pending"
 
 
@@ -192,10 +196,10 @@ def test_snapshot_running_unfinished_still_present(mock_cached, test_db_session)
 
     state = _build_initial_coordinator_state_sync()
     discs = state.get("discs") or []
-    # Running job with a mount_point → `in_drive` card via the active-rip
-    # fallback (see pending test above); presence in the snapshot is the
-    # invariant under guard here.
+    # Presence in the snapshot is the invariant under guard here. The rip has
+    # finished, so the card is `unfinished` rather than `in_drive` — see the
+    # pending test above.
     matches = [d for d in discs if d.get("job_id") == job.id]
     assert len(matches) == 1
-    assert matches[0].get("disc_state") == "in_drive"
+    assert matches[0].get("disc_state") == "unfinished"
     assert matches[0].get("job_status") == "running"

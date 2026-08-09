@@ -166,6 +166,86 @@
         </div>
       </div>
 
+      <!-- Belongs to — scope for series extras. Season narrows the show,
+           episode narrows the season. Both answers are captured for
+           TheDiscDB regardless of media server; the filename preview below
+           the form shows what the local server does with them. -->
+      <ng-container *ngIf="isSeasonScopableExtra()">
+        <div class="title-editor__field title-editor__field--full">
+          <div class="title-editor__scope">
+            <div class="title-editor__scope-head">
+              <span class="title-editor__label title-editor__scope-label">Belongs to</span>
+              <span class="title-editor__scope-auto"
+                    *ngIf="discIsSingleSeason && extraSeason === impliedExtraSeason">
+                auto · from this disc
+              </span>
+            </div>
+            <div class="title-editor__scope-row">
+              <!-- Season: dropdown when TMDB knows the count, number box otherwise -->
+              <select
+                *ngIf="seasonChoices.length; else extraSeasonManual"
+                class="title-editor__input title-editor__select"
+                [ngModel]="extraSeason"
+                [ngModelOptions]="{standalone: true}"
+                (ngModelChange)="onExtraSeasonChange($event)"
+                aria-label="Season this extra belongs to">
+                <option [ngValue]="null">Whole series</option>
+                <option *ngFor="let s of seasonChoices" [ngValue]="s">Season {{ s }}</option>
+              </select>
+              <ng-template #extraSeasonManual>
+                <input
+                  type="number"
+                  class="title-editor__input"
+                  [ngModel]="extraSeason"
+                  [ngModelOptions]="{standalone: true}"
+                  placeholder="Whole series"
+                  min="0"
+                  (ngModelChange)="onExtraSeasonChange($event)"
+                  (blur)="flushPendingFieldEdits(); titleBlur.emit()"
+                  aria-label="Season this extra belongs to">
+              </ng-template>
+
+              <!-- Episode: dimmed placeholder until a season is chosen; then
+                   the TMDB catalogue, or a number box when it has not resolved -->
+              <div class="title-editor__input title-editor__scope-none" *ngIf="extraSeason === null">—</div>
+              <ng-container *ngIf="extraSeason !== null">
+                <ng-container *ngIf="extraEpisodeOptions$ | async as epOpts">
+                  <select
+                    *ngIf="isEpisodeList(epOpts) && epOpts.length; else extraEpisodeManual"
+                    class="title-editor__input title-editor__select"
+                    [ngModel]="extraEpisode"
+                    [ngModelOptions]="{standalone: true}"
+                    (ngModelChange)="onExtraEpisodeChange($event)"
+                    aria-label="Episode this extra belongs to">
+                    <option [ngValue]="null">All of Season {{ extraSeason }}</option>
+                    <option *ngFor="let ep of epOpts" [ngValue]="ep.episode_number">
+                      E{{ ep.episode_number }} · {{ ep.name }}
+                    </option>
+                  </select>
+                  <ng-template #extraEpisodeManual>
+                    <input
+                      type="number"
+                      class="title-editor__input"
+                      [ngModel]="extraEpisode"
+                      [ngModelOptions]="{standalone: true}"
+                      placeholder="All of Season {{ extraSeason }}"
+                      min="1"
+                      (ngModelChange)="onExtraEpisodeChange($event)"
+                      (blur)="flushPendingFieldEdits(); titleBlur.emit()"
+                      aria-label="Episode this extra belongs to">
+                  </ng-template>
+                </ng-container>
+              </ng-container>
+            </div>
+            <div class="title-editor__hint title-editor__scope-note"
+                 *ngIf="mediaServer === 'jellyfin' && extraSeason !== null && extraEpisode !== null">
+              Jellyfin can’t attach extras to an episode, so it files this under
+              Season {{ extraSeason }}. The episode still goes to TheDiscDB — Plex users get it.
+            </div>
+          </div>
+        </div>
+      </ng-container>
+
       <!-- Season / Episode — sit in the grid alongside Title + Type. Shown
            for Episode rows regardless of whether TMDB has the catalog. -->
       <ng-container *ngIf="isEpisodeType() && !isIgnored()">
