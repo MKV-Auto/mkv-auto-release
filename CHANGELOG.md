@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-08-12
+
+### Fixed
+
+- **Editing a release in the Library no longer gets undone by labelling a disc.** If you corrected a release's UPC, artwork or year and then labelled a disc that resolved to that same release, your changes were silently reverted — the labelling form still held the values from before your edit, and it wrote them back over the top. Nothing reported a problem, so the only way to notice was to go back and look. Labelling now fills in details a release is missing and never overwrites ones already set.
+
 ## [1.6.0] - 2026-08-09
 
 ### Added

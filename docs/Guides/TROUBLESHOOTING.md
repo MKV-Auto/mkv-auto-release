@@ -7,7 +7,34 @@ Ripping specifically — Start Copy runs but nothing happens, or the logs look
 empty — is covered separately in
 [Troubleshooting: rip / makemkvcon](TROUBLESHOOTING_RIP.md).
 
-## Start here: logs
+## Start here: the support bundle
+
+Before reading logs by hand, collect everything at once:
+**Settings → Help → Diagnostics → Download support bundle.** It gathers the
+logs and how your drives are wired into a single `.tar.gz` you can attach to a
+bug report — no shell needed. Passwords and API keys are stripped before it is
+written, and it is a plain archive you can open and check first.
+
+It is unavailable while a rip is running, because collecting drive information
+would interrupt the rip. Come back once it finishes.
+
+The same collector is a script, and run from a shell it also **prints a
+diagnosis** — most drive problems have a specific cause, and it names it:
+
+```bash
+# it ships inside the image; copy the version you are running
+docker cp mkv-auto:/app/scripts/mkv-support-bundle.sh .
+
+./mkv-support-bundle.sh                 # print a diagnosis
+./mkv-support-bundle.sh --bundle        # also write a .tar.gz
+```
+
+Run it on the Docker **host** when the problem might be the host's own setup —
+device permissions, how the drive is passed in. Those details are not visible
+from inside the container, so a bundle collected in the UI cannot include them.
+See [Host optical setup](../HOST_OPTICAL_SETUP.md) for the full walkthrough.
+
+## Reading the logs directly
 
 Most problems are visible in the logs, and every answer below assumes you can
 read them.
@@ -28,7 +55,9 @@ For more detail, restart with `MKVAUTO_DEBUG_LEVEL=DEBUG` (see
 
 ## The drive is not detected
 
-The most common problem, and usually one of three things.
+The most common problem, and usually one of three things. Running
+`mkv-support-bundle.sh` **on the host** works out which and says so — worth a
+minute before going through these by hand.
 
 **1. The drive never spins up** when you connect it or insert a disc:
 
@@ -153,6 +182,11 @@ docker exec mkv-auto supervisorctl restart uvicorn
 Open an issue with:
 
 - what you did and what happened
-- `docker logs mkv-auto` output around the failure
-- `docker exec mkv-auto supervisorctl status`
+- a **support bundle** (Settings → Help → Diagnostics) — this replaces pasting
+  logs and drive details separately, and is the single most useful thing you
+  can attach
 - your host OS, and whether you are running in a VM
+
+If the bundle cannot be produced — the UI is unreachable, or a rip is running —
+include `docker logs mkv-auto` around the failure and
+`docker exec mkv-auto supervisorctl status` instead.

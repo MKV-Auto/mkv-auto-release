@@ -808,6 +808,43 @@ def _merge_boxset_into_release_payload(payload: dict, boxset: models.Boxset) -> 
     return out
 
 
+def _fill_blank_release_fields(rel: models.Release, payload: dict) -> list[str]:
+    """Fill only EMPTY fields on an existing release from ``payload``.
+
+    Reuse must never overwrite a value someone already set. The old merge did
+    ``rel.upc = payload.get("upc") or rel.upc`` for every field, so resolving to
+    an existing release stamped the caller's payload over it. In production that
+    reverted a Library edit sixty seconds after it was saved: the labeling form
+    still held the pre-edit snapshot, the create resolved to that release, and
+    the stale values won. Both requests returned 200 (#821).
+
+    ``name`` was the only field already guarded this way; this applies the same
+    rule to the rest. Returns the field names actually filled, so callers can
+    report what changed.
+    """
+    filled: list[str] = []
+
+    def fill(attr: str, value):
+        if value in (None, ""):
+            return
+        if getattr(rel, attr, None) in (None, ""):
+            setattr(rel, attr, value)
+            filled.append(attr)
+
+    fill("name", payload.get("release_name"))
+    fill("upc", payload.get("upc"))
+    fill("asin", payload.get("asin"))
+    fill("cover_front_url", payload.get("cover_front_url") or payload.get("movie_cover_url"))
+    fill("cover_back_url", payload.get("cover_back_url"))
+    fill("release_year", payload.get("release_year"))
+    fill("resolution", payload.get("release_resolution") or payload.get("resolution"))
+    # `type` defaults rather than merges: an existing release already has one.
+    if not getattr(rel, "type", None):
+        rel.type = payload.get("group_type") or "movie"
+        filled.append("type")
+    return filled
+
+
 def get_or_create_release(db: Session, payload: dict, disc_hash: str | None = None) -> models.Release | None:
     """Create or fetch a release based on movie_id.
     
@@ -836,22 +873,12 @@ def get_or_create_release(db: Session, payload: dict, disc_hash: str | None = No
                 # Only reuse release if movie_id matches (or payload has no movie_id yet)
                 # This prevents different movies in same boxset from sharing releases
                 if not payload_movie_id or rel.movie_id == payload_movie_id:
-                    # Update existing release with any new metadata from payload
-                    rel.type = payload.get("group_type") or rel.type or "movie"
-                    if not rel.name:
-                        rel.name = payload.get("release_name") or None
-                    rel.upc = payload.get("upc") or rel.upc
-                    rel.asin = payload.get("asin") or rel.asin
-                    rel.cover_front_url = payload.get("cover_front_url") or payload.get("movie_cover_url") or rel.cover_front_url
-                    rel.cover_back_url = payload.get("cover_back_url") or rel.cover_back_url
-                    rel.release_year = payload.get("release_year") or getattr(rel, "release_year", None)
-                    # Update boxset_id if provided
+                    # Fill blanks only — never overwrite what is already set (#821).
+                    _fill_blank_release_fields(rel, payload)
+                    # boxset_id is a relationship the caller owns explicitly, not
+                    # metadata: an explicit key still moves (or unlinks) it.
                     if "boxset_id" in payload:
                         rel.boxset_id = payload.get("boxset_id") if payload.get("boxset_id") else None
-                    # Store resolution from DiscDB if available
-                    release_res = payload.get("release_resolution") or payload.get("resolution")
-                    if release_res:
-                        rel.resolution = release_res
                     db.commit()
                     db.refresh(rel)
                     _backfill_movie_cover_from_release(db, rel)
@@ -964,16 +991,10 @@ def get_or_create_release(db: Session, payload: dict, disc_hash: str | None = No
             rel = None
     
     if rel:
-        # Update existing release with new metadata
-        rel.type = payload.get("group_type") or rel.type or "movie"
-        if not rel.name:
-            rel.name = payload.get("release_name") or None
-        rel.upc = payload.get("upc") or rel.upc
-        rel.asin = payload.get("asin") or rel.asin
-        rel.cover_front_url = payload.get("cover_front_url") or payload.get("movie_cover_url") or rel.cover_front_url
-        rel.cover_back_url = payload.get("cover_back_url") or rel.cover_back_url
-        rel.release_year = payload.get("release_year") or getattr(rel, "release_year", None)
-        # Update boxset_id if provided
+        # Fill blanks only — never overwrite what is already set (#821).
+        _fill_blank_release_fields(rel, payload)
+        # boxset_id is a relationship the caller owns explicitly, not metadata:
+        # an explicit key still moves (or unlinks) it.
         if "boxset_id" in payload:
             rel.boxset_id = payload.get("boxset_id") if payload.get("boxset_id") else None
         
