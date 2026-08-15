@@ -536,6 +536,23 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
     });
   }
   
+  /** Ungroup/Re-group changed the disc's dedupe-group shape server-side.
+   *
+   * Unlike set-primary — whose response carries the affected rows, so the
+   * service can merge them — this recomputes which titles are grouped at all,
+   * and `dedupeGroups` is what the left rail collapses on. Pull just that
+   * field back rather than reimplementing the grouping rules client-side.
+   */
+  onUngrouped(event: { discId: string; titleId: string }): void {
+    const discId =
+      event?.discId ||
+      this.workflowService.getDiscInfoState().currentDiscId ||
+      (this.workflowService.getCurrentContext()?.discInfo as any)?.disc_id ||
+      null;
+    if (!discId) return;
+    this.workflowService.refreshDedupeGroups(discId);
+  }
+
   /**
    * Save labelForm with titles to backend
    */

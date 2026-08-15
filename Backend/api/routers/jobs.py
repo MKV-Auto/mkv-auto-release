@@ -7218,6 +7218,11 @@ def get_job_workflow_context(job_id: str, db: Session = Depends(get_db), *, _pre
                     "src": title_id,
                     "source_file": title.source_file,
                     "title_id": title.id,
+                    # Required by DiscTitleRecord, and the client needs it to
+                    # address per-title endpoints (ungroup-duplicate,
+                    # set-primary). Omitting it made those buttons inert with
+                    # no request and no error — mkv-auto-release#8.
+                    "disc_id": str(title.disc_id) if title.disc_id else None,
                     "title_seq": title.title_seq,
                     "segment_map": getattr(title, "segment_map", None),
                     "index": title.index,
@@ -7289,6 +7294,10 @@ def get_job_workflow_context(job_id: str, db: Session = Depends(get_db), *, _pre
                     "title_id": title_id,
                     **title_data,
                 }
+                # Same contract as the DB branch above. The payload dict may
+                # predate this field, so fall back to the job's own disc.
+                if not title_obj.get("disc_id"):
+                    title_obj["disc_id"] = str(job.disc_id) if job.disc_id else None
                 titles.append(title_obj)
                 title_order.append(str(title_id))
 

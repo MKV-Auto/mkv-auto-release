@@ -5,6 +5,7 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '../../environments/environment';
 import { PreviewViewerComponent } from '../preview-viewer/preview-viewer.component';
 import { MobileService } from '../../services/mobile.service';
+import { ToastService } from '../../services/toast.service';
 import { DedupeGroup, TitlePatchRequest } from '../../services/workflow.service';
 import { ObfuscationBadgeComponent } from '../obfuscation-badge/obfuscation-badge.component';
 import { PillComponent } from '../../ui/pill/pill.component';
@@ -61,6 +62,10 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
   readonly titleTypeOptions = TITLE_TYPE_SELECT_OPTIONS;
 
   @Input() titles: any[] = [];
+  /** Disc these titles belong to. The parent always knows this; reaching into
+   * `titles[0].disc_id` for it is what let per-title endpoints break silently
+   * when the payload omitted the field (mkv-auto-release#8). */
+  @Input() discId: string | null = null;
   @Input() isSeries = false;
   @Input() titleProgress: Record<string, number> = {};
   @Input() titleStatusFn: (id: string | null | undefined) => string = () => 'pending';
@@ -98,6 +103,13 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
   /** Multiple title patches in one HTTP round-trip (duplicate groups). */
   @Output() titleBatchPatched = new EventEmitter<TitlePatchRequest[]>();
   @Output() primaryChanged = new EventEmitter<{ discId: string; titleId: string }>();
+  /** Fired after a successful Ungroup/Re-group so the parent can refresh the
+   * workflow context. Unlike set-primary, this changes GROUP SHAPE — a row
+   * leaves `dedupeGroups[].sibling_title_ids` and the group may elect a new
+   * representative — and the left rail renders straight off those groups.
+   * Without the refresh the flag flips, the server regroups, and the rail
+   * keeps showing the old collapse until the user navigates away and back. */
+  @Output() ungrouped = new EventEmitter<{ discId: string; titleId: string }>();
 
   private focusDepth = 0;
   isActive = false;
@@ -154,6 +166,7 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     private mobileService: MobileService,
     private cdr: ChangeDetectorRef,
     private http: HttpClient,
+    private toast: ToastService,
   ) {}
 
   // ── Duplicate-group editor outputs (Make-primary / Ungroup) ─────────────
@@ -177,12 +190,26 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
    * backend endpoint directly (no parent indirection — this is a
    * self-contained per-title flag flip; the workflow-context refresh
    * picks up the new force_independent_group value on next fetch). */
+  /** Disc id for per-title endpoints: the input the parent supplies, falling
+   * back to whatever the payload carries. Never silently empty — callers
+   * report instead of doing nothing. */
+  private resolveDiscId(t: any): string | null {
+    return this.discId || t?.disc_id || (this.titles?.[0] as any)?.disc_id || null;
+  }
+
   onUngroupDuplicate(): void {
     const t = this.selectedTitle;
     if (!t) return;
-    const discId = t.disc_id || (this.titles?.[0] as any)?.disc_id || '';
+    const discId = this.resolveDiscId(t);
     const titleId = this.getTitleId(t);
-    if (!discId || !titleId) return;
+    if (!discId || !titleId) {
+      // Previously a bare `return` — the button looked dead and left no trace
+      // in the console or the server logs, which is what made this take a
+      // support bundle to diagnose.
+      console.error('[title-label] cannot ungroup: missing identity', { discId, titleId });
+      this.toast.show('Could not ungroup this title — please report this.', 'error');
+      return;
+    }
     // Optimistic: flip the flag locally so the right-editor's button
     // label swaps Ungroup ↔ Re-group immediately. Server state catches
     // up on the next workflow-context refresh.
@@ -197,6 +224,9 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
         // flip raced a concurrent toggle elsewhere.
         t.force_independent_group = resp.force_independent_group;
         this.cdr.markForCheck();
+        // The local flip only re-labels the button. Group membership is
+        // recomputed server-side, so the rail needs the fresh context.
+        this.ungrouped.emit({ discId, titleId });
       },
       error: () => {
         // Rollback the optimistic flip — the workflow-context will
@@ -327,6 +357,14 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
         const updated = titles.find((t) => this.getTitleId(t) === this.lastEditedTitleKey);
         const updatedLength = (updated?.title ?? '').toString().length;
       }
+    }
+    // Grouping is an input in its own right. `titleListRows` bakes in
+    // `isDedupeSibling` at compute time, so a dedupeGroups-only change — which
+    // is exactly what Ungroup produces — left the rail showing the old
+    // collapse until something happened to touch `titles`
+    // (mkv-auto-release#8). Guarded so a combined change recomputes once.
+    else if (changes['dedupeGroups']) {
+      this.recomputeDerivedState();
     }
   }
 
@@ -1202,7 +1240,12 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     title.active = true;
 
     // Emit event for parent to make the API call
-    const discId = title.disc_id || (this.titles?.[0] as any)?.disc_id || '';
+    const discId = this.resolveDiscId(title);
+    if (!discId) {
+      console.error('[title-label] cannot set primary: missing disc id', { titleId });
+      this.toast.show('Could not set this title as primary — please report this.', 'error');
+      return;
+    }
     this.primaryChanged.emit({ discId, titleId });
     this.labelChanged.emit(this.titles);
     this.cdr.markForCheck();

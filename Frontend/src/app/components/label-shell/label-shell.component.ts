@@ -30,6 +30,9 @@ export class LabelShellComponent {
   @Input() releaseNameHint = '';
   @Input() releaseSlugHint = '';
   @Input() titles: any[] = [];
+  /** Disc these titles belong to; forwarded to title-label so per-title
+   * endpoints can be addressed without digging identity out of a row. */
+  @Input() discId: string | null = null;
   @Input() isSeries = false;
   @Input() titleStatusFn: (id: string | null | undefined) => string = () => 'pending';
   @Input() titleProgressValueFn: (id: string | null | undefined) => number = () => 0;

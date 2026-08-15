@@ -2365,6 +2365,16 @@ def get_disc_workflow_context_by_id(
                     "obfuscation_reason": getattr(title, "obfuscation_reason", None),
                 }
 
+            # This branch REBUILDS the dict, discarding everything assigned to
+            # `existing` above — so anything the grouping pass reads has to be
+            # re-stated here. force_independent_group was missing, which made
+            # this endpoint report a title as still grouped after Ungroup
+            # (the job-scoped builder and the DB both said otherwise), so the
+            # client refetched and saw no change (mkv-auto-release#8).
+            titles_by_id[title_id]["force_independent_group"] = bool(
+                getattr(title, "force_independent_group", False)
+            )
+
     # Compute dedupe-group membership for the left-rail collapse (parity
     # with the mount-keyed endpoint above). Without this the disc-id
     # endpoint returns an empty dedupeGroups[] and the frontend can't
@@ -4336,6 +4346,9 @@ def set_primary_title(
         t for t in group_titles
         if _normalize_segment_map(t.segment_map) == norm_seg
     ]
+    # Same staleness trap as ungroup-duplicate: this rewrites active/type across
+    # the group, so a cached workflow-context would serve the old primary.
+    invalidate_workflow_context_cache(disc_id=disc_id)
     return {"titles": [_serialize_disc_title(t) for t in group_titles]}
 
 
@@ -4368,6 +4381,12 @@ def ungroup_duplicate(
     target.force_independent_group = not bool(target.force_independent_group)
     db.commit()
     db.refresh(target)
+    # This changes dedupe-group membership, and workflow-context responses are
+    # cached for _CONTEXT_CACHE_TTL_SECONDS. Without invalidating, a client that
+    # refetches straight after this call — which is exactly what the Ungroup
+    # button does — gets the pre-ungroup grouping back for up to 10s and the
+    # left rail appears not to have changed at all (mkv-auto-release#8).
+    invalidate_workflow_context_cache(disc_id=disc_id)
     return {
         "title_id": title_id,
         "force_independent_group": bool(target.force_independent_group),

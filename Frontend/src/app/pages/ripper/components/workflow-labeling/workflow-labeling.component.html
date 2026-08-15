@@ -306,6 +306,7 @@
         <div class="step-content titles-step-content">
           <app-title-label
             [titles]="state.context.titles || []"
+            [discId]="state.context.discInfo?.disc_id || null"
             [isSeries]="state.context.labelForm?.group_type === 'series'"
             [titleProgress]="cachedTitleProgress"
             [titleStatusFn]="cachedTitleStatusFn"
@@ -326,6 +327,7 @@
             (titlePatched)="onTitlePatch($event)"
             (titleBatchPatched)="onTitleBatchPatch($event)"
             (primaryChanged)="onPrimaryChanged($event)"
+            (ungrouped)="onUngrouped($event)"
             (labelBlur)="onNameBlur()">
           </app-title-label>
         </div>

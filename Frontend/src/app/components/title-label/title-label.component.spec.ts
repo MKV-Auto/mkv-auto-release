@@ -2,9 +2,10 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { SimpleChange } from '@angular/core';
 import { BehaviorSubject, of } from 'rxjs';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { TitleLabelComponent } from './title-label.component';
 import { MobileService } from '../../services/mobile.service';
+import { ToastService } from '../../services/toast.service';
 
 describe('TitleLabelComponent', () => {
   let component: TitleLabelComponent;
@@ -12,6 +13,7 @@ describe('TitleLabelComponent', () => {
   /** Drives the component's isMobile state through the real subscription
    *  (OnPush: a direct field poke won't re-render). Defaults to desktop. */
   let isMobile$: BehaviorSubject<boolean>;
+  let toastSpy: jasmine.SpyObj<ToastService>;
 
   /** Helper: set titles input and trigger ngOnChanges (Angular doesn't call ngOnChanges for direct property writes in tests). */
   function setTitles(titles: any[]): void {
@@ -25,10 +27,12 @@ describe('TitleLabelComponent', () => {
   beforeEach(async () => {
     isMobile$ = new BehaviorSubject<boolean>(false);
     const mobileStub = { isMobile$ };
+    toastSpy = jasmine.createSpyObj('ToastService', ['show']);
     await TestBed.configureTestingModule({
       imports: [TitleLabelComponent],
       providers: [
         { provide: MobileService, useValue: mobileStub },
+        { provide: ToastService, useValue: toastSpy },
         provideHttpClient(),
         provideHttpClientTesting(),
       ],
@@ -909,4 +913,117 @@ describe('TitleLabelComponent', () => {
       expect(component.isSupersededWrapper(kept)).toBe(false);
     });
   });
+
+  describe('ungroup / set-primary identity (mkv-auto-release#8)', () => {
+    // The workflow-context payload omitted disc_id on titles, so the handler
+    // could not build a URL, returned early, and issued NO request — the
+    // button looked dead and left no trace anywhere.
+    const httpFor = () => TestBed.inject(HttpTestingController);
+
+    function selectFirst(titles: any[]) {
+      setTitles(titles);
+      component.selectedTitleId = titles[0].title_id;
+    }
+
+    it('posts ungroup using the discId input', () => {
+      component.discId = 'disc-abc';
+      selectFirst([{ title_id: 't-1', type: 'Episode', segment_map: '1-5' }]);
+
+      component.onUngroupDuplicate();
+
+      const req = httpFor().expectOne(
+        (r) => r.url.includes('/discs/disc-abc/titles/t-1/ungroup-duplicate'));
+      expect(req.request.method).toBe('POST');
+      req.flush({ title_id: 't-1', force_independent_group: true });
+    });
+
+    it('falls back to disc_id on the title when no input is given', () => {
+      component.discId = null;
+      selectFirst([{ title_id: 't-2', disc_id: 'disc-from-row', type: 'Episode' }]);
+
+      component.onUngroupDuplicate();
+
+      httpFor().expectOne((r) => r.url.includes('/discs/disc-from-row/titles/t-2/ungroup-duplicate'))
+        .flush({ title_id: 't-2', force_independent_group: true });
+    });
+
+    it('reports instead of silently doing nothing when identity is missing', () => {
+      component.discId = null;
+      selectFirst([{ title_id: 't-3', type: 'Episode' }]);   // no disc_id anywhere
+
+      component.onUngroupDuplicate();
+
+      expect(toastSpy.show).toHaveBeenCalled();
+      expect(toastSpy.show.calls.mostRecent().args[1]).toBe('error');
+      httpFor().expectNone((r) => r.url.includes('ungroup-duplicate'));
+    });
+
+    it('rolls the optimistic flip back when the request fails', () => {
+      component.discId = 'disc-abc';
+      const titles = [{ title_id: 't-4', type: 'Episode', force_independent_group: false }];
+      selectFirst(titles);
+
+      component.onUngroupDuplicate();
+      expect(titles[0].force_independent_group).toBeTrue();   // optimistic
+
+      httpFor().expectOne((r) => r.url.includes('ungroup-duplicate'))
+        .flush({}, { status: 500, statusText: 'Server Error' });
+      expect(titles[0].force_independent_group).toBeFalse();  // rolled back
+    });
+
+    // The flag flip only re-labels the button. Group membership is recomputed
+    // on the server, and the left rail collapses rows off dedupeGroups — so
+    // without telling the parent to refetch, the rail keeps the old collapse
+    // and the button still looks like it did nothing.
+    it('asks the parent to refresh once the server confirms', () => {
+      component.discId = 'disc-abc';
+      selectFirst([{ title_id: 't-5', type: 'Episode' }]);
+      const emitted: any[] = [];
+      component.ungrouped.subscribe((e) => emitted.push(e));
+
+      component.onUngroupDuplicate();
+      expect(emitted.length).toBe(0);   // not before the server answers
+
+      httpFor().expectOne((r) => r.url.includes('ungroup-duplicate'))
+        .flush({ title_id: 't-5', force_independent_group: true });
+
+      expect(emitted).toEqual([{ discId: 'disc-abc', titleId: 't-5' }]);
+    });
+
+    // The refresh only helps if the rail actually rebuilds off the new groups.
+    it('rebuilds the visible rows when only dedupeGroups changes', () => {
+      const titles = [
+        { title_id: 'rep', source_file: 'title-6', type: 'Episode', segment_map: '1-5' },
+        { title_id: 'sib', source_file: 'title-3', type: 'Episode', segment_map: '1-5' },
+      ];
+      setTitles(titles);
+      component.dedupeGroups = [
+        { group_id: 'g1', representative_title_id: 'rep', sibling_title_ids: ['sib'] } as any,
+      ];
+      component.ngOnChanges({ dedupeGroups: { firstChange: false, previousValue: [], currentValue: component.dedupeGroups, isFirstChange: () => false } } as any);
+      expect(component.isDedupeSibling('sib')).toBeTrue();
+
+      // Ungroup: 'sib' leaves the group. Titles are untouched — only groups move.
+      component.dedupeGroups = [
+        { group_id: 'g1', representative_title_id: 'rep', sibling_title_ids: [] } as any,
+      ];
+      component.ngOnChanges({ dedupeGroups: { firstChange: false, previousValue: [], currentValue: component.dedupeGroups, isFirstChange: () => false } } as any);
+
+      expect(component.isDedupeSibling('sib')).toBeFalse();
+    });
+
+    it('does not ask for a refresh when the request fails', () => {
+      component.discId = 'disc-abc';
+      selectFirst([{ title_id: 't-6', type: 'Episode' }]);
+      const emitted: any[] = [];
+      component.ungrouped.subscribe((e) => emitted.push(e));
+
+      component.onUngroupDuplicate();
+      httpFor().expectOne((r) => r.url.includes('ungroup-duplicate'))
+        .flush({}, { status: 500, statusText: 'Server Error' });
+
+      expect(emitted).toEqual([]);
+    });
+  });
+
 });

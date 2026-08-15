@@ -237,11 +237,21 @@ def compute_dedupe_groups(
 
     Returns:
         List of DedupeGroup, ordered by descending group size (stable).
-        Singletons and titles without segment_map are excluded.
+        Singletons, titles without segment_map, and titles the user has
+        explicitly ungrouped are excluded.
     """
     by_seg: dict[str, list[str]] = {}
     for tid, payload in titles_by_id.items():
         if not isinstance(payload, dict):
+            continue
+        # Per-title escape hatch, mirroring `attach_duplicate_info` and
+        # `fold_subsumption_into_groups`: Ungroup stamps
+        # `force_independent_group=True`, and this is the pass that has to
+        # honour it. `sibling_title_ids` is the only thing that hides a row
+        # from the left rail, so a title left in its cluster here stays
+        # collapsed no matter what the flag says — the button fired its
+        # request and still looked broken (mkv-auto-release#8).
+        if payload.get("force_independent_group"):
             continue
         seg_key = _segment_set_key(payload.get("segment_map"))
         if seg_key is None:

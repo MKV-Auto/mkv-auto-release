@@ -331,18 +331,27 @@
       </div>
     </div>
 
-    <!-- Duplicate Group Panel (Path B sorted-segment-set dedupe) -->
-    <section class="title-editor__dupe" *ngIf="siblings.length">
+    <!-- Duplicate Group Panel (Path B sorted-segment-set dedupe).
+         Also renders with no siblings when the row has been split off, so
+         Re-group stays reachable — ungrouping now really does remove the row
+         from the group, and gating solely on `siblings.length` would make
+         Ungroup a one-way door. -->
+    <section class="title-editor__dupe" *ngIf="siblings.length || isForceIndependent">
       <header class="title-editor__dupe-head">
         <ui-pill tone="purple">
           <ui-icon uiPillIcon name="copy" [size]="11"></ui-icon>
           Duplicate group
         </ui-pill>
         <span class="title-editor__dupe-meta">
-          {{ siblings.length + 1 }} matching titles · the primary is what gets saved
+          <ng-container *ngIf="siblings.length; else splitOffMeta">
+            {{ siblings.length + 1 }} matching titles · the primary is what gets saved
+          </ng-container>
+          <ng-template #splitOffMeta>
+            Split off from its duplicate group · this title rips on its own
+          </ng-template>
         </span>
         <span class="title-editor__dupe-actions">
-          <ui-btn variant="ghost" (click)="openCompare()">
+          <ui-btn variant="ghost" *ngIf="siblings.length" (click)="openCompare()">
             <ui-icon uiBtnIcon name="columns" [size]="12"></ui-icon>
             Compare
           </ui-btn>
@@ -353,7 +362,7 @@
           </ui-btn>
         </span>
       </header>
-      <ul class="title-editor__dupe-list">
+      <ul class="title-editor__dupe-list" *ngIf="siblings.length">
         <li class="title-editor__dupe-row title-editor__dupe-row--current"
             [attr.aria-label]="'Currently editing: ' + (siblingLabel(title) || '')">
           <span class="title-editor__dupe-thumb" aria-hidden="true">

@@ -199,6 +199,51 @@ describe('TitleEditorComponent', () => {
     expect(component.showStatusPill()).toBeTrue();
   });
 
+  describe('Duplicate group panel — Re-group after a split (mkv-auto-release#8)', () => {
+    const dupeSection = () => Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('section.title-editor__dupe')
+    ).find(s => (s.textContent || '').includes('Duplicate group'));
+
+    it('stays hidden for an ordinary ungrouped title', () => {
+      fixture.componentRef.setInput('title', makeTitle());
+      fixture.componentRef.setInput('siblings', []);
+      fixture.detectChanges();
+      expect(dupeSection()).toBeFalsy();
+    });
+
+    it('offers Re-group when the row has been split off and has no siblings', () => {
+      // Ungroup genuinely removes the row from its group now, so siblings is
+      // empty — gating the panel on siblings alone stranded the user with no
+      // way back in.
+      fixture.componentRef.setInput('title', makeTitle({ force_independent_group: true }));
+      fixture.componentRef.setInput('siblings', []);
+      fixture.detectChanges();
+
+      const section = dupeSection();
+      expect(section).toBeTruthy();
+      expect(section!.textContent).toContain('Re-group');
+      expect(section!.textContent).toContain('Split off from its duplicate group');
+      // Nothing to compare or list against when it stands alone.
+      expect(section!.textContent).not.toContain('Compare');
+      expect(section!.querySelectorAll('.title-editor__dupe-row').length).toBe(0);
+    });
+
+    it('shows Ungroup and the sibling list while still grouped', () => {
+      fixture.componentRef.setInput('title', makeTitle({ force_independent_group: false }));
+      fixture.componentRef.setInput('siblings', [
+        makeTitle({ title_id: 't2', source_file: 'title-2' }),
+        makeTitle({ title_id: 't3', source_file: 'title-3' }),
+      ]);
+      fixture.detectChanges();
+
+      const section = dupeSection();
+      expect(section).toBeTruthy();
+      expect(section!.textContent).toContain('3 matching titles');
+      expect(section!.textContent).toContain('Ungroup');
+      expect(section!.textContent).toContain('Compare');
+    });
+  });
+
   describe('Component clips section', () => {
     it('does not render when componentClips is empty', () => {
       fixture.componentRef.setInput('title', makeTitle());

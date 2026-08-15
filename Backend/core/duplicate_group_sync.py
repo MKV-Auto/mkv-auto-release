@@ -69,6 +69,10 @@ def _fold_subsumed_m2ts_into_mpls_group(
         wrapper = by_id.get(wrapper_id)
         if m2ts is None or wrapper is None:
             continue
+        # An ungrouped m2ts must not be re-absorbed by its wrapper here,
+        # exactly as `attach_duplicate_info`'s subsumption pass skips it (#797).
+        if bool(getattr(m2ts, "force_independent_group", False)):
+            continue
         wrapper_key = _normalize_segment_map(wrapper.segment_map)
         if wrapper_key is None:
             continue
@@ -397,6 +401,12 @@ def sync_duplicate_group_labels_for_disc(
 
     groups: dict[str, list[db_models.DiscTitle]] = {}
     for t in all_titles:
+        # Same Ungroup escape hatch honoured by `attach_duplicate_info` and
+        # `compute_dedupe_groups`. Without it, save_label/complete_label
+        # re-demote a row the user just split off (active=False, type filled
+        # from sibling consensus) and the ungroup silently reverts.
+        if bool(getattr(t, "force_independent_group", False)):
+            continue
         key = _normalize_segment_map(t.segment_map)
         if key is None:
             continue

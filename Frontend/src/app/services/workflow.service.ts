@@ -151,6 +151,10 @@ export type WorkflowStep = 'film' | 'exploratory_rip' | 'boxset' | 'disc' | 'tit
 /** Readiness of the active workflow context: loading (fetching), ready (showing backend data), stale (refetching after context_changed), pending (step-advance POST in flight), error (fetch failed). */
 export type WorkflowContextStatus = 'loading' | 'ready' | 'stale' | 'pending' | 'error';
 
+/** Why the active workflow context is being force-refetched. Logged, so keep
+ * each value descriptive enough to identify the trigger in a support bundle. */
+export type WorkflowResyncSource = 'ws-reconnect' | 'visibility-change';
+
 export interface WorkflowValidationResult {
   valid: boolean;
   errors: string[];
@@ -3695,7 +3699,36 @@ export class WorkflowService implements OnDestroy {
    * → HTTP fetch → updateContext pipeline (with changed_fields=['jobStatus']
    * so _discContextPatchForActiveJob applies the fresh jobStatus).
    */
-  private _resyncActiveWorkflowState(source: 'ws-reconnect' | 'visibility-change'): void {
+  /** Re-fetch just the derived dedupe grouping for the active context.
+   *
+   * Ungroup changes group membership server-side (a row leaves
+   * `sibling_title_ids`, and the group may elect a new representative), and
+   * the left rail collapses rows off `dedupeGroups` alone.
+   *
+   * Deliberately narrower than `_resyncActiveWorkflowState`: for a job
+   * context that path patches only discInfo/jobStatus
+   * (`_discContextPatchForActiveJob`), precisely so a refetch cannot clobber
+   * an in-flight label edit — so it can never refresh the rail. `dedupeGroups`
+   * is derived server state the user cannot edit, so replacing just that field
+   * is safe where replacing `titles` would not be.
+   */
+  refreshDedupeGroups(discId: string): void {
+    if (!discId) return;
+    this.fetchDiscWorkflowContextHttp(discId, true, undefined, {
+      suppressLoading: true,
+      include: 'label,job',
+    }).subscribe({
+      next: (fetched) => {
+        if (!fetched || !this._activeContext$.value) return;
+        this.updateContext({ dedupeGroups: fetched.dedupeGroups || [] });
+      },
+      error: (err) => {
+        this.logger.warn('[WorkflowService] dedupe-group refresh failed', err);
+      },
+    });
+  }
+
+  private _resyncActiveWorkflowState(source: WorkflowResyncSource): void {
     this.fetchInitialState();
     const activeContext = this._activeContext$.value;
     if (!activeContext) return;

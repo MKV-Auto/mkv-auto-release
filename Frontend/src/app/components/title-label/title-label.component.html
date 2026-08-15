@@ -393,8 +393,13 @@
           [lastAutosaveOk]="lastAutosaveOk"
           [devMode]="devMode"
           [showCloseButton]="false"
+          [siblings]="getEditorSiblings()"
+          [isGroupRepresentative]="isEditorTitleGroupRepresentative()"
           (titleChanged)="onEditorChanged()"
           (titleBlur)="onBlur()"
+          (switchToSibling)="selectTitle($event)"
+          (makeSiblingPrimary)="onMakeSiblingPrimary($event)"
+          (ungroupDuplicate)="onUngroupDuplicate()"
           (titlePatched)="titlePatched.emit($event)">
         </app-title-editor>
         <div class="title-drawer-footer title-drawer-footer-mobile">

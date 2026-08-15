@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-08-15
+
+### Fixed
+
+- **The Ungroup button works again.** When titles were wrongly detected as duplicates — several episodes of the same length collapsed into one row, say — pressing Ungroup did nothing at all: no change, no error, nothing. Three separate things were wrong. The page was never told which disc the titles belonged to, so the request was never sent. Once it was sent, the grouping was recalculated as though you had never pressed the button, so the title stayed hidden. And saving a label afterwards put the title back in the group anyway. Ungroup now really does split a title onto its own row, the list updates as soon as you click, and Re-group puts it back. "Make primary" was unreachable in the same way and also works again, including in the mobile drawer. If something does go wrong you get a message instead of a button that seems dead.
+
 ## [1.6.1] - 2026-08-12
 
 ### Fixed
