@@ -58,6 +58,13 @@ export class EditionMetadataFormComponent implements OnChanges {
 
   @Output() cancelled = new EventEmitter<void>();
   @Output() submitted = new EventEmitter<EditionFormValue>();
+  /** Every keystroke, so a parent can keep a draft.
+   *
+   * `submitted` only fires once validation passes, and this component is
+   * destroyed by the *ngIf around it whenever the panel closes — so without
+   * this a parent has no way to know what the user typed, and closing the
+   * dropdown threw the work away. */
+  @Output() modelChange = new EventEmitter<EditionFormValue>();
 
   model: EditionFormValue = {
     name: '',
@@ -97,6 +104,13 @@ export class EditionMetadataFormComponent implements OnChanges {
     };
     this.fieldErrors = [];
     this.cdr.markForCheck();
+  }
+
+  /** Bound to every field's (ngModelChange) so a parent can hold a draft.
+   * Emits a copy — the parent must not alias `model`, or feeding it back as
+   * `prefill` would mutate what it is trying to restore. */
+  onModelChanged(): void {
+    this.modelChange.emit({ ...this.model });
   }
 
   get allErrors(): string[] {

@@ -55,6 +55,23 @@ class Release(Base):
     __table_args__ = (
         Index("idx_releases_movie_id", "movie_id"),
         Index("idx_releases_boxset_id", "boxset_id"),
+        # Declared so the shape lives with the model instead of only in
+        # 202608220000. A movie may hold several standalone releases (seasons of
+        # one show); an exact duplicate of (movie, name, upc) is still refused,
+        # which is the race protection 202602080000 was written for.
+        #
+        # postgresql_where keeps SQLAlchemy from emitting this on SQLite, so the
+        # create_all-based test fixture is unaffected. That also means SQLite
+        # tests cannot see it — which is precisely why #821 went unnoticed — so
+        # anything asserting this behaviour must run against Postgres.
+        Index(
+            "uq_releases_movie_edition_standalone",
+            "movie_id",
+            text("coalesce(name, '')"),
+            text("coalesce(upc, '')"),
+            unique=True,
+            postgresql_where=text("boxset_id IS NULL"),
+        ),
     )
 
     id = Column(String, primary_key=True, default=_uuid_str)

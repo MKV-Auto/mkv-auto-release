@@ -62,6 +62,16 @@ export class ReleaseSelectorComponent implements OnInit, OnChanges, OnDestroy {
   pendingEditSaving = false;
   /** Bump when opening create or pending form so shared form reapplies prefill. */
   editionFormResetVersion = 0;
+  /** In-progress create, kept across the panel closing and reopening.
+   *
+   * The form's data lives in the child, and the child sits inside an *ngIf —
+   * so an outside click destroyed it and everything typed went with it. Null
+   * once the create succeeds or the user cancels. */
+  createDraft: EditionFormValue | null = null;
+  /** Stable prefill reference for the create form; only ever reassigned in
+   * `seedCreateFormFromDraft()`. See the note there — handing the child a new
+   * object on every change-detection pass would wipe the field being typed in. */
+  createFormPrefill: Partial<EditionFormValue> = {};
   /** #685: create submitted, awaiting the parent's createResult. */
   createSaving = false;
   /** #685: inline errors for the create form (from a rejected create). */
@@ -150,6 +160,9 @@ export class ReleaseSelectorComponent implements OnInit, OnChanges, OnDestroy {
         this.createErrors = [];
         this.showCreateForm = false;
         this.isOpen = false;
+        // Created — the draft has served its purpose. A failure deliberately
+        // keeps it, so the user can correct the error without retyping.
+        this.createDraft = null;
       } else {
         this.createSaving = false;
         this.createErrors = [this.createResult.error || 'Failed to create release'];
@@ -204,7 +217,12 @@ export class ReleaseSelectorComponent implements OnInit, OnChanges, OnDestroy {
 
   openPanel(): void {
     this.isOpen = true;
-    this.showCreateForm = false;
+    // An unfinished create survives the panel closing, so come back to it
+    // rather than dropping the user on the list with their typing gone.
+    this.showCreateForm = !!this.createDraft;
+    if (this.showCreateForm) {
+      this.seedCreateFormFromDraft();
+    }
     this.showPendingEdit = false;
     this.pendingEditPurpose = null;
     this.pendingEditRelease = null;
@@ -222,8 +240,41 @@ export class ReleaseSelectorComponent implements OnInit, OnChanges, OnDestroy {
     this.pendingReleaseEditionPrefill = {};
     this.createSaving = false;
     this.createErrors = [];
-    this.editionFormResetVersion++;
+    this.seedCreateFormFromDraft();
     this.cdr.markForCheck();
+  }
+
+  /** Point the child at the preserved draft (or a blank form) and re-apply it.
+   *
+   * `createFormPrefill` must be replaced here and nowhere else: the child
+   * re-applies its prefill whenever that object's REFERENCE changes, so a
+   * getter returning a fresh object each change-detection pass would wipe the
+   * field the user is typing in. */
+  private seedCreateFormFromDraft(): void {
+    this.createFormPrefill = this.createDraft ? { ...this.createDraft } : {};
+    this.editionFormResetVersion++;
+  }
+
+  /** Keystrokes from the create form. Held so closing the panel — which
+   * destroys the child and its model — no longer discards the user's work.
+   *
+   * An all-blank form is not a draft: keeping one would make `openPanel()`
+   * reopen the create form for someone who only glanced at it. */
+  onCreateDraftChanged(value: EditionFormValue): void {
+    this.createDraft = this.hasCreateDraftContent(value) ? { ...value } : null;
+  }
+
+  /** True once the user has typed something worth keeping. */
+  private hasCreateDraftContent(value: EditionFormValue | null): boolean {
+    if (!value) return false;
+    return !!(
+      (value.name || '').trim() ||
+      value.year !== null && value.year !== undefined ||
+      (value.upc || '').trim() ||
+      (value.asin || '').trim() ||
+      (value.cover_front_url || '').trim() ||
+      (value.cover_back_url || '').trim()
+    );
   }
 
   /** Called when user types in the search input */
@@ -443,6 +494,9 @@ export class ReleaseSelectorComponent implements OnInit, OnChanges, OnDestroy {
     this.showCreateForm = false;
     this.createSaving = false;
     this.createErrors = [];
+    // Cancel is the user saying "discard this". Closing the panel is not, so
+    // only this path and a successful create clear the draft.
+    this.createDraft = null;
     this.cdr.markForCheck();
   }
 

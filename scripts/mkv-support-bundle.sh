@@ -35,6 +35,13 @@ USAGE
 OPTIONS
   --bundle [DIR]     Also write a redacted .tar.gz you can send to support.
                      DIR is optional; see WHERE THE BUNDLE GOES below.
+  --with-db          Include a Postgres snapshot in the bundle. Implies
+                     --bundle. Off by default. Ask for this when the problem
+                     is about LABELING rather than the drive — titles grouped
+                     wrongly as duplicates, labels that will not stick, names
+                     coming out wrong — because logs alone cannot show what
+                     the database thinks. Transfer passwords are excluded;
+                     your library metadata is not. See PRIVACY.
   --no-makemkv       Skip the `makemkvcon info disc:9999` probe. That probe
                      takes MakeMKV's drive lock, so skip it while a rip is
                      running or the rip will stall waiting for the drive.
@@ -97,6 +104,13 @@ PRIVACY
   ***REDACTED*** before the archive is created. It is a plain .tar.gz — open
   it and check before sending if you want to be sure.
 
+  With --with-db the archive also carries a database snapshot. Transfer
+  passwords are excluded from it. Your library metadata is not: disc and movie
+  titles, season/episode labels, output paths, and any destination hostnames
+  or usernames saved in transfer settings. That content is exactly what
+  labeling bugs live in, which is why the flag exists — but it is yours, so it
+  is opt-in and never collected unless you ask.
+
 MORE
   docs/HOST_OPTICAL_SETUP.md — the full walkthrough this script automates.
 __HELP__
@@ -106,12 +120,16 @@ CONTAINER=mkv-auto
 BUNDLE=no
 OUTDIR=
 SKIP_MAKEMKV=no
+WITH_DB=no
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --bundle) BUNDLE=yes; case "${2:-}" in -*|"") ;; *) OUTDIR="$2"; shift ;; esac ;;
     -c|--container) CONTAINER="${2:-mkv-auto}"; shift ;;
     --no-makemkv) SKIP_MAKEMKV=yes ;;
+    # Takes the same optional DIR as --bundle: it implies --bundle, so
+    # `--with-db /tmp` is the natural thing to type and must not error.
+    --with-db) WITH_DB=yes; BUNDLE=yes; case "${2:-}" in -*|"") ;; *) OUTDIR="$2"; shift ;; esac ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
@@ -543,6 +561,45 @@ find "$DEST" -type f -exec sed -i.bak -E \
   {} \; 2>/dev/null
 find "$DEST" -name '*.bak' -delete 2>/dev/null
 
+# ── database snapshot (--with-db) ────────────────────────────────────────────
+# Deliberately AFTER the redaction pass: pg_dump -Fc is a binary format and the
+# `sed -i` sweep above would corrupt it beyond restoring.
+#
+# Off by default. Logs alone cannot answer questions about labeling state —
+# which titles were grouped as duplicates, what the disc payload holds — and a
+# 1.6.2 bug (mkv-auto-release#8) took a rebuilt release candidate loaded with a
+# copy of production to diagnose because the bundle carried no database.
+#
+# transfer_credentials holds destination passwords in `value`, so its ROWS are
+# excluded while its schema stays, keeping the dump restorable.
+DB_NOTE=
+if [ "$WITH_DB" = yes ]; then
+  if [ "$CONTAINER_RUNNING" != yes ]; then
+    DB_NOTE="skipped — the container is not running, so Postgres cannot be reached"
+    say "$DB_NOTE" > "$DEST/database/README-no-db.txt" 2>/dev/null || {
+      mkdir -p "$DEST/database"; say "$DB_NOTE" > "$DEST/database/README-no-db.txt"; }
+  else
+    mkdir -p "$DEST/database"
+    if [ "$MODE" = container ]; then
+      su postgres -c "pg_dump -Fc --exclude-table-data=transfer_credentials -d discs" \
+        > "$DEST/database/discs.dump" 2>"$DEST/database/dump-errors.txt"
+    else
+      docker exec -u postgres "$CONTAINER" \
+        pg_dump -Fc --exclude-table-data=transfer_credentials -d discs \
+        > "$DEST/database/discs.dump" 2>"$DEST/database/dump-errors.txt"
+    fi
+    # A dump that failed leaves a short or empty file; do not ship a decoy.
+    if [ -s "$DEST/database/discs.dump" ] && [ "$(wc -c < "$DEST/database/discs.dump")" -gt 1024 ]; then
+      rm -f "$DEST/database/dump-errors.txt"
+      DB_NOTE="included ($(du -h "$DEST/database/discs.dump" 2>/dev/null | cut -f1))"
+    else
+      rm -f "$DEST/database/discs.dump"
+      DB_NOTE="failed — see database/dump-errors.txt"
+    fi
+  fi
+  say "database_snapshot=$DB_NOTE" >> "$DEST/environment.txt"
+fi
+
 cat > "$DEST/README.txt" <<EOF
 MKV-Auto support bundle — $STAMP (collected from: $MODE)
 
@@ -555,10 +612,26 @@ MKV-Auto support bundle — $STAMP (collected from: $MODE)
   makemkvcon-enumeration.txt  raw robot output of 'info disc:9999'
   logs/                       up to 12 newest logs, 2MB each
   docker-info.txt             engine posture (host collection only)
-  docker-inspect.json         container config (host collection only)
+  docker-inspect.json         container config (host collection only)$( [ "$WITH_DB" = yes ] && printf '\n  database/discs.dump         Postgres snapshot — %s' "$DB_NOTE" )
 
 Passwords, API keys and tokens have been replaced with ***REDACTED***.
-Skim it before sending if you want to be sure — it is a plain tar.gz.
+Skim it before sending if you want to be sure — it is a plain tar.gz.$( [ "$WITH_DB" = yes ] && cat <<'__DB__'
+
+ABOUT THE DATABASE SNAPSHOT
+  You asked for it with --with-db; it is never collected otherwise.
+
+  Transfer passwords are NOT in it: the rows of transfer_credentials are
+  excluded (its schema is kept so the dump still restores).
+
+  It DOES contain your library metadata — disc and movie titles, season and
+  episode labels, and output file paths — plus any transfer destination
+  hostnames or usernames saved in transfer_configs. That is the point: those
+  are what labeling bugs live in. If you would rather not share destination
+  details, say so and we will work from logs instead.
+
+  It is a Postgres custom-format dump. Nothing in it executes on its own.
+__DB__
+)
 EOF
 
 OUT="$OUTDIR/mkv-auto-support-$STAMP.tar.gz"

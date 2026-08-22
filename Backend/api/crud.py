@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 import logging
-from sqlalchemy import and_, or_, exists
+from sqlalchemy import and_, or_, exists, func
 from . import models
 from core.disc import Disc
 from core.utils import (
@@ -845,11 +845,24 @@ def _fill_blank_release_fields(rel: models.Release, payload: dict) -> list[str]:
     return filled
 
 
-def get_or_create_release(db: Session, payload: dict, disc_hash: str | None = None) -> models.Release | None:
+def get_or_create_release(
+    db: Session,
+    payload: dict,
+    disc_hash: str | None = None,
+    force_new: bool = False,
+) -> models.Release | None:
     """Create or fetch a release based on movie_id.
-    
+
     If disc_hash is provided and a disc with that hash already exists and has a release_id,
     return that existing release instead of creating a new one.
+
+    ``force_new`` is the user saying "make me another one" — they filled in the
+    create form for a show that already has releases, e.g. a second season. It
+    skips both resolve paths (the disc's current release, and the lookup by
+    movie+UPC) and goes straight to constructing a row. Default False, so every
+    existing caller keeps today's resolve-or-attach behaviour; the boxset flow
+    in particular is genuinely one release per (movie, boxset) and must not
+    start creating duplicates.
     """
     payload = dict(payload or {})
     boxset_id_early = payload.get("boxset_id")
@@ -861,7 +874,7 @@ def get_or_create_release(db: Session, payload: dict, disc_hash: str | None = No
 
     # First, check if disc already has a release (prevent duplicate releases)
     # BUT only reuse if movie_id matches - different movies in same boxset need separate releases
-    if disc_hash:
+    if disc_hash and not force_new:
         existing_disc = db.query(models.Disc).filter(models.Disc.content_hash == disc_hash).first()
         if existing_disc and existing_disc.release_id:
             # Disc already has a release - verify movie_id matches before reusing
@@ -957,8 +970,13 @@ def get_or_create_release(db: Session, payload: dict, disc_hash: str | None = No
             return None
     
     rel = None
-    
-    if boxset_id:
+
+    if force_new:
+        # The user asked for a new edition. Skip resolution entirely and fall
+        # through to construction below; the unique index still rejects an
+        # exact duplicate of (movie, name, upc).
+        rel = None
+    elif boxset_id:
         # If boxset_id is provided, look for release with matching movie_id AND boxset_id
         # Use with_for_update() to prevent race conditions
         rel = (
@@ -1109,21 +1127,17 @@ def get_or_create_release(db: Session, payload: dict, disc_hash: str | None = No
         )
         
         # Retry lookup with locking to get the release created by the other
-        # transaction. The unique-constraint shape determines what we can
-        # safely match on:
+        # transaction. Match the SAME key the database just rejected us on,
+        # or we lock and merge into the wrong row:
         #
-        # - With a boxset: there can be many releases per movie when scoped
-        #   inside a boxset, but only one per (movie, boxset) pair. Match
-        #   on both.
-        # - Standalone (no boxset): the partial unique index
-        #   `uq_releases_movie_standalone` (movie_id WHERE boxset_id IS NULL)
-        #   guarantees AT MOST ONE row, so matching purely on
-        #   (movie_id, boxset_id IS NULL) is both sufficient AND necessary.
-        #   The previous version filtered by `upc == payload.upc` to avoid
-        #   stomping on a divergent row, but that filter could miss the
-        #   conflicting row entirely (e.g. existing release has empty UPC,
-        #   payload has a real UPC) — leading to a 500 on the apply-release
-        #   endpoint instead of the intended merge.
+        # - With a boxset: many releases per movie are possible inside a
+        #   boxset, but only one per (movie, boxset) pair. Match on both.
+        # - Standalone (no boxset): `uq_releases_movie_edition_standalone`
+        #   is (movie_id, COALESCE(name,''), COALESCE(upc,'')) WHERE
+        #   boxset_id IS NULL. A movie can now hold several standalone
+        #   editions — seasons of one show, for instance — so matching on
+        #   (movie_id, boxset_id IS NULL) alone is no longer sufficient:
+        #   `.first()` over several rows returns an arbitrary one.
         if boxset_id:
             rel = (
                 db.query(models.Release)
@@ -1140,24 +1154,26 @@ def get_or_create_release(db: Session, payload: dict, disc_hash: str | None = No
                 .filter(
                     models.Release.movie_id == movie_id,
                     models.Release.boxset_id.is_(None),
+                    func.coalesce(models.Release.name, "") == (payload.get("release_name") or ""),
+                    func.coalesce(models.Release.upc, "") == (payload.get("upc") or ""),
                 )
                 .with_for_update()
                 .first()
             )
 
         if rel:
-            # Found the conflicting release, update it with payload metadata
-            rel.type = payload.get("group_type") or rel.type or "movie"
-            if not rel.name:
-                rel.name = payload.get("release_name") or None
-            rel.upc = payload.get("upc") or rel.upc
-            rel.asin = payload.get("asin") or rel.asin
-            rel.cover_front_url = payload.get("cover_front_url") or payload.get("movie_cover_url") or rel.cover_front_url
-            rel.cover_back_url = payload.get("cover_back_url") or rel.cover_back_url
-            rel.release_year = payload.get("release_year") or getattr(rel, "release_year", None)
-            release_res = payload.get("release_resolution") or payload.get("resolution")
-            if release_res:
-                rel.resolution = release_res
+            # Fill blanks only — never overwrite a value someone already set.
+            #
+            # This block used to assign upc/asin/covers/release_year straight
+            # from the payload. Because the old standalone index allowed only
+            # ONE release per movie, creating a second edition always landed
+            # here, and the new edition's metadata was written over the
+            # existing release, which was then returned as if it had been
+            # created. In production that stamped Season Two's UPC and ASIN
+            # onto Season Three and reported success (mkv-auto#821).
+            _fill_blank_release_fields(rel, payload)
+            if not getattr(rel, "type", None):
+                rel.type = payload.get("group_type") or "movie"
             db.commit()
             db.refresh(rel)
             _backfill_movie_cover_from_release(db, rel)

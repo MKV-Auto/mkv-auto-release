@@ -139,8 +139,9 @@
               backCoverLabel="Back Cover URL"
               cancelLabel="Cancel"
               [submitLabel]="loading ? 'Creating…' : 'Create'"
-              [prefill]="emptyEditionPrefill"
+              [prefill]="createFormPrefill"
               [resetVersion]="editionFormResetVersion"
+              (modelChange)="onCreateDraftChanged($event)"
               (cancelled)="cancelCreateForm()"
               (submitted)="onBoxsetEditionCreate($event)">
             </app-edition-metadata-form>
@@ -252,8 +253,9 @@
               backCoverLabel="Back Cover URL"
               cancelLabel="Cancel"
               [submitLabel]="loading ? 'Creating…' : 'Create'"
-              [prefill]="emptyEditionPrefill"
+              [prefill]="createFormPrefill"
               [resetVersion]="editionFormResetVersion"
+              (modelChange)="onCreateDraftChanged($event)"
               (cancelled)="cancelCreateForm()"
               (submitted)="onBoxsetEditionCreate($event)">
             </app-edition-metadata-form>

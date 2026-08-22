@@ -68,6 +68,16 @@ export class BoxsetSelectorComponent implements OnInit, OnDestroy {
   pendingEditSaving = false;
   editionFormResetVersion = 0;
   readonly emptyEditionPrefill: Partial<EditionFormValue> = {};
+  /** In-progress create, kept across the panel closing and reopening.
+   *
+   * The form's data lives in the child, and the child sits inside an *ngIf —
+   * so an outside click destroyed it and everything typed went with it. Same
+   * fix as release-selector (#821). */
+  createDraft: EditionFormValue | null = null;
+  /** Stable prefill reference for the create form; only ever reassigned in
+   * `seedCreateFormFromDraft()`. Handing the child a new object on every
+   * change-detection pass would wipe the field being typed in. */
+  createFormPrefill: Partial<EditionFormValue> = {};
   /** Stable prefill for complete-metadata (not a per-CD new object). */
   pendingBoxsetEditionPrefill: Partial<EditionFormValue> = {};
 
@@ -147,7 +157,12 @@ export class BoxsetSelectorComponent implements OnInit, OnDestroy {
 
   openPanel(): void {
     this.isOpen = true;
-    this.showCreateForm = false;
+    // An unfinished create survives the panel closing, so come back to it
+    // rather than dropping the user on the list with their typing gone.
+    this.showCreateForm = !!this.createDraft;
+    if (this.showCreateForm) {
+      this.seedCreateFormFromDraft();
+    }
     this.showPendingEdit = false;
     this.pendingEditPurpose = null;
     this.pendingEditBoxset = null;
@@ -162,8 +177,34 @@ export class BoxsetSelectorComponent implements OnInit, OnDestroy {
     this.pendingEditPurpose = null;
     this.pendingEditBoxset = null;
     this.pendingBoxsetEditionPrefill = {};
-    this.editionFormResetVersion++;
+    this.seedCreateFormFromDraft();
     this.cdr.markForCheck();
+  }
+
+  /** Point the child at the preserved draft (or a blank form) and re-apply it.
+   * `createFormPrefill` is replaced here and nowhere else — the child
+   * re-applies its prefill whenever that object's REFERENCE changes. */
+  private seedCreateFormFromDraft(): void {
+    this.createFormPrefill = this.createDraft ? { ...this.createDraft } : {};
+    this.editionFormResetVersion++;
+  }
+
+  /** Keystrokes from the create form. An all-blank form is not a draft —
+   * keeping one would reopen the create form for someone who only glanced. */
+  onCreateDraftChanged(value: EditionFormValue): void {
+    this.createDraft = this.hasCreateDraftContent(value) ? { ...value } : null;
+  }
+
+  private hasCreateDraftContent(value: EditionFormValue | null): boolean {
+    if (!value) return false;
+    return !!(
+      (value.name || '').trim() ||
+      value.year !== null && value.year !== undefined ||
+      (value.upc || '').trim() ||
+      (value.asin || '').trim() ||
+      (value.cover_front_url || '').trim() ||
+      (value.cover_back_url || '').trim()
+    );
   }
 
   closePanel(): void {
@@ -345,6 +386,9 @@ export class BoxsetSelectorComponent implements OnInit, OnDestroy {
       cover_back_url: v.cover_back_url || undefined,
     } as unknown as BoxsetSummary);
     this.showCreateForm = false;
+    // Submitted — the draft has served its purpose. closePanel() below
+    // deliberately does not clear it, so it must be cleared here.
+    this.createDraft = null;
     this.closePanel();
   }
 
@@ -356,6 +400,8 @@ export class BoxsetSelectorComponent implements OnInit, OnDestroy {
 
   cancelCreateForm(): void {
     this.showCreateForm = false;
+    // Cancel is the user saying "discard this". Closing the panel is not.
+    this.createDraft = null;
     this.cdr.markForCheck();
   }
 

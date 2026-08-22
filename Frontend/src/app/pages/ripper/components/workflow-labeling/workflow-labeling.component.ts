@@ -1720,6 +1720,12 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
       asin: releaseData.asin ?? null,
       cover_front_url: releaseData.cover_front_url ?? null,
       cover_back_url: releaseData.cover_back_url ?? null,
+      // The user filled in the create form, so this must not resolve to a
+      // release the show already has. Without it a second season silently
+      // returned the first one (#821). Selecting an existing release is a
+      // different path entirely (releaseSelected -> linkReleaseToContext) and
+      // never reaches here.
+      create_new: true,
     };
     const movieId = currentContext.labelForm?.movie_id;
     if (movieId) {

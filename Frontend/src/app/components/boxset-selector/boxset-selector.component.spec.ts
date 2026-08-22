@@ -42,6 +42,75 @@ describe('BoxsetSelectorComponent', () => {
     metadataSvc = TestBed.inject(MetadataService) as jasmine.SpyObj<MetadataService>;
   });
 
+  describe('#821: the create form keeps what the user typed', () => {
+    const typed = {
+      name: 'Star Wars: The Clone Wars - Seasons 1-5',
+      year: 2014,
+      upc: '786936841234',
+      asin: 'B00EXAMPLE',
+      cover_front_url: '',
+      cover_back_url: '',
+    };
+
+    it('survives the panel closing and reopening', () => {
+      component.openPanel();
+      component.openCreateForm();
+      component.onCreateDraftChanged({ ...typed });
+
+      component.closePanel();
+      component.openPanel();
+
+      expect(component.showCreateForm).toBeTrue();
+      expect(component.createFormPrefill).toEqual(jasmine.objectContaining({
+        name: typed.name, year: 2014, upc: typed.upc, asin: typed.asin,
+      }));
+    });
+
+    it('re-seeds by bumping resetVersion, without aliasing the draft', () => {
+      component.openCreateForm();
+      component.onCreateDraftChanged({ ...typed });
+      const before = component.editionFormResetVersion;
+
+      component.closePanel();
+      component.openPanel();
+
+      expect(component.editionFormResetVersion).toBeGreaterThan(before);
+      expect(component.createFormPrefill).not.toBe(component.createDraft as any);
+    });
+
+    it('does not reopen the create form for an untouched one', () => {
+      component.openCreateForm();
+      component.onCreateDraftChanged({
+        name: '', year: null, upc: '', asin: '', cover_front_url: '', cover_back_url: '',
+      });
+
+      component.closePanel();
+      component.openPanel();
+
+      expect(component.createDraft).toBeNull();
+      expect(component.showCreateForm).toBeFalse();
+    });
+
+    it('cancel discards the draft', () => {
+      component.openCreateForm();
+      component.onCreateDraftChanged({ ...typed });
+
+      component.cancelCreateForm();
+
+      expect(component.createDraft).toBeNull();
+      expect(component.showCreateForm).toBeFalse();
+    });
+
+    it('submitting the create discards the draft', () => {
+      component.openCreateForm();
+      component.onCreateDraftChanged({ ...typed });
+
+      component.onBoxsetEditionCreate({ ...typed } as any);
+
+      expect(component.createDraft).toBeNull();
+    });
+  });
+
   it('should create', () => {
     expect(component).toBeTruthy();
   });

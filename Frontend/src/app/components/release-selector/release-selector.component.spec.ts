@@ -28,6 +28,95 @@ describe('ReleaseSelectorComponent', () => {
     fixture.detectChanges();
   });
 
+  describe('#821: the create form keeps what the user typed', () => {
+    const typed = {
+      name: 'Star Wars Rebels: Complete Season Two',
+      year: 2016,
+      upc: '786936850840',
+      asin: 'B01GDJZJZ2',
+      cover_front_url: '',
+      cover_back_url: '',
+    };
+
+    it('survives the panel closing and reopening', () => {
+      component.openPanel();
+      component.openCreateForm();
+      component.onCreateDraftChanged({ ...typed });
+
+      // An outside click closes the panel, destroying the child form.
+      component.closePanel();
+      component.openPanel();
+
+      expect(component.showCreateForm).toBeTrue();
+      expect(component.createFormPrefill).toEqual(jasmine.objectContaining({
+        name: typed.name, year: 2016, upc: typed.upc, asin: typed.asin,
+      }));
+    });
+
+    it('re-seeds the child by bumping resetVersion, not by sharing the draft object', () => {
+      component.openCreateForm();
+      component.onCreateDraftChanged({ ...typed });
+      const before = component.editionFormResetVersion;
+
+      component.closePanel();
+      component.openPanel();
+
+      expect(component.editionFormResetVersion).toBeGreaterThan(before);
+      // Aliasing would let the child mutate the very draft being restored.
+      expect(component.createFormPrefill).not.toBe(component.createDraft as any);
+    });
+
+    it('does not reopen the create form for an untouched one', () => {
+      component.openCreateForm();
+      component.onCreateDraftChanged({
+        name: '', year: null, upc: '', asin: '', cover_front_url: '', cover_back_url: '',
+      });
+
+      component.closePanel();
+      component.openPanel();
+
+      expect(component.createDraft).toBeNull();
+      expect(component.showCreateForm).toBeFalse();
+    });
+
+    it('a successful create clears the draft', () => {
+      component.openCreateForm();
+      component.onCreateDraftChanged({ ...typed });
+      component.createSaving = true;
+      component.createResult = { ok: true, token: 1 };
+
+      component.ngOnChanges({
+        createResult: new SimpleChange(null, component.createResult, false),
+      });
+
+      expect(component.createDraft).toBeNull();
+    });
+
+    it('a rejected create keeps the draft so the user can fix it', () => {
+      component.openCreateForm();
+      component.onCreateDraftChanged({ ...typed });
+      component.createSaving = true;
+      component.createResult = { ok: false, error: 'UPC invalid', token: 2 };
+
+      component.ngOnChanges({
+        createResult: new SimpleChange(null, component.createResult, false),
+      });
+
+      expect(component.createDraft).not.toBeNull();
+      expect(component.createDraft!.name).toBe(typed.name);
+    });
+
+    it('cancel discards the draft', () => {
+      component.openCreateForm();
+      component.onCreateDraftChanged({ ...typed });
+
+      component.cancelCreateForm();
+
+      expect(component.createDraft).toBeNull();
+      expect(component.showCreateForm).toBeFalse();
+    });
+  });
+
   it('should create', () => {
     expect(component).toBeTruthy();
   });

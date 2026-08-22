@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-08-22
+
+### Fixed
+
+- **A show can now have more than one release.** Creating a second release for a series — Season Two alongside Season Three, say — did not work, and quietly did damage. No new release appeared, and the details you typed for the new one were written over the existing one, so correcting Season Three and then adding Season Two left you with a single entry holding a mixture of both. Behind this, a show was only ever allowed one release, because every season of a series is filed under the same show. Seasons and editions can now sit side by side, each keeping its own year, UPC, ASIN and artwork, and a disc can be assigned to whichever one it belongs to. Adding a new release no longer alters an existing one.
+- **The create form no longer forgets what you typed.** Filling in a new release or boxset, clicking somewhere else, and coming back lost every field and dropped you back on the list. Your entry is now still there when you return. Cancelling still clears it, and if a create is rejected the form keeps your values so you can fix the problem without typing it all again.
+
 ## [1.6.2] - 2026-08-15
 
 ### Fixed

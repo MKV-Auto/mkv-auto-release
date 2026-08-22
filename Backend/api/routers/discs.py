@@ -4081,8 +4081,18 @@ def create_release_for_disc(
         old_release_id=old_release_id,
     )
 
-    # Create or find release
-    target_release = crud.get_or_create_release(db, release_data, disc.content_hash)
+    # Create or find release.
+    #
+    # `create_new` is set by the client only when the user actually filled in
+    # the create-release form. Without it this endpoint resolves to whatever
+    # release the disc already has for that movie, so a second season could
+    # never be created — the request succeeded and silently returned the first
+    # season (mkv-auto#821). Attach-style callers omit the key and are
+    # unaffected.
+    force_new = bool(release_data.pop("create_new", False))
+    target_release = crud.get_or_create_release(
+        db, release_data, disc.content_hash, force_new=force_new
+    )
     if not target_release:
         _log_rb("POST /discs/.../releases failed", disc_id=disc_id, reason="get_or_create_release_empty")
         raise HTTPException(400, detail="Failed to create release")

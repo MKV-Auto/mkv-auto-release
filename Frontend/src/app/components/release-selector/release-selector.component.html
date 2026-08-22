@@ -125,8 +125,9 @@
               yearPlaceholder="2021"
               cancelLabel="Cancel"
               [submitLabel]="(loading || createSaving) ? 'Creating…' : 'Create Release'"
-              [prefill]="emptyEditionPrefill"
+              [prefill]="createFormPrefill"
               [resetVersion]="editionFormResetVersion"
+              (modelChange)="onCreateDraftChanged($event)"
               (cancelled)="cancelCreateForm()"
               (submitted)="onReleaseEditionCreate($event)">
             </app-edition-metadata-form>
@@ -229,8 +230,9 @@
               yearPlaceholder="2021"
               cancelLabel="Cancel"
               [submitLabel]="(loading || createSaving) ? 'Creating…' : 'Create Release'"
-              [prefill]="emptyEditionPrefill"
+              [prefill]="createFormPrefill"
               [resetVersion]="editionFormResetVersion"
+              (modelChange)="onCreateDraftChanged($event)"
               (cancelled)="cancelCreateForm()"
               (submitted)="onReleaseEditionCreate($event)">
             </app-edition-metadata-form>

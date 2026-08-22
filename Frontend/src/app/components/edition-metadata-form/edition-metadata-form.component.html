@@ -25,13 +25,13 @@
   <div class="epf-fields">
     <div class="epf-field">
       <label>{{ nameLabel }}</label>
-      <input type="text" [(ngModel)]="model.name" [placeholder]="namePlaceholder || ''" />
+      <input type="text" [(ngModel)]="model.name" (ngModelChange)="onModelChanged()" [placeholder]="namePlaceholder || ''" />
     </div>
     <div class="epf-field">
       <label>{{ yearLabel }}</label>
       <input
         type="number"
-        [(ngModel)]="model.year"
+        [(ngModel)]="model.year" (ngModelChange)="onModelChanged()"
         [placeholder]="yearPlaceholder || ''"
         min="1000"
         max="9999" />
@@ -41,22 +41,22 @@
         <label>{{ upcLabel }}</label>
         <input
           type="text"
-          [(ngModel)]="model.upc"
+          [(ngModel)]="model.upc" (ngModelChange)="onModelChanged()"
           placeholder="8, 12, 13 or 14 digits"
           title="GTIN-8, GTIN-12 (UPC-A), GTIN-13, GTIN-14" />
       </div>
       <div class="epf-field">
         <label>ASIN</label>
-        <input type="text" [(ngModel)]="model.asin" [placeholder]="asinPlaceholder" />
+        <input type="text" [(ngModel)]="model.asin" (ngModelChange)="onModelChanged()" [placeholder]="asinPlaceholder" />
       </div>
     </div>
     <div class="epf-field">
       <label>{{ frontCoverLabel }}</label>
-      <input type="text" [(ngModel)]="model.cover_front_url" placeholder="https://..." />
+      <input type="text" [(ngModel)]="model.cover_front_url" (ngModelChange)="onModelChanged()" placeholder="https://..." />
     </div>
     <div class="epf-field" *ngIf="theme !== 'movie'">
       <label>{{ backCoverLabel }}</label>
-      <input type="text" [(ngModel)]="model.cover_back_url" placeholder="https://..." />
+      <input type="text" [(ngModel)]="model.cover_back_url" (ngModelChange)="onModelChanged()" placeholder="https://..." />
     </div>
   </div>
   <div class="epf-errors" *ngIf="allErrors.length > 0">
