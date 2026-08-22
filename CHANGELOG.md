@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-08-22
+
+### Fixed
+
+- **Choosing a season no longer jumps back to a different one.** With more than one release on a series, picking Season Two could silently reassign the disc to Season One — on a freshly scanned disc as well as when moving one that was already assigned. The disc was linked correctly, then a fallback further along looked up "a release for this show", found whichever came first, and overwrote the choice. That fallback was safe while a show could only have one release; allowing several in 1.6.3 is what made it wrong. It now honours the release you picked, and where it genuinely cannot tell which one is meant it leaves the disc alone instead of guessing. Reported and root-caused by @Medformatik (#9).
+
 ## [1.6.3] - 2026-08-22
 
 ### Fixed
@@ -415,3 +421,19 @@ Internal `1.0.0` development milestone — never shipped publicly. Relabelled to
 
 [Unreleased]: https://github.com/MKV-Auto/mkv-auto-release/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/MKV-Auto/mkv-auto-release/releases/tag/v1.0.0
+
+---
+
+## Thanks
+
+Bug reports and analysis that shaped a release. If you would rather not be
+named here, say so on your issue and it will be removed.
+
+- **@NoSadBeHappy** — the Ungroup button doing nothing in a duplicate group, and
+  the support bundle that made it diagnosable ([#8], 1.6.2).
+- **@Medformatik** — traced multiple-releases-per-series to the exact migration
+  and the `IntegrityError` fallback, and separately found the disc-reassignment
+  bug that came with the fix ([#9], 1.6.4).
+
+[#8]: https://github.com/MKV-Auto/mkv-auto-release/issues/8
+[#9]: https://github.com/MKV-Auto/mkv-auto-release/issues/9

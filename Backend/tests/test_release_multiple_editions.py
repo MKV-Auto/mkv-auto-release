@@ -242,3 +242,121 @@ class TestForceNew:
             session, _payload(S3[0], S3[1], S3[2], movie_id=movie.id), disc.content_hash)
 
         assert again is not None and again.id == first.id
+
+
+class TestSelectingTheRightSeason:
+    """Selecting Season Two must not snap the disc back to Season One.
+
+    `_patch_disc_ops_internal` initialises its working `release` from
+    `disc.release`, which is None on a fresh disc. A disc op sets
+    `disc.release_id` but only the UNLINK branch ever updated that variable, so
+    the movie-only fallback further down still ran and reassigned the disc to
+    whichever standalone release came first for the movie.
+
+    That was invisible while `uq_releases_movie_standalone` guaranteed one row
+    per movie — `.first()` could only return the right one. Widening the key in
+    202608220000 turned it into a live bug, reported independently as
+    mkv-auto-release#9.
+    """
+
+    def _two_seasons(self, session):
+        movie = _movie(session)
+        three = crud.get_or_create_release(
+            session, _payload(S3[0], S3[1], S3[2], asin=S3[3], movie_id=movie.id))
+        two = crud.get_or_create_release(
+            session, _payload(S2[0], S2[1], S2[2], asin=S2[3], movie_id=movie.id))
+        assert three.id != two.id
+        return movie, three, two
+
+    def test_a_fresh_disc_stays_on_the_season_that_was_selected(self, session):
+        from api.routers.releases import _patch_disc_ops_internal
+
+        movie, three, two = self._two_seasons(session)
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"h-{uuid.uuid4().hex[:10]}")
+        session.add(disc)
+        session.commit()
+        assert disc.release_id is None, "must start unlinked — that is the reported case"
+
+        _patch_disc_ops_internal(
+            str(disc.id),
+            [
+                # What the UI actually sends: release metadata for the season
+                # chosen, plus the disc link. The release op is what populates
+                # release_data_from_ops and arms the movie-only fallback.
+                {"target": "release", "fields": {
+                    "movie_id": movie.id, "release_name": S2[0], "release_year": S2[1]}},
+                {"target": "disc", "fields": {"release_id": two.id}},
+            ],
+            session,
+        )
+        session.commit()
+
+        session.refresh(disc)
+        assert disc.release_id == two.id, "the disc was reassigned to another season"
+
+    def test_moving_a_linked_disc_between_seasons_sticks(self, session):
+        from api.routers.releases import _patch_disc_ops_internal
+
+        movie, three, two = self._two_seasons(session)
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"h-{uuid.uuid4().hex[:10]}",
+                           release_id=three.id)
+        session.add(disc)
+        session.commit()
+
+        _patch_disc_ops_internal(
+            str(disc.id),
+            [
+                {"target": "release", "fields": {
+                    "movie_id": movie.id, "release_name": S2[0], "release_year": S2[1]}},
+                {"target": "disc", "fields": {"release_id": two.id}},
+            ],
+            session,
+        )
+        session.commit()
+
+        session.refresh(disc)
+        assert disc.release_id == two.id
+
+    def test_an_unknown_release_id_is_reported_not_guessed(self, session):
+        from fastapi import HTTPException
+        from api.routers.releases import _patch_disc_ops_internal
+
+        movie, three, two = self._two_seasons(session)
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"h-{uuid.uuid4().hex[:10]}")
+        session.add(disc)
+        session.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            _patch_disc_ops_internal(
+                str(disc.id),
+                [{"target": "disc", "fields": {"release_id": "does-not-exist"}}],
+                session,
+            )
+        assert exc.value.status_code == 400
+        session.rollback()
+
+
+class TestFindStandaloneRelease:
+    def test_declines_when_several_could_match(self, session):
+        movie, *_ = None, None
+        movie = _movie(session)
+        crud.get_or_create_release(session, _payload(S3[0], S3[1], S3[2], movie_id=movie.id))
+        crud.get_or_create_release(session, _payload(S2[0], S2[1], S2[2], movie_id=movie.id))
+
+        assert crud.find_standalone_release(session, movie.id) is None, \
+            "guessing here is what reassigned a disc to the wrong season"
+
+    def test_narrows_by_upc(self, session):
+        movie = _movie(session)
+        crud.get_or_create_release(session, _payload(S3[0], S3[1], S3[2], movie_id=movie.id))
+        two = crud.get_or_create_release(session, _payload(S2[0], S2[1], S2[2], movie_id=movie.id))
+
+        found = crud.find_standalone_release(session, movie.id, upc=S2[2])
+        assert found is not None and found.id == two.id
+
+    def test_returns_the_only_one_when_unambiguous(self, session):
+        movie = _movie(session)
+        only = crud.get_or_create_release(session, _payload(S3[0], S3[1], S3[2], movie_id=movie.id))
+
+        found = crud.find_standalone_release(session, movie.id)
+        assert found is not None and found.id == only.id

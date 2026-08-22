@@ -1698,6 +1698,37 @@ def _patch_disc_ops_internal(
                             if old_boxset:
                                 cleanup_orphaned_boxset(db, old_boxset)
             else:
+                # An explicitly selected release must become the working
+                # `release`. Only the unlink branch above ever updated it, so a
+                # link op set `disc.release_id` and left `release` as it was —
+                # None on a fresh disc. The movie-only fallback further down
+                # then ran and reassigned the disc to whichever standalone
+                # release came first for that movie. That was invisible while
+                # only one could exist; now that a show can hold several,
+                # picking Season Two snapped the disc back to Season One
+                # (mkv-auto-release#9).
+                selected_release_id = fields.get("release_id")
+                if selected_release_id:
+                    # no_autoflush: `disc.release_id` was just set from the op
+                    # and is still pending. Any query here would autoflush it
+                    # first, so an id that does not exist surfaces as a raw
+                    # ForeignKeyViolation from deep inside SQLAlchemy instead of
+                    # the clear 400 below.
+                    with db.no_autoflush:
+                        selected = (
+                            db.query(db_models.Release)
+                            .filter(db_models.Release.id == selected_release_id)
+                            .first()
+                        )
+                    if not selected:
+                        # Better a clear error than falling through to the
+                        # guess — and disc.release_id already points at it, so
+                        # committing would fail on the foreign key anyway.
+                        raise HTTPException(
+                            400,
+                            detail=f"Release '{selected_release_id}' not found",
+                        )
+                    release = selected
                 if "disc_slug" in fields:
                     crud.apply_disc_slug_from_label_payload(disc, fields.get("disc_slug"))
                 elif "disc_name" in fields:
@@ -1888,14 +1919,12 @@ def _patch_disc_ops_internal(
                         .first()
                     )
                 else:
-                    # Look for release with matching movie_id and no boxset_id
-                    existing = (
-                        db.query(db_models.Release)
-                        .filter(
-                            db_models.Release.movie_id == movie_id,
-                            db_models.Release.boxset_id.is_(None)
-                        )
-                        .first()
+                    # Never guess: a movie may hold several standalone releases
+                    # now, and .first() over them reassigns the disc to an
+                    # arbitrary season (mkv-auto-release#9). Match on the same
+                    # fields the unique key uses and decline when ambiguous.
+                    existing = crud.find_standalone_release(
+                        db, movie_id, name=release_name, upc=release_data_from_ops.get("upc")
                     )
                 
                 if existing:
@@ -2829,14 +2858,9 @@ def update_disc_metadata(disc_id: str, payload: DiscMetadataUpdate, db: Session 
                         .first()
                     )
                 else:
-                    correct_release = (
-                        db.query(crud.models.Release)
-                        .filter(
-                            crud.models.Release.movie_id == movie_id,
-                            crud.models.Release.boxset_id.is_(None)
-                        )
-                        .first()
-                    )
+                    # Same reason as above: decline rather than pick a season
+                    # at random (mkv-auto-release#9).
+                    correct_release = crud.find_standalone_release(db, movie_id)
                 if correct_release:
                     target_release = correct_release
                 # If not found, leave target_release as-is; do not create
@@ -3251,14 +3275,8 @@ def save_disc_label(disc_id: str, label: LabelRequest, db: Session = Depends(get
                     .first()
                 )
             else:
-                existing = (
-                    db.query(crud.models.Release)
-                    .filter(
-                        crud.models.Release.movie_id == movie_id,
-                        crud.models.Release.boxset_id.is_(None)
-                    )
-                    .first()
-                )
+                # Same reason as above (mkv-auto-release#9).
+                existing = crud.find_standalone_release(db, movie_id)
             
             if existing:
                 release = existing

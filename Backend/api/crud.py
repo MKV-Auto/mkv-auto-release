@@ -845,6 +845,40 @@ def _fill_blank_release_fields(rel: models.Release, payload: dict) -> list[str]:
     return filled
 
 
+def find_standalone_release(
+    db: Session,
+    movie_id: str,
+    *,
+    name: str | None = None,
+    upc: str | None = None,
+):
+    """The standalone release meant by (movie_id [, name][, upc]), or None.
+
+    A movie may now hold several standalone releases — seasons of one show —
+    so `(movie_id, boxset_id IS NULL).first()` returns an ARBITRARY row. That
+    was safe while `uq_releases_movie_standalone` guaranteed at most one, and
+    became a bug the moment 202608220000 widened it: a user selecting Season
+    Two was silently reassigned to Season One (mkv-auto-release#9).
+
+    Narrow by the same fields the unique key uses, and decline to guess when
+    more than one candidate survives. Returning None is deliberate — reassigning
+    a disc to the wrong season is worse than leaving the caller to handle "I
+    cannot tell which one you meant".
+    """
+    q = (
+        db.query(models.Release)
+        .filter(models.Release.movie_id == movie_id, models.Release.boxset_id.is_(None))
+    )
+    if upc:
+        q = q.filter(models.Release.upc == upc)
+    if name:
+        q = q.filter(models.Release.name == name)
+    rows = q.limit(2).all()
+    if len(rows) == 1:
+        return rows[0]
+    return None
+
+
 def get_or_create_release(
     db: Session,
     payload: dict,
