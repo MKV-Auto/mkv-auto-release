@@ -1,0 +1,40 @@
+# Assign new issues to the maintainer so they raise a notification immediately.
+#
+# Watching a repository does not reliably notify on new issues, and a report
+# sitting unseen is the difference between a same-day answer and a week. Being
+# an assignee always notifies.
+#
+# Uses the default GITHUB_TOKEN - no secret to rotate. Existing assignees are
+# left alone, so assigning someone else by hand is not undone on reopen.
+name: Assign new issues
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign the maintainer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number }}
+          ASSIGNEES: ${{ join(github.event.issue.assignees.*.login, ',') }}
+        run: |
+          if [ -n "$ASSIGNEES" ]; then
+            echo "Already assigned to: $ASSIGNEES - leaving it alone."
+            exit 0
+          fi
+          # Do not fail the run if assignment is refused (e.g. the account
+          # cannot be assigned in this repo); a missed assignment must not
+          # show up as a red X on someone's bug report.
+          if gh issue edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --add-assignee acrossthesnow; then
+            echo "Assigned #$NUMBER to acrossthesnow"
+          else
+            echo "::warning::Could not assign #$NUMBER - check that acrossthesnow has access to this repository."
+          fi
