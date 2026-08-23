@@ -199,6 +199,74 @@ describe('TitleEditorComponent', () => {
     expect(component.showStatusPill()).toBeTrue();
   });
 
+  describe('#830: Specials (season 0) are a real season', () => {
+    it('effectiveSeason keeps 0 instead of falling back to the primary season', () => {
+      fixture.componentRef.setInput('title', makeTitle({ season: 0 }));
+      expect((component as any).effectiveSeason(2)).toBe(0);
+      fixture.componentRef.setInput('title', makeTitle({ season: null }));
+      expect((component as any).effectiveSeason(2)).toBe(2);
+    });
+
+    it('splits a merged option list into the season group and the Specials group', () => {
+      const opts = [
+        { season_number: 2, episode_number: 1, name: 'The Lost Commanders' },
+        { season_number: 0, episode_number: 2, name: 'The Siege of Lothal', runtime: 44 },
+      ] as any;
+      expect(component.regularOf(opts).map((e: any) => e.name)).toEqual(['The Lost Commanders']);
+      expect(component.specialsOf(opts).map((e: any) => e.name)).toEqual(['The Siege of Lothal']);
+    });
+
+    it('shows the Specials hint only on a season-0 row', () => {
+      fixture.componentRef.setInput('title', makeTitle({ type: 'Episode', season: 0, episode: 2 }));
+      fixture.componentRef.setInput('isSeries', true);
+      fixture.detectChanges();
+      expect((fixture.nativeElement as HTMLElement).textContent).toContain('Filed under Specials');
+
+      fixture.componentRef.setInput('title', makeTitle({ type: 'Episode', season: 2, episode: 1 }));
+      fixture.detectChanges();
+      expect((fixture.nativeElement as HTMLElement).textContent).not.toContain('Filed under Specials');
+    });
+  });
+
+  describe('Un-ignore is only offered when it would do something', () => {
+    // Un-ignore clears the USER type; effective type is user ?? auto. On a
+    // row automated detection flagged (auto_type='ignore'), clearing the
+    // user opinion reveals the auto opinion again and nothing changes. The
+    // button was a visible no-op until the user picked a type.
+    const toggleText = () => {
+      const root = fixture.nativeElement as HTMLElement;
+      const btn = [...root.querySelectorAll('.title-editor__type-row ui-btn')]
+        .find(b => /ignore/i.test(b.textContent || ''));
+      return btn ? (btn.textContent || '').trim() : null;
+    };
+
+    it('hides the toggle on an auto-flagged row awaiting review', () => {
+      fixture.componentRef.setInput('title', makeTitle({ type: 'ignore', auto_type: 'ignore', user_type: null }));
+      fixture.detectChanges();
+      expect(toggleText()).toBeNull();
+    });
+
+    it('hides it even after the user confirmed the auto-ignore', () => {
+      // Clearing user_type here would still reveal auto_type='ignore'.
+      fixture.componentRef.setInput('title', makeTitle({ type: 'ignore', auto_type: 'ignore', user_type: 'ignore' }));
+      fixture.detectChanges();
+      expect(toggleText()).toBeNull();
+    });
+
+    it('offers Un-ignore when the user ignored a row automation typed', () => {
+      // user cleared -> auto 'movie' resolves -> genuinely un-ignored.
+      fixture.componentRef.setInput('title', makeTitle({ type: 'ignore', auto_type: 'movie', user_type: 'ignore' }));
+      fixture.detectChanges();
+      expect(toggleText()).toBe('Un-ignore');
+    });
+
+    it('offers Ignore on a typed row', () => {
+      fixture.componentRef.setInput('title', makeTitle({ type: 'movie', auto_type: 'movie', user_type: null }));
+      fixture.detectChanges();
+      expect(toggleText()).toBe('Ignore');
+    });
+  });
+
   describe('Duplicate group panel — Re-group after a split (mkv-auto-release#8)', () => {
     const dupeSection = () => Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll('section.title-editor__dupe')
@@ -359,6 +427,30 @@ describe('TitleEditorComponent', () => {
       expect(picker).toBeTruthy();
       // Two episodes + "Select episode…" placeholder = 3 options.
       expect(picker!.querySelectorAll('option').length).toBe(3);
+    });
+
+    it('a row already on Specials still lists the disc season beside Specials (#830)', async () => {
+      const workflow = TestBed.inject(WorkflowService);
+      seedSeriesCatalog(workflow);
+      // Add a season-0 catalog next to season 1.
+      const ctx = (workflow as any)._activeContext$.value;
+      ctx.tmdbEpisodeCatalog.seasons.set(0, {
+        tmdb_id: '60625', season_number: 0, number_of_seasons: 1, series_name: 'Rick and Morty',
+        episodes: [{ season_number: 0, episode_number: 1, name: 'A Special',
+          overview: null, air_date: null, runtime: null, still_url: null }],
+      });
+      (workflow as any)._activeContext$.next({ ...ctx });
+      spyOn(workflow, 'ensureEpisodeSeasonLoaded');
+      fixture.componentRef.setInput('title', makeTitle({ type: 'episode', season: 0, episode: 1 }));
+      fixture.componentRef.setInput('isSeries', true);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      const picker = (fixture.nativeElement as HTMLElement).querySelector('select[aria-label="TMDB episode picker"]')!;
+      const groups = [...picker.querySelectorAll('optgroup')].map(g => g.getAttribute('label'));
+      expect(groups).toEqual(['Season 1', 'Specials']);
+      // placeholder + 2 season-1 episodes + 1 special
+      expect(picker.querySelectorAll('option').length).toBe(4);
     });
 
     it('does not render the picker when not a series', () => {

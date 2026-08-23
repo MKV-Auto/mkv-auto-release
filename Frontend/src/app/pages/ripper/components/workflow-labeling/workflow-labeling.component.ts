@@ -1425,6 +1425,13 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
           const selection = {
             releaseId: release.id,
             releaseSlug: release.slug,
+            // Carry the release's own metadata into the form. Without these the
+            // form kept its previous values — release_name="" when nothing had
+            // been assigned yet — and the autosave wrote that blank over the
+            // release's real name (see applyBoxsetLinkToForm).
+            ...(release.name ? { releaseName: release.name } : {}),
+            ...(release.release_year != null ? { releaseYear: release.release_year } : {}),
+            ...(release.cover_front_url ? { coverFrontUrl: release.cover_front_url } : {}),
             ...(release.boxset_id && release.boxset_id === boxsetId
               ? { boxsetId: release.boxset_id, boxsetSlug: boxsetSlugFromRel ?? undefined }
               : { boxsetId, boxsetSlug }),
@@ -1918,6 +1925,32 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
     }
   }
 
+  /** Put a freshly created/linked boxset release into the active form.
+   *
+   * Routes through applyMetadataSelectionToActiveContext — the same call the
+   * manual boxset selection uses — so the form, the persisted draft and the
+   * step-completion state all move together. Name, year and cover are
+   * included on purpose: a later autosave sends the whole form, and a form
+   * still holding release_name="" would blank the release's real name. */
+  applyBoxsetLinkToForm(release: any, boxset: any): void {
+    if (!release?.id) return;
+    this.workflowService.applyMetadataSelectionToActiveContext({
+      releaseId: release.id,
+      releaseSlug: release.slug,
+      ...(release.name ? { releaseName: release.name } : {}),
+      ...(release.release_year != null ? { releaseYear: release.release_year } : {}),
+      ...(release.cover_front_url ? { coverFrontUrl: release.cover_front_url } : {}),
+      boxsetId: release.boxset_id ?? boxset?.id ?? null,
+      boxsetSlug: boxset?.slug ?? (release as any).boxset_slug ?? null,
+    }).subscribe({
+      next: () => this.afterBoxsetSelectionSaved(),
+      error: (err) => {
+        this.metadataSaving = false;
+        this.logger.error('Failed to apply created boxset to the form:', err);
+      },
+    });
+  }
+
   private createBoxsetFromData(boxsetData: any): void {
     const currentContext = this.workflowService.getCurrentContext();
     if (!currentContext) {
@@ -1947,8 +1980,16 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
       },
       movieId
     ).subscribe({
-      next: () => {
-        // MetadataService has already updated its lists; backend emits workflow_context_updated
+      next: (result) => {
+        // Apply the response to the form. The backend has already created the
+        // boxset, a release named after it, and linked this disc — but the
+        // WebSocket patch this used to rely on deliberately carries none of
+        // those fields for a job context (it protects in-flight edits), so the
+        // form kept saying "no boxset" while the server said otherwise. The
+        // user then assigned it by hand, and that autosave carried the form's
+        // stale release_name="" back to the server, blanking the name the
+        // create had just set and disabling Continue on the boxset step.
+        this.applyBoxsetLinkToForm(result?.release, result?.boxset);
         this.toastService.show('Boxset created', 'success', 2000);
       },
       error: (err) => {

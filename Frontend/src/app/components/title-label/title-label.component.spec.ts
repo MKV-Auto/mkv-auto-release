@@ -145,6 +145,18 @@ describe('TitleLabelComponent', () => {
     expect(component.isIgnored({})).toBe(false);
   });
 
+  describe('playAllDetail (#831)', () => {
+    it('renders a contiguous run as a range and a gap as a list', () => {
+      expect(component.playAllDetail({ play_all_of: [8, 9, 10, 11, 12, 13] })).toBe('Titles 8–13.');
+      expect(component.playAllDetail({ play_all_of: [3, 5] })).toBe('Titles 3, 5.');
+    });
+    it('is null without parts', () => {
+      expect(component.playAllDetail({})).toBeNull();
+      expect(component.playAllDetail({ play_all_of: [] })).toBeNull();
+      expect(component.playAllDetail(null)).toBeNull();
+    });
+  });
+
   describe('getTitleDurationLabel', () => {
     it('renders seconds for sub-60s clips', () => {
       expect(component.getTitleDurationLabel({ duration: 45 })).toBe('45s');
@@ -911,6 +923,74 @@ describe('TitleLabelComponent', () => {
       const kept = { ...wrapper, user_type: 'BehindTheScenes' };
       component.titles = [kept, clip('c1', 'BehindTheScenes', WRAPPER)];
       expect(component.isSupersededWrapper(kept)).toBe(false);
+    });
+  });
+
+  describe('#830: two titles resolving to one episode become Part 1 / Part 2', () => {
+    it('assigns parts in disc order and batches both patches', () => {
+      const t1 = { title_id: 'a', type: 'Episode', season: 0, episode: 2, order_index: 0 };
+      const t2: any = { title_id: 'b', type: 'Episode', season: null, episode: null, order_index: 1 };
+      setTitles([t1, t2]);
+      const single: any[] = [], batch: any[] = [];
+      component.titlePatched.subscribe((p) => single.push(p));
+      component.titleBatchPatched.subscribe((b) => batch.push(b));
+
+      // The user picks "Specials · E2" for the second title too.
+      t2.season = 0; t2.episode = 2;
+      component.onEditorPatch({ title_id: 'b', season: 0, episode: 2 } as any);
+
+      expect(single.length).toBe(0);
+      expect(batch.length).toBe(1);
+      const byId = Object.fromEntries(batch[0].map((p: any) => [p.title_id, p]));
+      expect(byId['a']).toEqual(jasmine.objectContaining({ part: 1, part_of: 2 }));
+      expect(byId['b']).toEqual(jasmine.objectContaining({ part: 2, part_of: 2, season: 0, episode: 2 }));
+      expect(toastSpy.show).toHaveBeenCalled();
+    });
+
+    it('leaves hand-set parts alone', () => {
+      const t1 = { title_id: 'a', type: 'Episode', season: 0, episode: 2, part: 2, part_of: 2, order_index: 0 };
+      const t2: any = { title_id: 'b', type: 'Episode', season: null, episode: null, order_index: 1 };
+      setTitles([t1, t2]);
+      const single: any[] = [], batch: any[] = [];
+      component.titlePatched.subscribe((p) => single.push(p));
+      component.titleBatchPatched.subscribe((b) => batch.push(b));
+
+      t2.season = 0; t2.episode = 2;
+      component.onEditorPatch({ title_id: 'b', season: 0, episode: 2 } as any);
+
+      expect(batch.length).toBe(0);
+      expect(single.length).toBe(1);
+      expect(single[0].part).toBeUndefined();
+      expect(t1.part).toBe(2);   // untouched
+    });
+
+    it('a lone episode passes straight through', () => {
+      const t1 = { title_id: 'a', type: 'Episode', season: 2, episode: 1, order_index: 0 };
+      setTitles([t1]);
+      const single: any[] = [], batch: any[] = [];
+      component.titlePatched.subscribe((p) => single.push(p));
+      component.titleBatchPatched.subscribe((b) => batch.push(b));
+
+      component.onEditorPatch({ title_id: 'a', season: 2, episode: 1 } as any);
+
+      expect(batch.length).toBe(0);
+      expect(single.length).toBe(1);
+    });
+  });
+
+  describe('quick un-ignore toggle is only offered when it would do something', () => {
+    it('canUnignore is false on an auto-flagged row, confirmed or not', () => {
+      expect(component.canUnignore({ type: 'ignore', auto_type: 'ignore', user_type: null })).toBeFalse();
+      expect(component.canUnignore({ type: 'ignore', auto_type: 'ignore', user_type: 'ignore' })).toBeFalse();
+    });
+
+    it('canUnignore is true when only the user ignored it', () => {
+      expect(component.canUnignore({ type: 'ignore', auto_type: 'movie', user_type: 'ignore' })).toBeTrue();
+      expect(component.canUnignore({ type: 'ignore', auto_type: null, user_type: 'ignore' })).toBeTrue();
+    });
+
+    it('is not about un-ignoring at all on a typed row', () => {
+      expect(component.canUnignore({ type: 'movie', auto_type: 'movie' })).toBeFalse();
     });
   });
 

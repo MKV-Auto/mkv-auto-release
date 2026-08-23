@@ -836,10 +836,17 @@ class Disc:
                        title_id_to_part: dict = None, title_id_to_episode_end: dict = None,
                        progress_cb: Callable[[int, int, str], None] | None = None, source_hashes: dict = None,
                        media_server: str = "plex",
-                       dest_root: Path | None = None):
+                       dest_root: Path | None = None,
+                       disc_number: int | None = None,
+                       reserved_extra_names: set | None = None):
         """
         Master entry. Creates show folder, picks series vs movie, and runs
         the appropriate renamer.
+
+        ``disc_number`` + ``reserved_extra_names``: extras whose name is
+        already used on a lower-numbered sibling disc of the same release
+        get `` (Disc N)`` appended so sibling discs don't clobber each
+        other in the library (#831, core.extra_name_collisions).
 
         If job_id, release_type, movie_name, and production_year are provided,
         files will be copied to: ``<dest_root>/<Type>/<Movie> (<Production Year>)/``.
@@ -953,9 +960,9 @@ class Disc:
         is_series_result = self._is_series()
         ms = (media_server or "plex").strip().lower()
         if is_series_result:
-            renamed_paths = self._rename_series(origin_folder, show_folder, final_paths=final_paths, source_file_to_title=source_file_to_title, source_file_to_type=source_file_to_type, title_id_to_title=title_id_to_title, title_id_to_type=title_id_to_type, title_id_to_source_file=title_id_to_source_file, title_id_to_resolution=title_id_to_resolution, title_id_to_season=title_id_to_season, title_id_to_episode=title_id_to_episode, title_id_to_part=title_id_to_part, title_id_to_episode_end=title_id_to_episode_end, movie_name=movie_name, production_year=production_year, release_name=release_name, progress_cb=progress_cb, source_hashes=source_hashes, transient_root=transient_root, media_server=ms)
+            renamed_paths = self._rename_series(origin_folder, show_folder, final_paths=final_paths, source_file_to_title=source_file_to_title, source_file_to_type=source_file_to_type, title_id_to_title=title_id_to_title, title_id_to_type=title_id_to_type, title_id_to_source_file=title_id_to_source_file, title_id_to_resolution=title_id_to_resolution, title_id_to_season=title_id_to_season, title_id_to_episode=title_id_to_episode, title_id_to_part=title_id_to_part, title_id_to_episode_end=title_id_to_episode_end, movie_name=movie_name, production_year=production_year, release_name=release_name, progress_cb=progress_cb, source_hashes=source_hashes, transient_root=transient_root, media_server=ms, disc_number=disc_number, reserved_extra_names=reserved_extra_names)
         else:
-            renamed_paths = self._rename_movie(origin_folder, show_folder, final_paths=final_paths, source_file_to_title=source_file_to_title, source_file_to_type=source_file_to_type, title_id_to_title=title_id_to_title, title_id_to_type=title_id_to_type, title_id_to_source_file=title_id_to_source_file, title_id_to_edition=title_id_to_edition, title_id_to_resolution=title_id_to_resolution, movie_name=movie_name, production_year=production_year, release_name=release_name, progress_cb=progress_cb, source_hashes=source_hashes, transient_root=transient_root, media_server=ms)
+            renamed_paths = self._rename_movie(origin_folder, show_folder, final_paths=final_paths, source_file_to_title=source_file_to_title, source_file_to_type=source_file_to_type, title_id_to_title=title_id_to_title, title_id_to_type=title_id_to_type, title_id_to_source_file=title_id_to_source_file, title_id_to_edition=title_id_to_edition, title_id_to_resolution=title_id_to_resolution, movie_name=movie_name, production_year=production_year, release_name=release_name, progress_cb=progress_cb, source_hashes=source_hashes, transient_root=transient_root, media_server=ms, disc_number=disc_number, reserved_extra_names=reserved_extra_names)
         
         # Return mapping of title_id -> final relative path (from transient root)
         return renamed_paths or {}
@@ -966,7 +973,7 @@ class Disc:
         """
         return self.title_type == "Series"
 
-    def _rename_series(self, origin_folder: str, show_folder: str, final_paths: dict = None, source_file_to_title: dict = None, source_file_to_type: dict = None, title_id_to_title: dict = None, title_id_to_type: dict = None, title_id_to_source_file: dict = None, title_id_to_resolution: dict = None, title_id_to_season: dict = None, title_id_to_episode: dict = None, title_id_to_part: dict = None, title_id_to_episode_end: dict = None, movie_name: str = None, production_year: int = None, release_name: str = None, progress_cb: Callable[[int, int, str], None] | None = None, source_hashes: dict = None, transient_root: Path = None, media_server: str = "plex"):
+    def _rename_series(self, origin_folder: str, show_folder: str, final_paths: dict = None, source_file_to_title: dict = None, source_file_to_type: dict = None, title_id_to_title: dict = None, title_id_to_type: dict = None, title_id_to_source_file: dict = None, title_id_to_resolution: dict = None, title_id_to_season: dict = None, title_id_to_episode: dict = None, title_id_to_part: dict = None, title_id_to_episode_end: dict = None, movie_name: str = None, production_year: int = None, release_name: str = None, progress_cb: Callable[[int, int, str], None] | None = None, source_hashes: dict = None, transient_root: Path = None, media_server: str = "plex", disc_number: int | None = None, reserved_extra_names: set | None = None):
         """
         Rename each .mkv under origin_folder into:
         Plex: {ShowTitle}/Season {SS}/ShowTitle - s{SS}e{EE} - EpisodeName.1080p.mkv (4K uses .4k)
@@ -1335,6 +1342,12 @@ class Disc:
                 if not base_name:
                     base_name = sanitize_path_component(track.get("format") or "") or f"Track{tid}"
 
+                # Sibling-disc collision: the same extra name on a lower-
+                # numbered disc of this release → " (Disc N)" (#831).
+                if extra_sub and not episode_extra_ref and reserved_extra_names:
+                    from core.extra_name_collisions import disambiguate_extra_name
+                    base_name = disambiguate_extra_name(base_name, reserved_extra_names, disc_number)
+
                 # Optional resolution: prefer per-title resolution, fallback to disc resolution
                 res = None
                 if title_id_from_final_paths and title_id_to_resolution:
@@ -1552,7 +1565,7 @@ class Disc:
         # Return mapping of title_id -> final relative path
         return renamed_paths
 
-    def _rename_movie(self, origin_folder: str, show_folder: str, final_paths: dict = None, source_file_to_title: dict = None, source_file_to_type: dict = None, title_id_to_title: dict = None, title_id_to_type: dict = None, title_id_to_source_file: dict = None, title_id_to_edition: dict = None, title_id_to_resolution: dict = None, movie_name: str = None, production_year: int = None, release_name: str = None, progress_cb: Callable[[int, int, str], None] | None = None, source_hashes: dict = None, transient_root: Path = None, media_server: str = "plex"):
+    def _rename_movie(self, origin_folder: str, show_folder: str, final_paths: dict = None, source_file_to_title: dict = None, source_file_to_type: dict = None, title_id_to_title: dict = None, title_id_to_type: dict = None, title_id_to_source_file: dict = None, title_id_to_edition: dict = None, title_id_to_resolution: dict = None, movie_name: str = None, production_year: int = None, release_name: str = None, progress_cb: Callable[[int, int, str], None] | None = None, source_hashes: dict = None, transient_root: Path = None, media_server: str = "plex", disc_number: int | None = None, reserved_extra_names: set | None = None):
         """
         Rename each .mkv under origin_folder into:
         Plex: Title.1080p.mkv or Title.1080p {edition-Edition}.mkv (4K uses .4k)
@@ -1842,6 +1855,12 @@ class Disc:
             if not base_name:
                 base_name = f"Track{tid}"
                 title_source = "title_id_fallback"
+
+            # Sibling-disc collision: the same extra name on a lower-numbered
+            # disc of this release → " (Disc N)" (#831).
+            if extra_sub and reserved_extra_names:
+                from core.extra_name_collisions import disambiguate_extra_name
+                base_name = disambiguate_extra_name(base_name, reserved_extra_names, disc_number)
 
             # Per-title edition suffix: Plex uses {edition-...}; Jellyfin uses " - [Edition]"
             edition_suffix = ""

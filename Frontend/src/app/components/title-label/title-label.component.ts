@@ -186,6 +186,65 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     }
   }
 
+  /** Editor patches pass through here so the rail — which sees every title
+   * on the disc — can notice when two titles resolve to ONE episode.
+   *
+   * A disc that files a feature-length special as "Part 1" / "Part 2" maps
+   * both to the same TMDB entry (Rebels S00E02 "The Siege of Lothal", #830).
+   * Plex and Jellyfin stack such files into one episode only if they carry
+   * part numbers; without them two files claim the same s00e02 and one is
+   * dropped. So when a patch lands a title on a (season, episode) another
+   * title already holds, and no one in the set has chosen parts yet, assign
+   * Part 1..N in disc order and tell the user. Hand-set parts are left alone. */
+  onEditorPatch(patch: TitlePatchRequest): void {
+    const companions = this.multiPartCompanions(patch);
+    if (companions.length) {
+      this.titleBatchPatched.emit([patch, ...companions]);
+    } else {
+      this.titlePatched.emit(patch);
+    }
+  }
+
+  private multiPartCompanions(patch: TitlePatchRequest): TitlePatchRequest[] {
+    const season = patch.season;
+    const episode = patch.episode;
+    if (season == null || episode == null) return [];
+    const me = (this.titles || []).find((t) => this.getTitleId(t) === patch.title_id);
+    if (!me) return [];
+    const sameEpisode = (this.titles || []).filter((t) =>
+      this.getTitleId(t) !== patch.title_id &&
+      !this.isIgnored(t) &&
+      Number(t.season) === Number(season) &&
+      Number(t.episode) === Number(episode)
+    );
+    if (!sameEpisode.length) return [];
+    const group = [me, ...sameEpisode];
+    // Someone already decided parts (or a range) — not ours to rewrite.
+    if (group.some((t) => t.part != null || t.part_of != null || t.episode_end != null)) return [];
+
+    const ord = (t: any) => (t.order_index ?? t.index ?? 0);
+    group.sort((a, b) => ord(a) - ord(b));
+    const n = group.length;
+    const out: TitlePatchRequest[] = [];
+    group.forEach((t, i) => {
+      const part = i + 1;
+      t.part = part;
+      t.part_of = n;
+      if (this.getTitleId(t) === patch.title_id) {
+        patch.part = part;
+        patch.part_of = n;
+      } else {
+        out.push({ title_id: this.getTitleId(t) as string, part, part_of: n });
+      }
+    });
+    this.toast.show(
+      `${n} titles on this disc are the same episode — set as Part 1 to Part ${n} so they stack as one.`,
+      'info',
+    );
+    this.cdr.markForCheck();
+    return out;
+  }
+
   /** Handler for the editor's "Ungroup" / "Re-group" toggle. Fires the
    * backend endpoint directly (no parent indirection — this is a
    * self-contained per-title flag flip; the workflow-context refresh
@@ -497,6 +556,20 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     const auto = ((title as { auto_type?: string | null })?.auto_type || '').toString().toLowerCase();
     const user = ((title as { user_type?: string | null })?.user_type || '').toString().toLowerCase();
     return auto === 'ignore' && !user;
+  }
+
+  /** "Titles 8–13" for a play-all wrapper the backend detected by duration
+   * arithmetic (DVD; `play_all_of` on the context title, #831). */
+  playAllDetail(title: any): string | null {
+    const parts = title?.play_all_of;
+    if (!Array.isArray(parts) || parts.length === 0) return null;
+    const nums = parts.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n));
+    if (nums.length === 0) return null;
+    const sorted = [...nums].sort((a, b) => a - b);
+    const contiguous = sorted.every((n, i) => i === 0 || n === sorted[i - 1] + 1);
+    return contiguous && sorted.length > 1
+      ? `Titles ${sorted[0]}–${sorted[sorted.length - 1]}.`
+      : `Titles ${sorted.join(', ')}.`;
   }
 
   /** True when this title is the canonical playlist Path A identified. */
@@ -1364,6 +1437,16 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
    * confirms or overrides via the right-editor. */
   isUserIgnored(title: any): boolean {
     return (title?.user_type || '').toString().toLowerCase() === 'ignore';
+  }
+
+  /** True when the row's quick un-ignore toggle would actually do
+   * something. Mirrors TitleEditorComponent.canUnignore: clearing the
+   * user's type on a row with `auto_type === 'ignore'` reveals the auto
+   * opinion again and the row stays ignored, so the toggle is hidden there
+   * and the editor's banner points at the type picker instead. */
+  canUnignore(title: any): boolean {
+    if (!this.isIgnored(title)) return false;
+    return (title?.auto_type || '').toString().toLowerCase() !== 'ignore';
   }
 
   /** True when only automated detection has flagged the row as ignore

@@ -26,6 +26,13 @@ function drivesEqual(a: Drive, b: Drive): boolean {
 }
 
 // Merged interfaces from WorkflowCoordinatorService
+/** Fields the backend's `disc_metadata_updated` event may carry (#832).
+ * Mirrors `DISC_METADATA_UPDATED_FIELDS` in api/routers/websockets.py. */
+export const DISC_METADATA_UPDATED_FIELDS = [
+  'movie_name', 'release_name', 'info_title', 'disc_number',
+  'release_year', 'production_year', 'disc_format', 'resolution', 'release_image',
+] as const;
+
 export interface DiscMetadata {
   disc_id: string;
   disc_num?: string | null;
@@ -3150,6 +3157,39 @@ export class WorkflowService implements OnDestroy {
           this._discs.next(updatedDiscs);
         }
         break;
+
+      case 'disc_metadata_updated': {
+        // A label save changed what the card shows (show, release name, disc
+        // number). Merge ONLY identity fields into the matching card — never
+        // disc_state / scan_state / mount_point, which is why this is not a
+        // `disc_updated` (that handler dedupes unfinished cards and would
+        // drop the card for a label save on an ejected job) (#832).
+        const metaDiscId = message.disc_id ?? null;
+        const metaJobId = message.job_id ?? null;
+        if (!metaDiscId && !metaJobId) break;
+        let touched = false;
+        const mergedDiscs = this._discs.value.map(d => {
+          const matches =
+            (metaDiscId && d.disc_id === metaDiscId) ||
+            (metaJobId && d.job_id === metaJobId);
+          if (!matches) return d;
+          touched = true;
+          const next: DiscMetadata = { ...d };
+          for (const key of DISC_METADATA_UPDATED_FIELDS) {
+            if (Object.prototype.hasOwnProperty.call(message, key)) {
+              (next as any)[key] = message[key] ?? null;
+            }
+          }
+          // The carousel title falls back to info_title; keep it in step
+          // with the show name so a renamed show doesn't show stale text.
+          if (Object.prototype.hasOwnProperty.call(message, 'movie_name') && message.movie_name) {
+            next.info_title = message.movie_name;
+          }
+          return next;
+        });
+        if (touched) this._discs.next(mergedDiscs);
+        break;
+      }
         
       case 'job_unfinished':
         if (message.disc_state) {
@@ -6258,7 +6298,10 @@ export class WorkflowService implements OnDestroy {
    * previously errored, so it is safe to call on every render.
    */
   ensureEpisodeSeasonLoaded(season_number: number): void {
-    if (!Number.isFinite(season_number) || season_number <= 0) return;
+    // 0 is TMDB's Specials season and must be loadable: feature-length
+    // specials that a disc files at the head of a season (Rebels "The Siege
+    // of Lothal") live there, and the picker cannot offer them otherwise (#830).
+    if (!Number.isFinite(season_number) || season_number < 0) return;
     const tmdb_id = this.getActiveTmdbTvId();
     if (!tmdb_id) return;
     const c = this._activeContext$.value?.tmdbEpisodeCatalog;

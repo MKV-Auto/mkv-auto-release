@@ -1880,7 +1880,8 @@ def get_disc_workflow_context_by_mount(
     # mounts and the title list renders every sibling as its own row.
     dedupe_groups: list[dict] = []
     if disc_id:
-        attach_duplicate_info(titles_by_id, disc_id)
+        _disc_format = getattr(disc_record, "format", None) if disc_record else None
+        attach_duplicate_info(titles_by_id, disc_id, disc_format=_disc_format)
         try:
             from core.path_b_dedupe import (
                 annotate_titles_with_dedupe_group as _annotate_dedupe,
@@ -1888,7 +1889,7 @@ def get_disc_workflow_context_by_mount(
                 compute_mpls_clip_index as _compute_clip_index,
                 fold_subsumption_into_groups as _fold_subsumption,
             )
-            _groups = _compute_dedupe(titles_by_id)
+            _groups = _compute_dedupe(titles_by_id, disc_format=_disc_format)
             # Fold subsumed m2ts into their wrapper's group (parity with the
             # job-scoped builder). Read-only: persistence of the subsumption
             # marks stays on the job context path.
@@ -1897,6 +1898,10 @@ def get_disc_workflow_context_by_mount(
             )
             _annotate_dedupe(titles_by_id, _groups)
             dedupe_groups = [g.to_dict() for g in _groups]
+            from core.play_all_wrapper import annotate_play_all_of as _annotate_play_all
+            from core.segment_identity import segment_maps_identify_content as _maps_identify
+            if not _maps_identify(_disc_format):
+                _annotate_play_all(titles_by_id)
         except Exception as _exc:
             log.warning(
                 "Disc workflow-context: dedupe-group computation failed for "
@@ -2381,7 +2386,8 @@ def get_disc_workflow_context_by_id(
     # collapse permutation siblings into one row.
     dedupe_groups: list[dict] = []
     if disc_id:
-        attach_duplicate_info(titles_by_id, disc_id)
+        _disc_format = getattr(disc_record, "format", None) if disc_record else None
+        attach_duplicate_info(titles_by_id, disc_id, disc_format=_disc_format)
         try:
             from core.path_b_dedupe import (
                 annotate_titles_with_dedupe_group as _annotate_dedupe,
@@ -2389,7 +2395,7 @@ def get_disc_workflow_context_by_id(
                 compute_mpls_clip_index as _compute_clip_index,
                 fold_subsumption_into_groups as _fold_subsumption,
             )
-            _groups = _compute_dedupe(titles_by_id)
+            _groups = _compute_dedupe(titles_by_id, disc_format=_disc_format)
             # Fold subsumed m2ts into their wrapper's group (parity with the
             # job-scoped builder). Read-only: persistence of the subsumption
             # marks stays on the job context path.
@@ -2398,6 +2404,10 @@ def get_disc_workflow_context_by_id(
             )
             _annotate_dedupe(titles_by_id, _groups)
             dedupe_groups = [g.to_dict() for g in _groups]
+            from core.play_all_wrapper import annotate_play_all_of as _annotate_play_all
+            from core.segment_identity import segment_maps_identify_content as _maps_identify
+            if not _maps_identify(_disc_format):
+                _annotate_play_all(titles_by_id)
         except Exception as _exc:
             log.warning(
                 "Disc-id workflow-context: dedupe-group computation failed "

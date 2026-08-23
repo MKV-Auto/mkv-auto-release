@@ -10,6 +10,7 @@ export type ObfuscationReason =
   | 'makemkv_msg3307'
   | 'duration_short'
   | 'low_bitrate_decoy'
+  | 'play_all_wrapper'
   | null
   | undefined;
 
@@ -68,7 +69,19 @@ export class ObfuscationBadgeComponent {
    * NULL/undefined renders nothing (no badge). */
   @Input() reason: ObfuscationReason = null;
 
+  /** Optional specifics appended to the tooltip — e.g. which titles a
+   * play-all wrapper runs ("Titles 8–13"). */
+  @Input() detail: string | null = null;
+
   get view(): BadgeView {
+    const base = this.baseView;
+    if (this.detail && base.label) {
+      return { ...base, tooltip: `${base.tooltip} ${this.detail}`.trim() };
+    }
+    return base;
+  }
+
+  private get baseView(): BadgeView {
     switch (this.reason) {
       case 'segment_set_sibling':
         return {
@@ -109,6 +122,14 @@ export class ObfuscationBadgeComponent {
           label: 'Decoy',
           tooltip:
             'Bitrate is implausibly low for the declared resolution (e.g. 4K HEVC at ~1 Mbps when real UHD content is 30-100 Mbps). The rip looks like decoy / filler content masquerading as a full title.',
+        };
+      case 'play_all_wrapper':
+        return {
+          tone: 'amber',
+          icon: 'info',
+          label: 'Play All',
+          tooltip:
+            'This title runs the titles listed next to it back to back — its duration is exactly their sum. The parts are ripped individually, so this copy is skipped; give it a type if you want the single file instead.',
         };
     }
     // Legacy boolean fallback so pre-Phase-1 callers still render.

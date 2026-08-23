@@ -25,9 +25,14 @@ instead of silently picking one.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
+
+from core.segment_identity import segment_maps_identify_content
+
+_log = logging.getLogger(__name__)
 
 
 # Per-process memo of the most recent (apply_obfuscation_reason / apply_subsumption)
@@ -219,6 +224,7 @@ def compute_dedupe_groups(
     *,
     duration_tolerance_pct: float = 1.0,
     min_group_size: int = 2,
+    disc_format: str | None = None,
 ) -> list[DedupeGroup]:
     """Compute Path B dedupe groups from a workflow-context titles dict.
 
@@ -227,6 +233,10 @@ def compute_dedupe_groups(
             payload should carry segment_map, duration, type, obfuscation_flag,
             metadata_scan, source_file, size — anything missing degrades the
             heuristic gracefully.
+        disc_format: the disc's recorded format. On DVD the segment map is
+            the PGC-relative cell list — shape, not identity — so no groups
+            are computed at all (#831; see core.segment_identity). None keeps
+            the legacy (Blu-ray) behaviour.
         duration_tolerance_pct: titles within this % of each other count as
             same-duration. Defaults to 1% per the plan; the plan explicitly
             calls out that two cuts using same segments in completely
@@ -240,6 +250,8 @@ def compute_dedupe_groups(
         Singletons, titles without segment_map, and titles the user has
         explicitly ungrouped are excluded.
     """
+    if not segment_maps_identify_content(disc_format):
+        return []
     by_seg: dict[str, list[str]] = {}
     for tid, payload in titles_by_id.items():
         if not isinstance(payload, dict):
@@ -699,6 +711,29 @@ def apply_path_b_marks_for_disc(db: Any, disc_id: str) -> tuple[int, int, int, i
     )
     if not rows:
         return (0, 0, 0, 0)
+    disc_row = db.query(db_models.Disc).filter(db_models.Disc.id == disc_id).first()
+    if not segment_maps_identify_content(getattr(disc_row, "format", None)):
+        # DVD: the shape-keyed marks this pass would write are meaningless.
+        # Clear any it wrote before it knew that (#831) and do nothing else;
+        # `duplicate_group_sync.release_segment_map_demotions` handles the
+        # active / auto_type side of the same heal.
+        cleared = 0
+        for r in rows:
+            if getattr(r, "obfuscation_reason", None) == "segment_set_sibling":
+                r.obfuscation_reason = None
+                r.obfuscation_flag = False
+                cleared += 1
+        # What a DVD *does* have is arithmetic: a play-all PGC is the sum of
+        # its parts. The duration-sum detector is the DVD stand-in for the
+        # m2ts ⊆ mpls fold below (#831).
+        from core.play_all_wrapper import apply_play_all_wrapper_marks
+        wrappers_marked, wrappers_cleared = apply_play_all_wrapper_marks(db, rows)
+        if wrappers_marked or wrappers_cleared:
+            _log.info(
+                "apply_path_b_marks_for_disc disc_id=%s: play-all wrappers marked=%s cleared=%s",
+                disc_id, wrappers_marked, wrappers_cleared,
+            )
+        return (cleared, 0, 0, 0)
     titles_by_id: dict[str, dict] = {}
     for r in rows:
         rid = str(getattr(r, "id", "") or "")

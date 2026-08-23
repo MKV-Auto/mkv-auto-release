@@ -39,6 +39,16 @@ describe('ObfuscationBadgeComponent', () => {
     expect(pillTone()).toBe('red');
   });
 
+  it('reason="play_all_wrapper" renders an amber "Play All" pill, detail lands in the tooltip (#831)', () => {
+    component.reason = 'play_all_wrapper';
+    component.flagged = true;
+    component.detail = 'Titles 8–13.';
+    expect(html()).toContain('Play All');
+    expect(html()).not.toContain('Decoy');
+    expect(pillTone()).toBe('amber');
+    expect(component.view.tooltip).toContain('Titles 8–13.');
+  });
+
   it('HIGH tier: reason="path_a_decoy" renders a red "Decoy" pill', () => {
     component.reason = 'path_a_decoy';
     component.flagged = true;

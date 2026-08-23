@@ -714,6 +714,20 @@ def _apply_label_to_records(disc, lp: Dict[str, Any], db: Session) -> None:
             and str(incoming).strip() == str(slug_hint).strip()
         ):
             incoming = getattr(rel, "name", None)
+        # A boxset-member release takes its name from the boxset; a blank here
+        # is never a deliberate edition name, it is a stale client form. The
+        # jobs PATCH merges the client's labelForm over the server's, so a UI
+        # that had not yet learned a boxset was created sent release_name=""
+        # on its next autosave and blanked the name the create had just set —
+        # which then disabled Continue on the boxset step (the step gate
+        # requires a non-blank name). Blank-as-edition-name stays allowed for
+        # standalone releases, where it is documented and intentional.
+        if (
+            (incoming is None or not str(incoming).strip())
+            and getattr(rel, "boxset_id", None)
+            and (getattr(rel, "name", None) or "").strip()
+        ):
+            incoming = rel.name
         rel.name = incoming  # Can be None/blank for edition name
         rel.title = rel.name or rel.title
         # Release slug is auto-generated, ignore if provided
@@ -2475,7 +2489,10 @@ def start_rip(req: JobCreate, db: Session = Depends(get_db)):
             )
             titles_for_gate = (disc_info or {}).get("titles") or {}
             disc_size_bytes = (disc_info or {}).get("disc_size_bytes")
-            decision = evaluate_path_a_trigger(titles_for_gate, disc_size_bytes)
+            decision = evaluate_path_a_trigger(
+                titles_for_gate, disc_size_bytes,
+                disc_format=(disc_info or {}).get("disc_format"),
+            )
             if decision.needs_user_choice:
                 log.info(
                     "POST /jobs/rip rid=%s deferring to Path A modal: %s",
@@ -5543,6 +5560,11 @@ def save_label(job_id: str, label: LabelRequest, db: Session = Depends(get_db)):
         raise HTTPException(409, detail=str(exc)) from exc
     db.refresh(job)
     db.refresh(disc)
+    try:
+        from api.routers.websockets import schedule_disc_metadata_updated
+        schedule_disc_metadata_updated(str(disc.id), job_id)  # card carousel (#832)
+    except Exception as exc:
+        log.warning(f"Failed to schedule disc_metadata_updated for job {job_id}: {exc}")
     return get_status(job_id, db)
 
 
@@ -7305,7 +7327,8 @@ def get_job_workflow_context(job_id: str, db: Session = Depends(get_db), *, _pre
     dedupe_groups: list[dict] = []
     if job.disc and titles:
         titles_by_id_ref = {str(t.get("title_id") or t.get("src")): t for t in titles}
-        attach_duplicate_info(titles_by_id_ref, str(job.disc.id))
+        _disc_format = getattr(job.disc, "format", None)
+        attach_duplicate_info(titles_by_id_ref, str(job.disc.id), disc_format=_disc_format)
 
         # Path B sorted-segment-set dedupe: parallel grouping that captures
         # the Midway-class case order-preserving grouping misses. Annotate
@@ -7327,7 +7350,7 @@ def get_job_workflow_context(job_id: str, db: Session = Depends(get_db), *, _pre
             fold_subsumption_into_groups as _fold_subsumption,
         )
         clip_index = _compute_clip_index(titles_by_id_ref)
-        groups_path_b = _compute_dedupe(titles_by_id_ref)
+        groups_path_b = _compute_dedupe(titles_by_id_ref, disc_format=_disc_format)
         # The fold runs on the response annotation only — component clips
         # collapse into their wrapper's group in the left rail. The
         # persisted marks were applied (in the same order: reason before
@@ -7335,6 +7358,12 @@ def get_job_workflow_context(job_id: str, db: Session = Depends(get_db), *, _pre
         groups_path_b = _fold_subsumption(groups_path_b, clip_index, titles_by_id_ref)
         _annotate_dedupe(titles_by_id_ref, groups_path_b)
         dedupe_groups = [g.to_dict() for g in groups_path_b]
+        # DVD: no clip identity, so the play-all relationship comes from the
+        # duration-sum detector instead of the subsumption fold (#831).
+        from core.play_all_wrapper import annotate_play_all_of as _annotate_play_all
+        from core.segment_identity import segment_maps_identify_content as _maps_identify
+        if not _maps_identify(_disc_format):
+            _annotate_play_all(titles_by_id_ref)
 
     # 5. Options are NOT loaded here - frontend fetches them separately via GET /discs/options
     
@@ -7798,6 +7827,13 @@ def save_job_workflow_context(
                 log.warning(f"Failed to schedule websocket emission for job {job_id}: {exc}")
     except Exception as exc:
         log.warning(f"Failed to emit workflow context change notification to websocket for job {job_id}: {exc}")
+    # The card carousel reads a different channel than the workflow context;
+    # tell it the disc's identity fields may have changed (#832).
+    try:
+        from api.routers.websockets import schedule_disc_metadata_updated
+        schedule_disc_metadata_updated(str(disc.id) if disc is not None else None, job_id)
+    except Exception as exc:
+        log.warning(f"Failed to schedule disc_metadata_updated for job {job_id}: {exc}")
     
     return context
 

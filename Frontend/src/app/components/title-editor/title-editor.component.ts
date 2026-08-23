@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, EventEmitter, inject, Input, OnChanges, OnDestroy, Output, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { BehaviorSubject, Observable, of, Subscription } from 'rxjs';
+import { BehaviorSubject, Observable, combineLatest, of, Subscription } from 'rxjs';
 import { map, switchMap, distinctUntilChanged, startWith } from 'rxjs/operators';
 import { PreviewViewerComponent } from '../preview-viewer/preview-viewer.component';
 import { IconComponent } from '../../ui/icon/icon.component';
@@ -224,13 +224,32 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
   readonly episodeOptions$: Observable<TmdbEpisodeSummary[] | 'loading' | 'error' | 'unavailable'> =
     this.workflow.getPrimarySeason$().pipe(
       switchMap((primary) => {
-        const season = this.effectiveSeason(primary);
+        const own = this.effectiveSeason(primary);
+        // The main group is the row's own season — or, when the row is
+        // already on Specials, the disc's primary season, so the user can
+        // always move a title back out of Specials (seen on the RC: a
+        // Siege of Lothal part set to season 0 offered Specials only).
+        const season = own === 0 ? (primary || 1) : own;
         // The prefetch only loads the disc's PRIMARY season, and the getter
         // below is a pure reader — so a title on any other season resolved to
         // 'unavailable' forever and the picker never appeared. Ask for this
         // title's own season; the call is idempotent.
         this.workflow.ensureEpisodeSeasonLoaded(season);
-        return this.workflow.getEpisodesForSeason$(season);
+        // Always offer the show's Specials too (#830). A feature-length
+        // special the disc files at the head of a season lives in TMDB's
+        // season 0; a user has no way to know that, so it has to be visible
+        // next to the season's episodes. Specials are optional: if season 0
+        // is missing or errors, the season's list still renders alone.
+        this.workflow.ensureEpisodeSeasonLoaded(0);
+        return combineLatest([
+          this.workflow.getEpisodesForSeason$(season),
+          this.workflow.getEpisodesForSeason$(0),
+        ]).pipe(
+          map(([main, specials]) => {
+            if (!Array.isArray(main)) return main;
+            return Array.isArray(specials) ? [...main, ...specials] : main;
+          }),
+        );
       }),
       distinctUntilChanged(),
     );
@@ -267,8 +286,28 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
   /** Per-row effective season — track.season override, else disc primary. */
   private effectiveSeason(primary: number): number {
     const t = this.title?.season;
+    // Unset means "use the disc's season". Checked explicitly because
+    // Number(null) === 0, and 0 is now a real season (Specials, #830) —
+    // the old `> 0` test hid that coincidence; `>= 0` alone would have sent
+    // every untyped title to the Specials catalog.
+    if (t === null || t === undefined || t === '') return primary || 1;
     const n = Number(t);
-    return Number.isFinite(n) && n > 0 ? n : (primary || 1);
+    return Number.isFinite(n) && n >= 0 ? n : (primary || 1);
+  }
+
+  /** Season 0 in TMDB terms. Drives the Specials hint under the season field. */
+  get isSpecialsRow(): boolean {
+    return Number(this.title?.season) === 0;
+  }
+
+  /** Episodes from season 0, for the Specials group in the picker. */
+  specialsOf(opts: TmdbEpisodeSummary[]): TmdbEpisodeSummary[] {
+    return (opts || []).filter(e => e.season_number === 0);
+  }
+
+  /** Episodes from the row's own season, for the main group in the picker. */
+  regularOf(opts: TmdbEpisodeSummary[]): TmdbEpisodeSummary[] {
+    return (opts || []).filter(e => e.season_number !== 0);
   }
 
   /** Index of the currently-set (season, episode) in the options list, or -1.
@@ -418,6 +457,20 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
     return auto === 'ignore' && !user;
   }
 
+  /** True when "Un-ignore" would actually do something.
+   *
+   * Un-ignore clears only the USER's type; the effective type is
+   * `user_type ?? auto_type`. On a row automated detection flagged
+   * (`auto_type === 'ignore'`) clearing the user opinion just reveals the
+   * auto opinion again, so the row stays ignored — whether or not the user
+   * has since confirmed it. The only way off an automatic ignore is to pick
+   * a type, which the banner above the field already says. Offering a button
+   * that silently does nothing is what confused users. */
+  get canUnignore(): boolean {
+    if (!this.title || !this.isIgnored()) return false;
+    return (this.title.auto_type || '').toString().toLowerCase() !== 'ignore';
+  }
+
   /** User confirms an automated ignore decision. Flips `user_type` to
    * 'ignore' so the chip system promotes the row from blank to
    * "Ignored" and Show-ignored gating kicks in on the next render.
@@ -529,6 +582,7 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
     if (reason === 'path_a_decoy') return 'Skipped by exploratory-rip match';
     if (reason === 'makemkv_msg3307') return 'MakeMKV flagged as likely decoy';
     if (reason === 'subsumed') return 'Component clip wrapped by this playlist';
+    if (reason === 'play_all_wrapper') return 'Play All of titles listed separately on this disc';
     return '';
   }
 

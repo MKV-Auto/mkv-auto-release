@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.6] - 2026-08-23
+
+### Added
+
+- **Series specials can now be picked while labelling.** Feature-length specials that a disc files at the start of a season — Star Wars Rebels' "The Siege of Lothal" Parts 1 and 2, say — live under Specials in TMDB, Plex and Jellyfin, not in the season itself. The episode picker now lists the show's Specials in their own group beside the season's episodes, so you pick "Specials · E2 · The Siege of Lothal" instead of needing to know that means season 0. When two titles on a disc resolve to the same episode, they are set as Part 1 and Part 2 automatically so Plex and Jellyfin stack them into one, and a short note explains where the special will appear in each server. Specials is also offered as the season for a whole disc, for pilot movies and holiday specials.
+
+### Fixed
+
+- **DVD box sets no longer lose all but one episode per disc.** On a DVD, MakeMKV describes every title by the shape of its program chain rather than by the video it points at, so six different 22-minute episodes all look identical to the duplicate detector and were collapsed into one "duplicate" group: one episode shown, the rest hidden with nothing to expand and no un-hide control, on every disc of a season. That detector is built for Blu-ray, where the same signal really does mean "same content", and it now stands down on DVDs. Discs that were already hidden this way are released automatically on the next start — every title comes back, and anything you had ignored yourself stays ignored. The same pass now recognises a DVD's "Play All" title by arithmetic (its length is exactly the sum of the shorts next to it), marks it *Play All* and skips it in favour of the individually named parts — give it a type if you want the single file instead. And an extra that shares its name with one on a lower-numbered disc of the same release — "Rebels Recon – Play All" on all four discs — is saved as `… (Disc N)` so the discs no longer overwrite each other in the library.
+- **Job cards now show the season or edition, and update as you label.** Cards read "Star Wars Rebels · (2014) · DVD · Disc 2" with nothing to say *which* season; the release name now sits in that line ("(2014) · Season Two · DVD · Disc 2"; "Director's Cut · UHD" for movies). And setting the disc number or show while labelling no longer needs a page refresh to reach the card.
+- **Creating a boxset while labelling now assigns the disc to it straight away.** After creating a boxset from the labelling form, the page carried on showing no boxset assigned even though the assignment had been made, so you had to pick it from the dropdown by hand. Worse, that manual pick could then blank the new release's name, which disabled Continue on the boxset step — and a page refresh did not bring it back. The form now takes the new boxset and release directly from the create, and a release that belongs to a boxset can no longer have its name wiped by a stale form.
+- **No more Un-ignore button that does nothing.** On titles that automated detection had flagged as ignore, pressing Un-ignore appeared to work and changed nothing: the title stayed ignored until you chose a type. That is how the flag is meant to be overridden — clearing your own choice only reveals the automatic one again — so the button is no longer offered on those rows. The banner above the type field already says to pick a type to keep the title. Titles you ignored yourself still have Un-ignore, because there it genuinely works.
+
 ## [1.6.5] - 2026-08-23
 
 ### Fixed

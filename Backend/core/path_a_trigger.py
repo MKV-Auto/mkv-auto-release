@@ -159,8 +159,13 @@ def evaluate_path_a_trigger(
     *,
     threshold_gb: int | None = None,
     buffer_multiplier: float = DEFAULT_BUFFER_MULTIPLIER,
+    disc_format: str | None = None,
 ) -> PathADecision:
     """Decide whether a /jobs/rip request should be deferred to Path A.
+
+    ``disc_format``: on DVD the segment map is the PGC-relative cell list,
+    so "duplicate-segment-map group" is meaningless there and Path A never
+    triggers (#831; see core.segment_identity).
 
     Both conditions must hold:
       1. The disc has at least one duplicate-segment-map group AND
@@ -180,6 +185,10 @@ def evaluate_path_a_trigger(
 
     if not titles:
         decision.reason = "no_titles_to_evaluate"
+        return decision
+    from core.segment_identity import segment_maps_identify_content
+    if not segment_maps_identify_content(disc_format):
+        decision.reason = "segment_maps_not_identity_on_format"
         return decision
 
     groups = detect_duplicate_segment_groups(titles)

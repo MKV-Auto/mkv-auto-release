@@ -44,6 +44,10 @@
             <option *ngFor="let s of seasonsRange(tvSeasonCount)"
                     [value]="s"
                     [selected]="s === (primarySeason ?? 1)">Season {{ s }}</option>
+            <!-- A specials-only disc (pilot movie, holiday special) is season 0
+                 in TMDB terms; per-title season overrides still cover the
+                 usual "one special at the head of a season" case (#830). -->
+            <option [value]="0" [selected]="primarySeason === 0">Specials</option>
           </select>
         </label>
       </div>

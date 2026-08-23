@@ -5500,6 +5500,17 @@ def _run_prep_phase(self, job_id: str):
                         # dest_root to the actual transfer destination (or
                         # a transfer-protocol-appropriate pre-staging
                         # area) so transient/ stops being created.
+                        # Extras that share a name with a lower-numbered sibling
+                        # disc of this release get " (Disc N)" (#831).
+                        _reserved_extra_names: set = set()
+                        try:
+                            from core.extra_name_collisions import reserved_extra_names_for_disc
+                            if job.disc:
+                                _reserved_extra_names = reserved_extra_names_for_disc(
+                                    job.disc, settings.get_media_server()
+                                )
+                        except Exception as _exc:
+                            log.warning("resume_postprocess: reserved extra names lookup failed: %s", _exc)
                         renamed_paths = disc.rename_outputs(
                             str(source_dir),
                             job_id=job.id,
@@ -5523,6 +5534,8 @@ def _run_prep_phase(self, job_id: str):
                             source_hashes=source_hashes_rename,
                             media_server=settings.get_media_server(),
                             dest_root=trans_root,
+                            disc_number=getattr(job.disc, "disc_number", None) if job.disc else None,
+                            reserved_extra_names=_reserved_extra_names,
                         )
                         log.info("resume_postprocess: job_id=%s rename_outputs returned %s paths", job_id, len(renamed_paths) if renamed_paths else 0)
                         if not renamed_paths:

@@ -75,6 +75,7 @@ describe('WorkflowLabelingComponent', () => {
       'getMovieOptions', 'getBoxsetOptions', 'getGroupOptions', 'listReleases', 'getMovies', 'filterMovies',
       'createMovieForDisc',
       'createReleaseForDisc',
+      'createBoxsetForDisc',
       'findReleaseByMovieBoxset',
       'refreshMovieOptions',
       'refreshBoxsetOptions',
@@ -596,5 +597,60 @@ describe('WorkflowLabelingComponent', () => {
       expect(workflowSvc.saveJobWorkflowContext).toHaveBeenCalledTimes(1);
       expect(workflowSvc.saveJobWorkflowContext.calls.mostRecent().args[1].disc_name).toBe('Persist Me');
     }));
+  });
+
+  describe('creating a boxset puts it into the form (the Matrix Déjà vu case)', () => {
+    const contextWithDisc = () => ({
+      ...minimalContext,
+      id: 'job-abc',
+      type: 'job' as const,
+      discInfo: { disc_id: 'disc-123' },
+      labelForm: { ...minimalContext.labelForm, movie_id: 'movie-1', release_name: '' },
+    } as unknown as WorkflowContext);
+
+    const created = {
+      boxset: { id: 'bx-1', slug: 'the-matrix-4-film-deja-vu-collection', name: 'The Matrix 4-Film Déjà vu Collection' },
+      release: {
+        id: 'rel-bx-1', slug: 'the-matrix-4-film-deja-vu-collection',
+        name: 'The Matrix 4-Film Déjà vu Collection', release_year: 2018,
+        cover_front_url: 'https://img.example/front.jpg', boxset_id: 'bx-1',
+      },
+      linked: true,
+    };
+
+    it('applies the created boxset + release to the active form from the response', () => {
+      // The backend links everything in one call. The form used to be left
+      // untouched, waiting on a WebSocket patch that for a job context never
+      // carries these fields — so the UI showed "no boxset" and the user's
+      // next manual action autosaved release_name="" over the real name.
+      workflowSvc.getCurrentContext.and.returnValue(contextWithDisc());
+      metadataSvc.createBoxsetForDisc.and.returnValue(of(created as any));
+      fixture.detectChanges();
+
+      component.onBoxsetCreated({ name: created.boxset.name, year: 2022 });
+
+      expect(workflowSvc.applyMetadataSelectionToActiveContext).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          releaseId: 'rel-bx-1',
+          boxsetId: 'bx-1',
+          releaseName: 'The Matrix 4-Film Déjà vu Collection',
+          releaseYear: 2018,
+        })
+      );
+    });
+
+    it('carries the release name when a boxset is selected by hand, too', () => {
+      // Same gap on the manual path: the selection sent ids + slugs only, so
+      // the form kept whatever release_name it had (blank) and autosaved it.
+      workflowSvc.getCurrentContext.and.returnValue(contextWithDisc());
+      metadataSvc.findReleaseByMovieBoxset.and.returnValue(of(created.release as any));
+      fixture.detectChanges();
+
+      component.onBoxsetSelected({ id: 'bx-1', slug: created.boxset.slug, name: created.boxset.name } as any);
+
+      expect(workflowSvc.applyMetadataSelectionToActiveContext).toHaveBeenCalledWith(
+        jasmine.objectContaining({ releaseId: 'rel-bx-1', releaseName: 'The Matrix 4-Film Déjà vu Collection' })
+      );
+    });
   });
 });

@@ -54,7 +54,8 @@
                 <app-obfuscation-badge
                   *ngIf="t.obfuscation_flag && !isMatchedCanonical(t)"
                   [flagged]="true"
-                  [reason]="t.obfuscation_reason">
+                  [reason]="t.obfuscation_reason"
+                  [detail]="playAllDetail(t)">
                 </app-obfuscation-badge>
                 <!-- Canonical chip: high-confidence "this is the
                      canonical of a duplicate group" — fires for Path
@@ -81,6 +82,7 @@
                      role=button span (not <button>) because the whole row is
                      already a button element — nesting would be invalid HTML. -->
                 <span
+                  *ngIf="!isIgnored(t) || canUnignore(t)"
                   class="title-label-row-ignore"
                   role="button"
                   tabindex="0"
@@ -143,7 +145,7 @@
           (close)="selectedTitleId = null"
           (titleChanged)="onEditorChanged()"
           (titleBlur)="onBlur()"
-          (titlePatched)="titlePatched.emit($event)"
+          (titlePatched)="onEditorPatch($event)"
           (switchToSibling)="selectTitle($event)"
           (makeSiblingPrimary)="onMakeSiblingPrimary($event)"
           (ungroupDuplicate)="onUngroupDuplicate()">
@@ -400,7 +402,7 @@
           (switchToSibling)="selectTitle($event)"
           (makeSiblingPrimary)="onMakeSiblingPrimary($event)"
           (ungroupDuplicate)="onUngroupDuplicate()"
-          (titlePatched)="titlePatched.emit($event)">
+          (titlePatched)="onEditorPatch($event)">
         </app-title-editor>
         <div class="title-drawer-footer title-drawer-footer-mobile">
           <button type="button" class="title-drawer-btn title-drawer-btn-close" (click)="closeDrawerWithoutSave()">Close</button>

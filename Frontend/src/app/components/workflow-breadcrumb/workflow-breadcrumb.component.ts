@@ -110,6 +110,6 @@ export class WorkflowBreadcrumbComponent {
 
   onPrimarySeasonChange(value: string | number): void {
     const n = Number(value);
-    if (Number.isInteger(n) && n > 0) this.primarySeasonChange.emit(n);
+    if (Number.isInteger(n) && n >= 0) this.primarySeasonChange.emit(n);  // 0 = Specials (#830)
   }
 }

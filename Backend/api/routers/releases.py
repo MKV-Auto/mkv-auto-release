@@ -2040,6 +2040,16 @@ def _patch_disc_ops_internal(
     if release:
         db.refresh(release)
     
+    # Disc / release / movie level ops change what the card carousel shows
+    # (show, release name, disc number); it listens on the coordinator, not
+    # the disc workflow channel (#832).
+    if any(op.get("target") not in ("title", "stream") for op in ops):
+        try:
+            from api.routers.websockets import schedule_disc_metadata_updated
+            schedule_disc_metadata_updated(disc_id)
+        except Exception as exc:
+            log.warning(f"Failed to schedule disc_metadata_updated for disc {disc_id}: {exc}")
+
     # Emit websocket update if title or track was updated
     has_title_or_stream_update = any(op.get("target") in ("title", "stream") for op in ops)
     if has_title_or_stream_update:

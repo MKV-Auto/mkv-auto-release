@@ -639,10 +639,20 @@ def _grouping_key(segment_map: Any) -> str | None:
     return _normalize_segment_map(segment_map)
 
 
-def attach_duplicate_info(titles_by_id: dict[str, dict[str, Any]], disc_id: str) -> None:
+def attach_duplicate_info(
+    titles_by_id: dict[str, dict[str, Any]],
+    disc_id: str,
+    *,
+    disc_format: str | None = None,
+) -> None:
     """
     Attach duplicate_info to every title with a normalized segment_map (including singletons)
     so absolute tags are always available on the label step.
+
+    ``disc_format``: on DVD the segment map is the PGC-relative cell list —
+    shape, not identity — so no duplicate groups are attached at all and
+    every row renders on its own (#831; see core.segment_identity). None
+    keeps the legacy (Blu-ray) behaviour.
 
     Grouping uses the **sorted-segment-set** key so permutation siblings
     (e.g. Midway 4K's 175 mpls that re-order the same 7 clips) collapse
@@ -657,6 +667,9 @@ def attach_duplicate_info(titles_by_id: dict[str, dict[str, Any]], disc_id: str)
     m2ts still has a parent to collapse under.
     """
     if not disc_id or not titles_by_id:
+        return
+    from core.segment_identity import segment_maps_identify_content
+    if not segment_maps_identify_content(disc_format):
         return
 
     groups: dict[str, list[str]] = {}

@@ -114,9 +114,23 @@
               (change)="onEpisodePicked(opts, ($any($event.target)).value)"
               aria-label="TMDB episode picker">
               <option [value]="-1">Select episode…</option>
-              <option *ngFor="let ep of opts; let i = index" [value]="i">
-                E{{ ep.episode_number }} · {{ ep.name }}
-              </option>
+              <!-- Index into the FLAT opts list must survive the grouping,
+                   so both groups iterate opts and filter by season in the
+                   template rather than over pre-split arrays (#830). -->
+              <optgroup *ngIf="regularOf(opts).length" [label]="'Season ' + regularOf(opts)[0].season_number">
+                <ng-container *ngFor="let ep of opts; let i = index">
+                  <option *ngIf="ep.season_number !== 0" [value]="i">
+                    E{{ ep.episode_number }} · {{ ep.name }}
+                  </option>
+                </ng-container>
+              </optgroup>
+              <optgroup *ngIf="specialsOf(opts).length" label="Specials">
+                <ng-container *ngFor="let ep of opts; let i = index">
+                  <option *ngIf="ep.season_number === 0" [value]="i">
+                    Specials · E{{ ep.episode_number }} · {{ ep.name }}<ng-container *ngIf="ep.runtime"> ({{ ep.runtime }} min)</ng-container>
+                  </option>
+                </ng-container>
+              </optgroup>
             </select>
           </div>
           <div class="title-editor__field title-editor__field--full title-editor__hint"
@@ -156,7 +170,11 @@
             (blur)="flushPendingFieldEdits(); titleBlur.emit()">
             <option *ngFor="let opt of titleTypeOptions" [value]="opt.value" [disabled]="opt.value === ''">{{ opt.label }}</option>
           </select>
+          <!-- Hidden on auto-flagged rows: Un-ignore clears the user's type
+               only, which reveals auto_type='ignore' again — a no-op. The
+               banner above tells the user to pick a type instead. -->
           <ui-btn
+            *ngIf="!isIgnored() || canUnignore"
             [variant]="'ghost'"
             (click)="markAsIgnore()"
             [attr.title]="isIgnored() ? 'Click to un-ignore this title' : 'Ignore this title'">
@@ -256,10 +274,15 @@
             class="title-editor__input"
             [(ngModel)]="title.season"
             placeholder="Season #"
-            min="1"
+            min="0"
             (ngModelChange)="onSeasonChange($event)"
             (blur)="flushPendingFieldEdits(); titleBlur.emit()"
             [disabled]="isIgnored()">
+          <!-- Season 0 is where TMDB, Plex and Jellyfin file feature-length
+               specials. Say so, and be honest that Plex tucks them away. -->
+          <div class="title-editor__hint" *ngIf="isSpecialsRow">
+            Filed under Specials — Plex shows it in its Specials season; Jellyfin can show it at the start of the season it aired in.
+          </div>
         </div>
         <div class="title-editor__field">
           <label class="title-editor__label">Episode</label>

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from api import models as db_models
 from core.duplicate_info import _comparative_metrics, _normalize_segment_map
+from core.segment_identity import segment_maps_identify_content
 
 log = logging.getLogger(__name__)
 
@@ -333,6 +334,65 @@ def _bump_disc_titles_version(db: Session, disc_id: str) -> None:
         pass
 
 
+def release_segment_map_demotions(
+    titles: list[db_models.DiscTitle],
+    *,
+    collect_modified: "list[db_models.DiscTitle] | None" = None,
+) -> int:
+    """Undo demotions that only existed because segment maps were treated as
+    identity on a format where they are not (DVD, #831). Returns rows changed.
+
+    A demoted secondary is ``active=False`` (this module is the only writer
+    of that flag) with ``auto_type='ignore'`` and its auto label fields
+    cleared. The labels are gone for good — the user re-types them — but
+    the row comes back:
+
+    - ``active`` → True, unless the user explicitly typed it ``ignore``
+      (``user_type``), which is their call and stays hidden.
+    - ``auto_type='ignore'`` on a demoted row → cleared, unless a detector
+      backs it: an obfuscation reason other than the equally invalid
+      ``segment_set_sibling``, or an ffmpeg decoy warning, keeps the ignore.
+      Rows that were never demoted are not touched, whatever their type.
+    - A stale ``segment_set_sibling`` reason (Path B's shape-keyed mark) is
+      cleared too, so the chip system stops calling the row a decoy.
+
+    Idempotent: a healed row matches none of the conditions on the next
+    pass, so repeated syncs (every label patch calls this) emit no churn.
+    """
+    from api.crud import set_title_type
+
+    changed_rows = 0
+    for t in titles:
+        changed = False
+        user_type = (str(getattr(t, "user_type", None) or "")).strip().lower()
+        was_demoted = getattr(t, "active", None) is False
+        reason = getattr(t, "obfuscation_reason", None)
+        if reason == "segment_set_sibling":
+            t.obfuscation_reason = None
+            t.obfuscation_flag = False
+            reason = None
+            changed = True
+        if was_demoted and user_type != SECONDARY_IGNORE_TYPE:
+            t.active = True
+            changed = True
+        auto_type = (str(getattr(t, "auto_type", None) or "")).strip().lower()
+        if (
+            was_demoted
+            and auto_type == SECONDARY_IGNORE_TYPE
+            and not user_type
+            and reason is None
+            and not bool(getattr(t, "detection_warning", False))
+        ):
+            set_title_type(t, None, source="auto")
+            changed = True
+        if changed:
+            _bump_title_seq(t)
+            if collect_modified is not None:
+                collect_modified.append(t)
+            changed_rows += 1
+    return changed_rows
+
+
 def demote_duplicate_secondaries_in_group(
     group_titles: list[db_models.DiscTitle],
     *,
@@ -398,6 +458,21 @@ def sync_duplicate_group_labels_for_disc(
     )
     if len(all_titles) < 2:
         return 0
+
+    # On a DVD the segment map is the PGC-relative cell list — shape, not
+    # identity — so there are no duplicate groups to enforce here at all.
+    # Instead undo whatever this layer demoted before it knew that (#831).
+    disc_row = db.query(db_models.Disc).filter(db_models.Disc.id == disc_id).first()
+    if not segment_maps_identify_content(getattr(disc_row, "format", None)):
+        healed = release_segment_map_demotions(all_titles, collect_modified=collect_modified)
+        if healed:
+            _bump_disc_titles_version(db, disc_id)
+            log.info(
+                "sync_duplicate_group_labels_for_disc disc_id=%s format=%s: "
+                "segment maps carry no identity on this format; released %s demoted rows",
+                disc_id, getattr(disc_row, "format", None), healed,
+            )
+        return healed
 
     groups: dict[str, list[db_models.DiscTitle]] = {}
     for t in all_titles:

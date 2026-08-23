@@ -703,6 +703,7 @@ async def lifespan(app: FastAPI):
     # Startup tasks
     _recover_inflight_jobs()
     _startup_cleanup_terminal_jobs()
+    _startup_reconcile_dvd_segment_groups()
     
     # Validate MakeMKV installation on startup
     try:
@@ -1388,6 +1389,58 @@ def _recover_inflight_jobs() -> None:
         logger.warning("Job recovery failed: %s", exc)
     finally:
         db.close()
+
+def _startup_reconcile_dvd_segment_groups() -> None:
+    """One pass over DVD discs so rows demoted by segment-map grouping heal
+    without waiting for a label save (#831).
+
+    ``duplicate_group_sync`` and Path B used to treat a DVD's segment map as
+    content identity and hid every same-shape episode under one "primary".
+    Both now stand down on DVD, and each *writes* through the same two
+    entry points — but those run on scan ingest and label patches, and the
+    workflow-context GET is deliberately read-only. A disc already on the
+    shelf would therefore stay collapsed until the user next touched it.
+    Running the two passes here (idempotent, ~30 discs, milliseconds) means
+    the first context load after an upgrade already shows every title.
+    """
+    logger = get_logger(__name__, "_startup_reconcile_dvd_segment_groups")
+    try:
+        from core.duplicate_group_sync import sync_duplicate_group_labels_for_disc
+        from core.path_b_dedupe import apply_path_b_marks_for_disc
+        from core.segment_identity import segment_maps_identify_content
+    except Exception as exc:  # pragma: no cover - import guard
+        logger.warning("DVD segment-group reconcile unavailable: %s", exc)
+        return
+    db = database.SessionLocal()
+    healed_discs = 0
+    try:
+        try:
+            discs = db.query(db_models.Disc).filter(db_models.Disc.format.isnot(None)).all()
+        except Exception as exc:
+            # A startup task must never take the app down with it — e.g. the
+            # schema isn't there yet because the DB was recreated under us.
+            db.rollback()
+            logger.warning("DVD segment-group reconcile skipped: %s", exc)
+            return
+        for disc in discs:
+            if segment_maps_identify_content(disc.format):
+                continue
+            try:
+                released = sync_duplicate_group_labels_for_disc(db, str(disc.id))
+                cleared, _, _, _ = apply_path_b_marks_for_disc(db, str(disc.id))
+                if released or cleared:
+                    healed_discs += 1
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("DVD segment-group reconcile failed for disc %s", disc.id)
+        if healed_discs:
+            logger.info("DVD segment-group reconcile: healed %s disc(s)", healed_discs)
+        else:
+            logger.debug("DVD segment-group reconcile: nothing to heal")
+    finally:
+        db.close()
+
 
 def _startup_cleanup_terminal_jobs() -> None:
     """

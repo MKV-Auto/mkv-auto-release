@@ -761,6 +761,70 @@ async def _emit_disc_updated_with_job(disc_id: str, job_id: Optional[str] = None
         logger.warning(f"Failed to emit disc_updated with job for disc {disc_id}: {exc}")
 
 
+# Fields a label save may change that the card carousel renders. Deliberately
+# NOT disc_state / scan_state / mount_point: the `disc_updated` handler on the
+# client merges those and then dedupes unfinished cards against in-drive ones,
+# so a label save on an ejected (unfinished) job must not go through it (#832).
+DISC_METADATA_UPDATED_FIELDS: tuple[str, ...] = (
+    "movie_name", "release_name", "info_title", "disc_number",
+    "release_year", "production_year", "disc_format", "resolution", "release_image",
+)
+
+
+def _build_disc_metadata_updated_payload(disc_id: str, job_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Sync: identity/metadata fields for the card after a label save (#832).
+    No session held across await. Returns None if disc not found."""
+    db = database.SessionLocal()
+    try:
+        disc = (
+            db.query(db_models.Disc)
+            .options(joinedload(db_models.Disc.release).joinedload(db_models.Release.movie))
+            .filter(db_models.Disc.id == disc_id)
+            .first()
+        )
+        if not disc:
+            return None
+        metadata = _build_disc_metadata(disc, disc_state='unfinished', job_id=job_id, db=db)
+        dumped = metadata.model_dump(mode='json')
+        payload: Dict[str, Any] = {"disc_id": str(disc.id), "job_id": job_id}
+        for key in DISC_METADATA_UPDATED_FIELDS:
+            payload[key] = dumped.get(key)
+        return payload
+    finally:
+        db.close()
+
+
+async def _emit_disc_metadata_updated(disc_id: str, job_id: Optional[str] = None) -> None:
+    """Emit ``disc_metadata_updated`` so the card carousel reflects a label
+    save (show / release / disc number) without a page refresh (#832)."""
+    try:
+        loop = asyncio.get_running_loop()
+        payload = await loop.run_in_executor(None, lambda: _build_disc_metadata_updated_payload(disc_id, job_id))
+        if payload is None:
+            return
+        await _emit_to_coordinator("disc_metadata_updated", payload)
+    except Exception as exc:
+        logger.warning(f"Failed to emit disc_metadata_updated for disc {disc_id}: {exc}")
+
+
+def schedule_disc_metadata_updated(disc_id: Optional[str], job_id: Optional[str] = None) -> None:
+    """Fire-and-forget from sync request handlers (same loop-resolution dance
+    the other emitters do inline). Never raises."""
+    if not disc_id:
+        return
+    try:
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(_emit_disc_metadata_updated(str(disc_id), job_id))
+        except RuntimeError:
+            from api.main import _app_instance
+            loop = getattr(getattr(_app_instance, "state", None), "event_loop", None)
+            if loop is not None:
+                asyncio.run_coroutine_threadsafe(_emit_disc_metadata_updated(str(disc_id), job_id), loop)
+    except Exception as exc:
+        logger.warning(f"Failed to schedule disc_metadata_updated for disc {disc_id}: {exc}")
+
+
 def _build_disc_updated_payload_from_info(
     disc_id: str, disc_num: str, mount_point: str, scan_state: str
 ) -> Optional[Dict[str, Any]]:

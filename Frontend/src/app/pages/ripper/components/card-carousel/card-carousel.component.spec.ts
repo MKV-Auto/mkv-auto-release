@@ -45,6 +45,25 @@ describe('CardCarouselComponent', () => {
     expect(component).toBeTruthy();
   });
 
+  describe('getDiscMeta (#833)', () => {
+    const base = { disc_id: 'd', disc_state: 'unfinished', scan_state: 'ready' } as unknown as DiscMetadata;
+    it('puts the release name between the year and the format', () => {
+      const meta = component.getDiscMeta({
+        ...base, movie_name: 'Star Wars Rebels', release_name: 'Season Two',
+        production_year: 2014, disc_format: 'DVD', disc_number: 2,
+      } as DiscMetadata);
+      expect(meta).toBe('(2014) · Season Two · DVD · Disc 2');
+    });
+    it('omits a release name that merely repeats the show name, and a missing one', () => {
+      expect(component.getDiscMeta({
+        ...base, movie_name: 'Thor', release_name: 'thor', production_year: 2011, disc_format: 'Blu-Ray',
+      } as DiscMetadata)).toBe('(2011) · Blu-Ray');
+      expect(component.getDiscMeta({
+        ...base, movie_name: 'Thor', release_name: null, production_year: 2011, disc_format: 'Blu-Ray', disc_number: 1,
+      } as DiscMetadata)).toBe('(2011) · Blu-Ray · Disc 1');
+    });
+  });
+
   it('trackByCardId returns type-id', () => {
     const card: CardType = { type: 'drive', id: 'd1', data: {} as DiscMetadata };
     expect(component.trackByCardId(0, card)).toBe('drive-d1');

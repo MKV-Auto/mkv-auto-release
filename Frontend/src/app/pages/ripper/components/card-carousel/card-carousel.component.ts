@@ -349,12 +349,23 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
     return disc.scan_error || 'Disc scan failed';
   }
 
-  /** Meta line: (year) · format · Disc N. Format is disc format only (Blu-Ray, UHD, or DVD). Disc number when set. */
+  /** Meta line: (year) · release name · format · Disc N. Format is disc
+   * format only (Blu-Ray, UHD, or DVD). Disc number when set.
+   *
+   * The release name (a season for series — "Season Two"; an edition for
+   * movies — "Director's Cut") is what tells four Rebels cards apart; it
+   * was dropped from the card *title* in 069d580 and lives here instead
+   * (#833). Omitted when it merely repeats the show/movie name. */
   getDiscMeta(disc: DiscMetadata): string {
     const parts: string[] = [];
     const year = disc.production_year || disc.release_year;
     if (year) {
       parts.push(`(${year})`);
+    }
+    const releaseName = (disc.release_name || '').toString().trim();
+    const showName = (disc.movie_name || disc.info_title || '').toString().trim();
+    if (releaseName && releaseName.toLowerCase() !== showName.toLowerCase()) {
+      parts.push(releaseName);
     }
     if (disc.disc_format) {
       parts.push(disc.disc_format);
