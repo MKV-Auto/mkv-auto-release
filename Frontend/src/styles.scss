@@ -123,6 +123,20 @@
   html {
     font-size: 16px;
     scroll-behavior: smooth;
+    // Clip the horizontal axis at the ROOT, not just on body (which already
+    // hides it). Mobile browsers compute the layout viewport from the
+    // document element: when the disc-card strip rendered uncontained for a
+    // single frame during boot, iOS/Chrome ran shrink-to-fit against that
+    // frame, locked the layout viewport at ~700px on a 375px phone, and never
+    // contracted it — in-flow content then rendered zoomed-out while
+    // position:fixed surfaces (action bar, mobile drawers) spanned the
+    // inflated viewport and drew wider than the screen. body's overflow-x
+    // cannot prevent that; only the root's can. `clip` rather than `hidden`
+    // so the root does not become a scroll container (hidden breaks
+    // position:sticky descendants and enables programmatic sideways
+    // scrolling); older engines fall back to hidden.
+    overflow-x: hidden;
+    overflow-x: clip;
     // Hide scrollbar in webkit browsers
     &::-webkit-scrollbar {
       display: none;

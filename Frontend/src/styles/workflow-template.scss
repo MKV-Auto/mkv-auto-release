@@ -893,9 +893,27 @@ button.boxset-step-toggle.boxset-step-toggle-boxset-active {
   max-width: 1200px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* minmax(0, 1fr), not bare 1fr: a 1fr track is minmax(auto, 1fr) and will
+   * not shrink below its content. Four content-sized columns came to 654px,
+   * which forced the document to ~700px on a 375px phone. On iOS that
+   * inflates the LAYOUT viewport: in-flow content zooms out to fit while
+   * position:fixed surfaces (this bar, the mobile drawers) size to the
+   * inflated viewport and render wider than the screen — the app looked
+   * simultaneously shrunken and oversized on every workflow step. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
   align-items: center;
+}
+
+@media (max-width: 768px) {
+  /* Two rows on phones: progress on top, Back/Continue below. Each half of
+   * the markup is a col-span-2 block, so a 2-column grid gives one block per
+   * row without touching the component. Four columns across 375px left ~80px
+   * per control even once they could shrink. */
+  .workflow-action-bar-inner {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
 }
 
 /* Primary Button */

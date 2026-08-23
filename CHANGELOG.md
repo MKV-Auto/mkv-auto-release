@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.5] - 2026-08-23
+
+### Fixed
+
+- **The app fits phone screens again.** On mobile, pages loaded with everything subtly the wrong size — content shrunken with a dead strip down the right edge, while the release dropdown and the bottom action bar drew wider than the screen itself. One frame during page load rendered the disc-card strip at full width before its scrolling container took hold; phone browsers size the page against that single frame and never shrink it back. The page can no longer overflow sideways, the bottom bar stacks into two rows on narrow screens, and phone detection now measures the real screen rather than a value that overflow could distort.
+
 ## [1.6.4] - 2026-08-22
 
 ### Fixed
