@@ -1029,6 +1029,18 @@ def _normalize_transfer_paths(value: Any) -> Optional[List[str]]:
     return [str(x) if x is not None else "" for x in value]
 
 
+def _card_contract_kwargs(job) -> dict:
+    """card_state / card_family / card_pill for JobStatus (#839). Destination
+    lookup is skipped here (no session guaranteed); needs_destination still
+    reaches the card via the job_card_state event, which has one."""
+    try:
+        from core.card_state import derive_card_state
+        d = derive_card_state(job)
+        return {"card_state": d["card_state"], "card_family": d["family"], "card_pill": d["pill"]}
+    except Exception:
+        return {}
+
+
 def _build_job_status(job, job_created: bool | None = None) -> JobStatus:
     disc = getattr(job, "disc", None)
     rel = getattr(disc, "release", None) if disc else None
@@ -1169,6 +1181,7 @@ def _build_job_status(job, job_created: bool | None = None) -> JobStatus:
         post_state=job.derived_post_state,  # #365 — derived, not column
         transfer_state=getattr(job, "transfer_state", None),
         transfer_phase=getattr(job, "transfer_phase", None),
+        **_card_contract_kwargs(job),
         finalize_release_state=getattr(job, "finalize_release_state", None),
         titlesCompleted=getattr(job, "titles_completed", None),
         totalTitles=getattr(job, "total_titles", None),

@@ -20,6 +20,10 @@
       [class.loading]="isCardLoading(card, state.driveScanState, state.driveLoadingStates)"
       [class.drive-card]="card.type === 'drive'"
       [class.job-card]="card.type === 'job'"
+      [class.family-your-turn]="card.type === 'job' && cardFamily(card.data) === 'your_turn'"
+      [class.family-working]="card.type === 'job' && cardFamily(card.data) === 'working'"
+      [class.family-done]="card.type === 'job' && cardFamily(card.data) === 'done'"
+      [class.family-fix]="card.type === 'job' && cardFamily(card.data) === 'fix'"
       [class.scan-tooltip-open]="card.type === 'drive' && isCardLoading(card, state.driveScanState, state.driveLoadingStates) && showScanTooltip"
       [attr.aria-disabled]="card.type === 'drive' && (card.data.scan_state === 'pending' || card.data.scan_state === 'scanning' || state.driveScanState === 'scanning') ? true : null"
       [attr.aria-busy]="card.type === 'job' && isJobCardProcessing(card, state.jobIdsProcessing) ? true : null"
@@ -84,7 +88,7 @@
             role="status"
             [attr.title]="driveErrorMessage">{{ driveErrorMessage }}</div>
           <ng-template #driveMeta>
-            <div class="disc-card-meta">{{ getDiscMeta(card.data) }}</div>
+            <div class="disc-card-meta" [attr.title]="getDiscMeta(card.data)">{{ getDiscMeta(card.data) }}</div>
           </ng-template>
         </div>
         <div class="disc-card-footer">
@@ -130,7 +134,12 @@
             <span class="disc-card-icon job-icon" aria-hidden="true">
               <ui-icon name="file" [size]="16"></ui-icon>
             </span>
-            <span class="disc-card-eyebrow">{{ card.data.job_status === 'failed' ? 'Failed disc' : 'Unfinished disc' }}</span>
+            <span class="disc-card-eyebrow-dot" aria-hidden="true"
+              *ngIf="cardFamily(card.data)"
+              [class.dot-turn]="cardFamily(card.data) === 'your_turn'"
+              [class.dot-fix]="cardFamily(card.data) === 'fix'"
+              [class.dot-done]="cardFamily(card.data) === 'done'"></span>
+            <span class="disc-card-eyebrow">{{ cardEyebrow(card.data) }}</span>
             <span class="disc-card-discdb-hit" *ngIf="showDiscdbSuggestedOnCard(card.data)" title="TheDiscDB Suggested Metadata">
               <svg class="disc-card-discdb-hit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
@@ -141,11 +150,15 @@
             </span>
           </div>
           <h3 class="disc-card-name" [attr.title]="getDiscTitle(card.data)">{{ getDiscTitle(card.data) }}</h3>
-          <div class="disc-card-meta">{{ getDiscMeta(card.data) }}</div>
+          <div class="disc-card-meta" [attr.title]="getDiscMeta(card.data)">{{ getDiscMeta(card.data) }}</div>
+        </div>
+        <div class="disc-card-progress" *ngIf="cardProgress(card.data) !== null" aria-hidden="true">
+          <i [style.width.%]="cardProgress(card.data)"
+             [class.progress-fix]="cardFamily(card.data) === 'fix'"></i>
         </div>
         <div class="disc-card-footer">
-          <ui-pill [tone]="card.data.job_status === 'failed' ? 'red' : 'amber'">
-            {{ card.data.job_status === 'failed' ? 'Failed' : 'Unfinished' }}
+          <ui-pill [tone]="cardPillTone(card.data)">
+            {{ cardPill(card.data) }}<span class="disc-card-pill-arrow" *ngIf="cardPillActionable(card.data)">&nbsp;→</span>
           </ui-pill>
           <span class="disc-card-date">{{ getJobCreatedDate(card.data) }}</span>
         </div>

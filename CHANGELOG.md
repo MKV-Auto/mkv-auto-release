@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.7] - 2026-08-23
+
+### Added
+
+- **Job cards now tell you whose turn it is.** Every card carries one of four looks: amber with a pulsing dot when the pipeline is waiting on you (the pill names the action — *Label titles →*, *Finish →*), dimmed grey while the backend works (the pill names the stage, with a live progress bar — *Copying 42%*, *Post-processing*, *Verifying*), green when done, red when a stage failed (*Retry transfer →*, bar frozen where it stopped). The state comes from the backend on every stage transition, so cards update the moment things change — no more refreshing to find out, and the previously invisible post-transfer verification now shows as *Verifying* instead of a silent gap between "transferred" and the Finish button.
+- **Discord notifications can link straight to the job.** Set *Base URL* under Settings → Notifications (`http://192.0.2.10:8080` or your domain) and messages that concern a job gain an *Open job* link that lands on that job's workflow. Leave it empty and messages stay as they were. The "transfer complete" message now reads "Transferred and verified — ready to finish", which is what it always meant.
+
+### Fixed
+
+- **"Labeling complete" is no longer an action-required notification.** It fired in-app and on Discord by default, yet it only echoes something you just did. It is now an *informative* notification — off by default with the rest of that group, and available as its own row under Settings → Notifications → Informative if you want it.
+- **Job cards are tighter and the meta line can no longer run into the footer.** The release name on the card drops a leading repeat of the show name ("Star Wars: The Clone Wars - Season 1-5 Collector's Edition" reads "Season 1-5 Collector's Edition"), is clamped to two lines with the full text in a tooltip, and the card's inner spacing is reduced so the same information takes less height.
+
 ## [1.6.6] - 2026-08-23
 
 ### Added

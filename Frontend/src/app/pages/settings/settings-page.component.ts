@@ -464,6 +464,16 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
                 </div>
               </ui-field>
 
+              <ui-field
+                label="Base URL"
+                hint="How you reach MKV Auto — used to add an 'Open job' link to Discord notifications. No trailing slash. Leave empty for link-free messages.">
+                <input
+                  type="text"
+                  class="settings-input settings-input--mono"
+                  [(ngModel)]="discord.base_url"
+                  placeholder="http://192.0.2.10:8080 or https://mkv.example.com">
+              </ui-field>
+
               <div class="settings-help-callout">
                 <ui-icon name="info" [size]="13"></ui-icon>
                 <p>
@@ -2005,6 +2015,7 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
   previewSaving = false;
   discord: DiscordConfig = {
     webhook_url: null,
+    base_url: null,
     enabled: false,
     notification_preferences: defaultNotificationPreferences(),
   };
@@ -2018,6 +2029,7 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
     'per_title',
     'previews_ready',
     'transfer_started',
+    'label_complete',
   ] as const;
   readonly informativeCategoryLabels: Record<string, string> = {
     rip_start: 'Rip started',
@@ -2026,6 +2038,7 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
     per_title: 'Per-title progress',
     previews_ready: 'Previews ready',
     transfer_started: 'Transfer started',
+    label_complete: 'Labeling complete',
   };
   readonly discordDisabledHint =
     'Add a Discord webhook URL below and enable Discord to use this channel.';

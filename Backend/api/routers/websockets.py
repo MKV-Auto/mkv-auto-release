@@ -219,6 +219,22 @@ def _build_disc_metadata(disc: db_models.Disc, disc_state: str, job_id: Optional
             or disc.release.name
         )
 
+    # Card contract for unfinished-job cards (#839): derive from the job row
+    # when we have one, so the strip renders the right family on first load.
+    card_kwargs: dict = {}
+    if job_id and db is not None:
+        try:
+            job_row = db.query(db_models.Job).filter(db_models.Job.id == job_id).first()
+            if job_row is not None:
+                from core.card_state import derive_card_state, has_transfer_destination
+                d = derive_card_state(job_row, transfer_destination=has_transfer_destination(db))
+                card_kwargs = {
+                    "card_state": d["card_state"], "card_family": d["family"],
+                    "card_pill": d["pill"], "card_progress": d["progress"],
+                }
+        except Exception:
+            card_kwargs = {}
+
     return schemas.DiscMetadata(
         disc_id=str(disc.id),
         disc_num=disc_num,
@@ -246,6 +262,7 @@ def _build_disc_metadata(disc: db_models.Disc, disc_state: str, job_id: Optional
         finalized_release_id=finalized_release_id,
         finalized_release_name=finalized_release_name,
         finalized_release_slug=finalized_release_slug,
+        **card_kwargs,
     )
 
 
@@ -472,6 +489,7 @@ def _build_initial_coordinator_state_sync() -> Dict[str, Any]:
                     job_id=str(job.id),
                     created_at=job.created_at,
                     job_status=job.job_status,
+                    db=db,  # card contract derivation needs the session (#839)
                 )
                 unfinished_discs_metadata.append(metadata.model_dump(mode='json'))
                 unfinished_jobs_list.append({

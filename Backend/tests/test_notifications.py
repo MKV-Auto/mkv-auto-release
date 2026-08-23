@@ -406,7 +406,7 @@ def test_transfer_completed_while_job_still_running_emits_once():
 
     tc = [c for c in mock_emit.call_args_list if len(c[0]) > 2 and c[0][2] == "transfer_completed"]
     assert len(tc) == 1
-    assert tc[0][0][0] == "Transfer complete: this disc"
+    assert tc[0][0][0] == "Transferred and verified: this disc. Ready to finish."
 
 
 def test_transfer_completed_same_update_as_job_completed_single_emit():
@@ -431,7 +431,7 @@ def test_transfer_completed_same_update_as_job_completed_single_emit():
 
     tc = [c for c in mock_emit.call_args_list if len(c[0]) > 2 and c[0][2] == "transfer_completed"]
     assert len(tc) == 1
-    assert "Transfer complete: My Movie" in tc[0][0][0]
+    assert "Transferred and verified: My Movie" in tc[0][0][0]
     rip = [c for c in mock_emit.call_args_list if len(c[0]) > 2 and c[0][2] == "rip_complete"]
     assert len(rip) == 0
 
@@ -458,7 +458,7 @@ def test_job_completed_terminal_fallback_transfer_completed_when_transfer_not_in
 
     tc = [c for c in mock_emit.call_args_list if len(c[0]) > 2 and c[0][2] == "transfer_completed"]
     assert len(tc) == 1
-    assert "Transfer complete: Late" in tc[0][0][0]
+    assert "Transferred and verified: Late" in tc[0][0][0]
     rip = [c for c in mock_emit.call_args_list if len(c[0]) > 2 and c[0][2] == "rip_complete"]
     assert len(rip) == 0
 
@@ -929,3 +929,23 @@ def test_drive_fault_notifications_build_id_key_via_the_shared_helper():
         + ", ".join(offenders)
         + " — recovery re-arms only the keys that helper produces"
     )
+
+
+def test_label_complete_is_informative_and_silent_by_default():
+    """Labeling complete is the user's own action echoed back — informative,
+    off with the default-disabled informative bucket, not action-required."""
+    from core.notification_preferences import (
+        INFORMATIVE_CATEGORIES, ACTION_LEVELS, level_bucket, resolve_delivery_channels,
+        default_notification_preferences,
+    )
+    assert "label_complete" in INFORMATIVE_CATEGORIES
+    assert "label_complete" not in ACTION_LEVELS
+    assert level_bucket("label_complete") == ("informative", "label_complete")
+    cfg = {"enabled": True, "webhook_url": "https://discord.invalid/hook",
+           "notification_preferences": default_notification_preferences()}
+    assert resolve_delivery_channels("label_complete", cfg) == (False, False)
+    # Opting into informative notifications brings it back on both channels.
+    cfg["notification_preferences"]["informative"]["enabled"] = True
+    assert resolve_delivery_channels("label_complete", cfg) == (True, True)
+    # A handoff stays action-required and on by default.
+    assert resolve_delivery_channels("awaiting_labeling", cfg) == (True, True)

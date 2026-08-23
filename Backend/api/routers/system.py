@@ -1100,19 +1100,27 @@ async def save_preview_config(settings: PreviewSettings) -> PreviewSettings:
 @router.get("/discord/config", response_model=DiscordSettings)
 async def get_discord_config() -> DiscordSettings:
     cfg = discord_config.load_discord_config()
-    return DiscordSettings.model_validate(cfg)
+    out = DiscordSettings.model_validate(cfg)
+    out.base_url = settings.get_base_url()
+    return out
 
 
 @router.post("/discord/config", response_model=DiscordSettings)
-async def save_discord_config(settings: DiscordSettings) -> DiscordSettings:
+async def save_discord_config(payload: DiscordSettings) -> DiscordSettings:
     kwargs = {
-        "webhook_url": settings.webhook_url,
-        "enabled": settings.enabled,
+        "webhook_url": payload.webhook_url,
+        "enabled": payload.enabled,
     }
-    if settings.notification_preferences is not None:
-        kwargs["notification_preferences"] = settings.notification_preferences.model_dump()
+    if payload.notification_preferences is not None:
+        kwargs["notification_preferences"] = payload.notification_preferences.model_dump()
     cfg = discord_config.save_discord_config(**kwargs)
-    return DiscordSettings.model_validate(cfg)
+    try:
+        saved_base = settings.set_base_url(payload.base_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    out = DiscordSettings.model_validate(cfg)
+    out.base_url = saved_base
+    return out
 
 
 @router.get("/tmdb/config", response_model=TmdbConfigResponse)

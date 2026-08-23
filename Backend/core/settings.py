@@ -42,6 +42,10 @@ _KNOWN_TOP_LEVEL = frozenset({
     # Empty/None means TMDB enrichment is disabled (existing scrape path
     # for URL-paste in /movies/lookup still works without a key).
     "tmdb_api_key",
+    # How the user reaches this MKV Auto (#841): "http://192.0.2.10:8080"
+    # or "https://mkv.example.com", no trailing slash. Only consumer today is
+    # Discord notification deep links; unset leaves messages link-free.
+    "base_url",
     # State for the one-off "support the project" prompt in the bell panel.
     # Lives server-side rather than in localStorage so a dismissal sticks
     # across every browser and device pointed at this install — dismissing
@@ -472,6 +476,44 @@ def set_media_server(value: str) -> None:
     """Set media_server to "plex" or "jellyfin". Invalid values are coerced to "plex"."""
     normalized = "plex" if value not in ("plex", "jellyfin") else value
     save_settings({"media_server": normalized})
+
+
+def normalize_base_url(value) -> str | None:
+    """Validate + normalize the deep-link base URL (#841).
+
+    Accepts http/https origins, with optional port and optional path prefix
+    (reverse-proxy mounts); strips trailing slashes and whitespace. Returns
+    None for empty input. Raises ValueError for anything else — the settings
+    endpoint turns that into a 422 with the reason.
+    """
+    if value is None:
+        return None
+    text = str(value).strip().rstrip("/")
+    if not text:
+        return None
+    if not (text.startswith("http://") or text.startswith("https://")):
+        raise ValueError("Base URL must start with http:// or https://")
+    rest = text.split("://", 1)[1]
+    if not rest or rest.startswith("/"):
+        raise ValueError("Base URL needs a host, e.g. http://192.0.2.10:8080")
+    if any(c.isspace() for c in text):
+        raise ValueError("Base URL must not contain spaces")
+    return text
+
+
+def get_base_url() -> str | None:
+    """Normalized deep-link base URL, or None when unset/invalid."""
+    raw = load_settings().get("base_url")
+    try:
+        return normalize_base_url(raw)
+    except ValueError:
+        return None
+
+
+def set_base_url(value) -> str | None:
+    normalized = normalize_base_url(value)
+    save_settings({"base_url": normalized})
+    return normalized
 
 
 def get_first_time_setup_complete() -> bool:

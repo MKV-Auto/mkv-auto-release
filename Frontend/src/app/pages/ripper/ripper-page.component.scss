@@ -502,7 +502,10 @@
   .jobs-card {
     // Mobile: show ~1.5 cards (so ~50% of 2nd card is visible)
     // Formula: (container width - 1*8px gap) / 1.5
-    width: calc((100% - 8px) / 1.5);
+    // Mobile: ~1.15 cards visible. 1.5 made a 375px phone render 234px
+    // cards, which clamped the title font down — widen the card instead of
+    // shrinking the text; the sliver of card two keeps the swipe affordance.
+    width: calc((100% - 8px) / 1.15);
     min-width: 200px;
     max-width: none; // Remove max-width constraint on mobile
   }

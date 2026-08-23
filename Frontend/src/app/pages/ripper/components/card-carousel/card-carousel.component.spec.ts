@@ -54,6 +54,27 @@ describe('CardCarouselComponent', () => {
       } as DiscMetadata);
       expect(meta).toBe('(2014) · Season Two · DVD · Disc 2');
     });
+    it('strips a leading repeat of the show name from the release name (#837)', () => {
+      expect(component.getDiscMeta({
+        ...base, movie_name: 'Star Wars: The Clone Wars',
+        release_name: "Star Wars: The Clone Wars - Season 1-5 Collector's Edition",
+        production_year: 2008, disc_format: 'DVD', disc_number: 3,
+      } as DiscMetadata)).toBe("(2008) · Season 1-5 Collector's Edition · DVD · Disc 3");
+      expect(component.releaseNameForCard({
+        ...base, movie_name: 'Star Wars Rebels', release_name: 'Star Wars Rebels: Complete Season Two',
+      } as DiscMetadata)).toBe('Complete Season Two');
+      expect(component.releaseNameForCard({
+        ...base, movie_name: 'The Matrix', release_name: 'The Matrix 4-Film Déjà vu Collection',
+      } as DiscMetadata)).toBe('4-Film Déjà vu Collection');
+      // Not a prefix → untouched; exact repeat → dropped.
+      expect(component.releaseNameForCard({
+        ...base, movie_name: 'Resident Evil: Extinction', release_name: 'Resident Evil: Limited Edition Collection',
+      } as DiscMetadata)).toBe('Resident Evil: Limited Edition Collection');
+      expect(component.releaseNameForCard({
+        ...base, movie_name: 'Thor', release_name: 'THOR',
+      } as DiscMetadata)).toBe('');
+    });
+
     it('omits a release name that merely repeats the show name, and a missing one', () => {
       expect(component.getDiscMeta({
         ...base, movie_name: 'Thor', release_name: 'thor', production_year: 2011, disc_format: 'Blu-Ray',
@@ -61,6 +82,43 @@ describe('CardCarouselComponent', () => {
       expect(component.getDiscMeta({
         ...base, movie_name: 'Thor', release_name: null, production_year: 2011, disc_format: 'Blu-Ray', disc_number: 1,
       } as DiscMetadata)).toBe('(2011) · Blu-Ray · Disc 1');
+    });
+  });
+
+  describe('card families (#839)', () => {
+    const base = { disc_id: 'd', disc_state: 'unfinished', scan_state: 'ready' } as unknown as DiscMetadata;
+    it('renders the backend contract verbatim', () => {
+      const d = { ...base, card_state: 'awaiting_label', card_family: 'your_turn', card_pill: 'Label titles' } as DiscMetadata;
+      expect(component.cardFamily(d)).toBe('your_turn');
+      expect(component.cardEyebrow(d)).toBe('Needs labeling');
+      expect(component.cardPill(d)).toBe('Label titles');
+      expect(component.cardPillTone(d)).toBe('amber');
+      expect(component.cardPillActionable(d)).toBeTrue();
+      expect(component.cardProgress(d)).toBeNull();
+    });
+    it('working states show the stage, a percentage where live, and a bar', () => {
+      const d = { ...base, card_state: 'transferring', card_family: 'working', card_pill: 'Transferring', card_progress: 63 } as DiscMetadata;
+      expect(component.cardEyebrow(d)).toBe('Transferring');
+      expect(component.cardPill(d)).toBe('Transferring 63%');
+      expect(component.cardPillTone(d)).toBe('slate');
+      expect(component.cardPillActionable(d)).toBeFalse();
+      expect(component.cardProgress(d)).toBe(63);
+      const v = { ...base, card_state: 'verifying', card_family: 'working', card_pill: 'Verifying', card_progress: null } as DiscMetadata;
+      expect(component.cardPill(v)).toBe('Verifying');
+    });
+    it('fix family freezes the bar and names the retry verb', () => {
+      const d = { ...base, card_state: 'failed_transfer', card_family: 'fix', card_pill: 'Retry transfer', card_progress: 71, job_status: 'failed' } as DiscMetadata;
+      expect(component.cardEyebrow(d)).toBe('Transfer failed');
+      expect(component.cardPillTone(d)).toBe('red');
+      expect(component.cardPillActionable(d)).toBeTrue();
+      expect(component.cardProgress(d)).toBe(71);
+    });
+    it('falls back to legacy wording when card_state is absent', () => {
+      expect(component.cardEyebrow({ ...base } as DiscMetadata)).toBe('Unfinished disc');
+      expect(component.cardPill({ ...base } as DiscMetadata)).toBe('Unfinished');
+      expect(component.cardEyebrow({ ...base, job_status: 'failed' } as DiscMetadata)).toBe('Failed disc');
+      expect(component.cardPillTone({ ...base, job_status: 'failed' } as DiscMetadata)).toBe('red');
+      expect(component.cardProgress({ ...base } as DiscMetadata)).toBeNull();
     });
   });
 

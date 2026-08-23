@@ -312,6 +312,77 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
       });
   }
 
+  /** Eyebrow text per backend card_state (#839); null → legacy wording. */
+  private static readonly CARD_STATE_EYEBROWS: Record<string, string> = {
+    queued: 'Queued',
+    copying: 'Copying',
+    awaiting_label: 'Needs labeling',
+    ready_to_process: 'Ready to process',
+    postprocessing: 'Post-processing',
+    needs_destination: 'Ready to transfer',
+    ready_to_transfer: 'Ready to transfer',
+    transferring: 'Transferring',
+    verifying: 'Verifying transfer',
+    ready_to_finish: 'Ready to finish',
+    completed: 'Finished',
+    failed_copy: 'Copy failed',
+    failed_post: 'Processing failed',
+    failed_transfer: 'Transfer failed',
+    failed: 'Failed disc',
+  };
+
+  /** The visual family for a job card (#839). Falls back to legacy signals
+   * (job_status failed) when the backend payload predates card_state. */
+  cardFamily(disc: DiscMetadata): 'your_turn' | 'working' | 'done' | 'fix' | null {
+    if (disc.card_family) return disc.card_family;
+    if (disc.job_status === 'failed') return 'fix';
+    return null;
+  }
+
+  cardEyebrow(disc: DiscMetadata): string {
+    const mapped = disc.card_state
+      ? CardCarouselComponent.CARD_STATE_EYEBROWS[disc.card_state]
+      : null;
+    if (mapped) return mapped;
+    return disc.job_status === 'failed' ? 'Failed disc' : 'Unfinished disc';
+  }
+
+  /** Footer pill text: the backend's verb/stage, else legacy Unfinished/Failed. */
+  cardPill(disc: DiscMetadata): string {
+    if (disc.card_pill) {
+      const p = disc.card_progress;
+      const showPct = (disc.card_state === 'copying' || disc.card_state === 'transferring')
+        && typeof p === 'number' && p > 0 && p < 100;
+      return showPct ? `${disc.card_pill} ${p}%` : disc.card_pill;
+    }
+    return disc.job_status === 'failed' ? 'Failed' : 'Unfinished';
+  }
+
+  /** ui-pill tone by family. */
+  cardPillTone(disc: DiscMetadata): 'amber' | 'slate' | 'emerald' | 'red' {
+    switch (this.cardFamily(disc)) {
+      case 'your_turn': return 'amber';
+      case 'working': return 'slate';
+      case 'done': return 'emerald';
+      case 'fix': return 'red';
+      default: return disc.job_status === 'failed' ? 'red' : 'amber';
+    }
+  }
+
+  /** Arrow suffix on actionable pills — the pill is a verb, clicking does it. */
+  cardPillActionable(disc: DiscMetadata): boolean {
+    const f = this.cardFamily(disc);
+    return f === 'your_turn' || f === 'fix';
+  }
+
+  /** 0–100 for the thin card progress bar; null hides it. */
+  cardProgress(disc: DiscMetadata): number | null {
+    const f = this.cardFamily(disc);
+    if (f !== 'working' && f !== 'fix') return null;
+    const p = disc.card_progress;
+    return typeof p === 'number' && p >= 0 ? Math.min(100, p) : null;
+  }
+
   /** Card title: movie/series name (movie_name then info_title only, no release_name). Disc number is shown in meta. */
   getDiscTitle(disc: DiscMetadata): string {
     const name = disc.movie_name || disc.info_title || '';
@@ -362,9 +433,8 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
     if (year) {
       parts.push(`(${year})`);
     }
-    const releaseName = (disc.release_name || '').toString().trim();
-    const showName = (disc.movie_name || disc.info_title || '').toString().trim();
-    if (releaseName && releaseName.toLowerCase() !== showName.toLowerCase()) {
+    const releaseName = this.releaseNameForCard(disc);
+    if (releaseName) {
       parts.push(releaseName);
     }
     if (disc.disc_format) {
@@ -374,6 +444,30 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
       parts.push(`Disc ${disc.disc_number}`);
     }
     return parts.length > 0 ? parts.join(' · ') : '—';
+  }
+
+  /**
+   * The release name as the card should show it (#837): without a leading
+   * repeat of the show/movie name. The card title already says
+   * "Star Wars: The Clone Wars", so its release "Star Wars: The Clone Wars -
+   * Season 1-5 Collector's Edition" reads "Season 1-5 Collector's Edition"
+   * and "Star Wars Rebels: Complete Season Two" reads "Complete Season Two".
+   * Empty when the release name is missing or is nothing but the show name.
+   */
+  releaseNameForCard(disc: DiscMetadata): string {
+    const releaseName = (disc.release_name || '').toString().trim();
+    if (!releaseName) return '';
+    const showName = (disc.movie_name || disc.info_title || '').toString().trim();
+    if (!showName) return releaseName;
+    const lower = releaseName.toLowerCase();
+    const showLower = showName.toLowerCase();
+    if (lower === showLower) return '';
+    if (lower.startsWith(showLower)) {
+      // Strip the show name plus whatever separator follows it (": ", " - ", " – ", " — ").
+      const rest = releaseName.slice(showName.length).replace(/^\s*[:\-–—]?\s*/, '').trim();
+      return rest || '';
+    }
+    return releaseName;
   }
 
   getDriveMount(disc: DiscMetadata): string {

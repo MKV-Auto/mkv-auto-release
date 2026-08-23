@@ -20,12 +20,15 @@ INFORMATIVE_CATEGORIES: Tuple[str, ...] = (
     "per_title",
     "previews_ready",
     "transfer_started",
+    # "Labeling complete" is the user's own action echoed back — a milestone,
+    # not a handoff — so it lives here (off by default with the rest) rather
+    # than in the action-required bucket it shipped in.
+    "label_complete",
 )
 
 # User handoffs and milestones that need attention.
 ACTION_LEVELS: Set[str] = {
     "awaiting_labeling",
-    "label_complete",
     "postprocess_complete",
     "transfer_completed",
     "action_required",

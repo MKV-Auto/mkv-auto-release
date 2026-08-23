@@ -296,6 +296,8 @@ export interface NotificationPreferences {
 
 export interface DiscordConfig {
   webhook_url?: string | null;
+  /** Deep-link base for notification links (#841): "http://192.0.2.10:8080". */
+  base_url?: string | null;
   enabled: boolean;
   notification_preferences?: NotificationPreferences;
 }
@@ -307,6 +309,7 @@ const INFORMATIVE_CATEGORY_KEYS = [
   'per_title',
   'previews_ready',
   'transfer_started',
+  'label_complete',
 ] as const;
 
 /** Default prefs when API omits nested fields (should not happen after GET /system/discord/config). */

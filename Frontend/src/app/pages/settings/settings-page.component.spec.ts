@@ -322,9 +322,10 @@ describe('SettingsPageComponent (#609 Notifications matrix)', () => {
     fixture.detectChanges();
     expect(matrixTable()).not.toBeNull();
     // One row per known informative category (rip_start, rip_complete,
-    // job_completed, per_title, previews_ready, transfer_started).
+    // job_completed, per_title, previews_ready, transfer_started,
+    // label_complete — the last moved here from action-required).
     const rows = fixture.nativeElement.querySelectorAll('.settings-notif-table tbody tr');
-    expect(rows.length).toBe(6);
+    expect(rows.length).toBe(7);
   });
 
   it('restores prior per-channel values when re-enabling the master toggle', () => {

@@ -79,8 +79,13 @@ NOTIFICATION_LEVELS: List[str] = [
 DEFAULT_DISCORD_LEVELS: List[str] = list(DEFAULT_DISCORD_NOTIFICATION_LEVELS)
 
 
-def _send_to_discord(message: str, kind: str) -> None:
-    """Send a single message to Discord if webhook is configured."""
+def _send_to_discord(message: str, kind: str, job_id: Optional[str] = None) -> None:
+    """Send a single message to Discord if webhook is configured.
+
+    When the Base URL setting (#841) is set and the notification carries a
+    job, a deep link to that job's workflow is appended — the message
+    becomes a door, not just an announcement. Unset base URL leaves the
+    message exactly as before."""
     try:
         from core import discord_config
         from core.utils import notify_discord
@@ -89,6 +94,14 @@ def _send_to_discord(message: str, kind: str) -> None:
             return
         emoji = {"info": "ℹ️", "success": "✅", "warning": "⚠️", "error": "❌"}.get(kind, "ℹ️")
         formatted = f"{emoji} {message}"
+        if job_id:
+            try:
+                from core.settings import get_base_url
+                base = get_base_url()
+                if base:
+                    formatted += f"\n🔗 Open job: {base}/activity?jobId={job_id}"
+            except Exception as link_exc:
+                logger.debug("Skipping Discord deep link: %s", link_exc)
         notify_discord(webhook_url, formatted)
     except Exception as e:
         logger.warning("Failed to send Discord notification: %s", e)
@@ -274,7 +287,7 @@ async def emit_notification(
 
     if send_discord:
         try:
-            _send_to_discord(message, kind)
+            _send_to_discord(message, kind, job_id=job_id)
         except Exception as e:
             logger.warning("Failed to send notification to Discord: %s", e)
 

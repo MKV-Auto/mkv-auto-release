@@ -109,4 +109,44 @@ describe('WorkflowService disc_metadata_updated (#832)', () => {
     (service as any).handleUnifiedMessage({ type: 'disc_metadata_updated', disc_id: 'nobody', job_id: 'nobody' });
     expect((service as any)._discs.value).toBe(before);
   });
+
+  it('job_card_state merges the card contract without touching state (#839)', () => {
+    (service as any)._discs.next([
+      { disc_id: 'd1', disc_state: 'unfinished', job_id: 'job-1', scan_state: 'ready', job_status: 'running' },
+    ]);
+    (service as any).handleUnifiedMessage({
+      type: 'job_card_state', job_id: 'job-1', disc_id: 'd1',
+      card_state: 'verifying', family: 'working', pill: 'Verifying', progress: null,
+      path: '/activity?jobId=job-1',
+    });
+    const card = ((service as any)._discs.value as any[])[0];
+    expect(card.card_state).toBe('verifying');
+    expect(card.card_family).toBe('working');
+    expect(card.card_pill).toBe('Verifying');
+    expect(card.disc_state).toBe('unfinished');
+
+    (service as any).handleUnifiedMessage({
+      type: 'job_card_state', job_id: 'job-1', disc_id: 'd1',
+      card_state: 'ready_to_finish', family: 'your_turn', pill: 'Finish', progress: 100,
+    });
+    const after = ((service as any)._discs.value as any[])[0];
+    expect(after.card_state).toBe('ready_to_finish');
+    expect(after.card_progress).toBe(100);
+  });
+
+  it('progress_update feeds card_progress for the state it names (#839)', () => {
+    (service as any)._discs.next([
+      { disc_id: 'd1', disc_state: 'unfinished', job_id: 'job-1', scan_state: 'ready',
+        card_state: 'copying', card_family: 'working', card_pill: 'Copying', card_progress: 10 },
+    ]);
+    (service as any).mergeCardProgress({ type: 'progress_update', job_id: 'job-1', rip_progress: 55 });
+    expect(((service as any)._discs.value as any[])[0].card_progress).toBe(55);
+    // A state the message does not speak to stays untouched.
+    (service as any)._discs.next([
+      { disc_id: 'd1', disc_state: 'unfinished', job_id: 'job-1', scan_state: 'ready',
+        card_state: 'awaiting_label', card_progress: null },
+    ]);
+    (service as any).mergeCardProgress({ type: 'progress_update', job_id: 'job-1', rip_progress: 99 });
+    expect(((service as any)._discs.value as any[])[0].card_progress).toBeNull();
+  });
 });

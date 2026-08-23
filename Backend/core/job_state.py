@@ -139,7 +139,10 @@ def _emit_transfer_completed_notification(job: Any, job_id: str) -> None:
     info_title = getattr(disc, "info_title", None) if disc else None
     label = job_audience_label(job, disc)
     elapsed_str = _job_elapsed_suffix_since_created(job)
-    message = f"Transfer complete: {label}{elapsed_str}"
+    # transfer_state=completed implies hash verification already concluded
+    # (it happens inside the transfer), so say what the user can DO now —
+    # this is the handoff the notification level always claimed to be (#839).
+    message = f"Transferred and verified: {label}. Ready to finish.{elapsed_str}"
     emit_notification_sync(
         message,
         "success",
@@ -1029,6 +1032,16 @@ def apply_job_state(
 
     # Emit websocket updates after successful state change
     _emit_job_state_websocket_updates(job, normalized, skip_context_changed=skip_context_changed)
+
+    # One card_state event per stage transition (#839): the card carousel
+    # listens on the coordinator, not the workflow-context channels, and
+    # renders this payload verbatim instead of inferring from five fields.
+    if state_changes:
+        try:
+            from core.card_state import schedule_job_card_state_event
+            schedule_job_card_state_event(job, db=db)
+        except Exception as exc:
+            logger.warning("Failed to schedule job_card_state for %s: %s", job_id, exc)
 
     return job
 

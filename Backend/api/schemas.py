@@ -64,6 +64,10 @@ class JobStatus(BaseModel):
     # collapse; the frontend's transferPhaseLabel falls back to the
     # transferState-based inference in that case.
     transfer_phase: Optional[str] = None
+    # Backend-derived card contract (#839): the card renders these verbatim.
+    card_state: Optional[str] = None
+    card_family: Optional[str] = None  # your_turn | working | done | fix
+    card_pill: Optional[str] = None
     stage_profile: Optional[str] = None
     discdb_result: Optional[str] = None
     pipeline: Optional[Dict[str, str]] = None
@@ -241,6 +245,11 @@ class DiscMetadata(BaseModel):
     last_modified_at: Optional[datetime] = None  # For multi-device sync
     created_at: Optional[datetime] = None  # Job creation time for unfinished discs (rip creation time)
     has_completed_job: Optional[bool] = None  # True when a completed job exists for this disc (#356)
+    # Backend-derived card contract for unfinished-job cards (#839).
+    card_state: Optional[str] = None
+    card_family: Optional[str] = None
+    card_pill: Optional[str] = None
+    card_progress: Optional[int] = None
     # #603: When the inserted disc's content_hash matches a row that's already
     # finalized in the Library, the carousel collapses the usual "Now Reading"
     # treatment into a single "Already in Library" card with a Re-rip button.
@@ -371,6 +380,9 @@ class DiscordSettings(BaseModel):
     webhook_url: Optional[str] = None
     enabled: bool = False
     notification_preferences: Optional[NotificationPreferencesSchema] = None
+    # Deep-link base for notification links (#841); stored app-wide, surfaced
+    # here because Settings → Notifications is where the user meets it.
+    base_url: Optional[str] = None
 
     @staticmethod
     def defaults() -> "DiscordSettings":

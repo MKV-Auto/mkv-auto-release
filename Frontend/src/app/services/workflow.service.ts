@@ -33,6 +33,10 @@ export const DISC_METADATA_UPDATED_FIELDS = [
   'release_year', 'production_year', 'disc_format', 'resolution', 'release_image',
 ] as const;
 
+/** Backend-derived card contract fields (#839) — see core/card_state.py. */
+export type CardFamily = 'your_turn' | 'working' | 'done' | 'fix';
+export const JOB_CARD_STATE_FIELDS = ['card_state', 'card_family', 'card_pill', 'card_progress'] as const;
+
 export interface DiscMetadata {
   disc_id: string;
   disc_num?: string | null;
@@ -44,6 +48,10 @@ export interface DiscMetadata {
   scan_error?: string | null;
   movie_name?: string | null;
   release_name?: string | null;
+  card_state?: string | null;
+  card_family?: CardFamily | null;
+  card_pill?: string | null;
+  card_progress?: number | null;
   info_title?: string | null;
   disc_number?: number | null;
   release_image?: string | null;
@@ -3190,7 +3198,32 @@ export class WorkflowService implements OnDestroy {
         if (touched) this._discs.next(mergedDiscs);
         break;
       }
-        
+
+      case 'job_card_state': {
+        // One backend-derived state per stage transition (#839). Merge the
+        // card contract into the matching card — never disc_state/scan_state.
+        const csJobId = message.job_id ?? null;
+        const csDiscId = message.disc_id ?? null;
+        if (!csJobId && !csDiscId) break;
+        let csTouched = false;
+        const nextDiscs = this._discs.value.map(d => {
+          const matches =
+            (csJobId && d.job_id === csJobId) ||
+            (csDiscId && d.disc_id === csDiscId && (!d.job_id || !csJobId || d.job_id === csJobId));
+          if (!matches) return d;
+          csTouched = true;
+          return {
+            ...d,
+            card_state: message.card_state ?? null,
+            card_family: message.family ?? null,
+            card_pill: message.pill ?? null,
+            card_progress: message.progress ?? null,
+          };
+        });
+        if (csTouched) this._discs.next(nextDiscs);
+        break;
+      }
+
       case 'job_unfinished':
         if (message.disc_state) {
           const currentDiscs = this._discs.value;
@@ -3413,7 +3446,32 @@ export class WorkflowService implements OnDestroy {
     }
   }
 
+    /** Keep the card's thin stage bar live between card_state transitions
+   * (#839): progress_update already streams to every client, so feed the
+   * matching card's card_progress from the stage its card_state names. */
+  private mergeCardProgress(msg: ProgressUpdateMessage): void {
+    if (!msg?.job_id) return;
+    let touched = false;
+    const next = this._discs.value.map(d => {
+      if (d.job_id !== msg.job_id) return d;
+      let p: number | null | undefined;
+      switch (d.card_state) {
+        case 'copying': p = msg.rip_progress; break;
+        case 'postprocessing': p = (msg as any).post_progress; break;
+        case 'transferring':
+        case 'verifying': p = (msg as any).transfer_progress; break;
+        default: return d;
+      }
+      if (typeof p !== 'number' || p === d.card_progress) return d;
+      touched = true;
+      return { ...d, card_progress: p };
+    });
+    if (touched) this._discs.next(next);
+  }
+
   private handleProgressUpdate(progressMsg: ProgressUpdateMessage): void {
+    this.mergeCardProgress(progressMsg);
+
     const jobId = progressMsg.job_id;
     if (!this.websocketProgress.has(jobId)) {
       this.websocketProgress.set(jobId, new BehaviorSubject<ProgressUpdateMessage | null>(null));

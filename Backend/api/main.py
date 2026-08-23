@@ -809,8 +809,8 @@ async def lifespan(app: FastAPI):
         async def _redis_progress_subscriber():
             """Subscribe to Redis progress update channels and emit via WebSocket."""
             logger = get_logger(__name__, "_redis_progress_subscriber")
-            await pubsub.psubscribe("progress_updates:*")
-            logger.info("Started Redis subscriber for progress updates")
+            await pubsub.psubscribe("progress_updates:*", "coordinator_events")
+            logger.info("Started Redis subscriber for progress updates + coordinator events")
             try:
                 while True:
                     message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
@@ -818,6 +818,15 @@ async def lifespan(app: FastAPI):
                         try:
                             channel = message['channel']
                             data = json.loads(message['data'])
+                            if channel == 'coordinator_events':
+                                # Worker-side stage transitions (#839): the
+                                # celery process has no WS loop, so it
+                                # publishes here and we fan out.
+                                event_type = data.pop('type', None)
+                                if event_type:
+                                    from api.routers.websockets import _emit_to_coordinator
+                                    await _emit_to_coordinator(event_type, data)
+                                continue
                             job_id = data.get('job_id')
                             if job_id:
                                 from api.routers.websockets import _emit_job_progress
