@@ -437,6 +437,11 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
     if (releaseName) {
       parts.push(releaseName);
     }
+    // Only set when the release spans multiple seasons (#846) — tells the
+    // four discs of a "Season 1-5" box apart at a glance.
+    if (disc.disc_season != null) {
+      parts.push(`S${disc.disc_season}`);
+    }
     if (disc.disc_format) {
       parts.push(disc.disc_format);
     }

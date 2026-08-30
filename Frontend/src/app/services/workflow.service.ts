@@ -48,6 +48,8 @@ export interface DiscMetadata {
   scan_error?: string | null;
   movie_name?: string | null;
   release_name?: string | null;
+  /** The disc's own season, present only when the release spans seasons (#846). */
+  disc_season?: number | null;
   card_state?: string | null;
   card_family?: CardFamily | null;
   card_pill?: string | null;

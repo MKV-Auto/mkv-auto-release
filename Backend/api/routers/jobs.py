@@ -957,7 +957,17 @@ def _apply_label_to_records(disc, lp: Dict[str, Any], db: Session) -> None:
 
         # Flush changes to database before commit (ensures SQLAlchemy writes pending changes)
         db.flush()
-        
+
+        # Labeled identity is now settled (movie/release link, disc number,
+        # per-disc season) — refresh an auto-generated disc name/slug to the
+        # convention form (#845). User-typed names are never touched.
+        try:
+            from core.disc_naming import refresh_auto_disc_identity
+            db.refresh(disc)
+            refresh_auto_disc_identity(disc)
+        except Exception as exc:
+            log.warning("auto disc-name refresh failed for disc %s: %s", getattr(disc, "id", None), exc)
+
         # Note: We do NOT delete/recreate tracks when updating title metadata
         # Tracks are separate entities that should only be modified when streams data changes
         # This function only updates title metadata (type, title, description, etc.), not streams

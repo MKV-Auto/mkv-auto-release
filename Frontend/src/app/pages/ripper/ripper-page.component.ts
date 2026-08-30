@@ -1,4 +1,4 @@
-import { Component, DestroyRef, OnInit, OnDestroy, inject, ChangeDetectorRef, ChangeDetectionStrategy, ViewChild, ApplicationRef } from '@angular/core';
+import { Component, DestroyRef, OnInit, OnDestroy, inject, ChangeDetectorRef, ChangeDetectionStrategy, ViewChild, ApplicationRef, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterModule, ActivatedRoute } from '@angular/router';
@@ -751,6 +751,7 @@ export class RipperPageComponent implements OnInit, OnDestroy {
     private logger: LoggerService,
     private setupModalSvc: SetupModalService,
     private driveSnapshotSvc: DriveSnapshotService,
+    private zone: NgZone,
   ) {}
 
   ngOnInit(): void {
@@ -1805,6 +1806,11 @@ export class RipperPageComponent implements OnInit, OnDestroy {
     });
   }
 
+  /** Set when a ?jobId= deep link pointed at a job that can't be opened
+   * (#844). Rendered as an inline notice where the error card used to
+   * wedge; cleared on dismiss or when the user selects any card. */
+  deepLinkFailed = false;
+
   private bootstrapFromBackend(): void {
     // Prefer jobId from route (e.g. "Continue Workflow" from Library) over localStorage
     const queryJobId = this.route.snapshot.queryParamMap.get('jobId');
@@ -1823,6 +1829,31 @@ export class RipperPageComponent implements OnInit, OnDestroy {
             localStorage.removeItem(this.CURRENT_JOB_KEY);
           }
           this.logger.error('[Ripper] Failed to bootstrap tracked job', err);
+          // A dead deep link (finished job, mistyped id, or a pre-fix
+          // notification that pointed a job route at a disc id, #844) used
+          // to wedge the page in the "Failed to load workflow" card with a
+          // Retry that can never work. The service rethrows a WRAPPED plain
+          // Error here ("Failed to fetch context for job:…") with no
+          // .status, so don't gate on 404: any failure to open a link-
+          // provided job falls back to the normal Activity view. The
+          // tracked-job key came from the link itself, so dropping it just
+          // restores the pre-click state.
+          if (queryJobId) {
+            // The context-fetch error surfaces outside Angular's zone, so a
+            // toast pushed here is added AND auto-dismissed without a change
+            // detection pass in between — it never paints. Re-enter the zone.
+            this.zone.run(() => {
+              this.deepLinkFailed = true;
+              this.cdr.markForCheck();  // OnPush component; error path is not a template event
+              try {
+                localStorage.removeItem(this.CURRENT_JOB_KEY);
+                this.workflowSvc.setSelectedCard(null);
+                this.workflowSvc.clearActiveContext();
+              } catch (clearErr) {
+                this.logger.error('[Ripper] Deep-link fallback cleanup failed', clearErr);
+              }
+            });
+          }
         },
       });
     }

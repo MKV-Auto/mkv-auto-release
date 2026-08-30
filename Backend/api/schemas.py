@@ -237,6 +237,9 @@ class DiscMetadata(BaseModel):
     info_title: Optional[str] = None  # MakeMKV info_title from disc scan
     disc_number: Optional[int] = None  # Ordinal in release (e.g. Disc 1, 2) for card title
     discdb_disc_num: Optional[int] = None  # TheDiscDB matched disc index (reference only)
+    # The disc's own season, present only when its release spans multiple
+    # seasons (#846) — the card renders it as "S2".
+    disc_season: Optional[int] = None
     release_image: Optional[str] = None
     disc_format: Optional[str] = None
     resolution: Optional[str] = None

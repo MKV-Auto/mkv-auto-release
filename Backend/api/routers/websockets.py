@@ -164,7 +164,31 @@ def _build_disc_metadata(disc: db_models.Disc, disc_state: str, job_id: Optional
             production_year = rel.movie.production_year
         # Get release image (title_cover_url removed from Release - should be on Disc)
         release_image = rel.cover_front_url
-    
+
+    # The disc's own season, surfaced only when the release spans more than
+    # one season (#846): a "Season 1-5" box's card can then say S2 while a
+    # single-season release stays uncluttered. Per-disc season lives in
+    # label_draft.primary_season.
+    def _season_of(d: Any) -> Optional[int]:
+        draft = getattr(d, "label_draft", None)
+        raw = draft.get("primary_season") if isinstance(draft, dict) else None
+        if isinstance(raw, bool):
+            return None
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return n if n >= 0 else None
+
+    disc_season = None
+    if disc.release is not None:
+        try:
+            sibling_seasons = {_season_of(d) for d in (disc.release.discs or [])} - {None}
+            if len(sibling_seasons) > 1:
+                disc_season = _season_of(disc)
+        except Exception:
+            disc_season = None
+
     # Get resolution from release or disc
     resolution = None
     if disc.release:
@@ -257,6 +281,7 @@ def _build_disc_metadata(disc: db_models.Disc, disc_state: str, job_id: Optional
         last_modified_at=disc.updated_at,
         created_at=created_at,
         has_completed_job=has_completed_job,
+        disc_season=disc_season,
         job_status=job_status,
         finalized=finalized_flag,
         finalized_release_id=finalized_release_id,
@@ -786,6 +811,7 @@ async def _emit_disc_updated_with_job(disc_id: str, job_id: Optional[str] = None
 DISC_METADATA_UPDATED_FIELDS: tuple[str, ...] = (
     "movie_name", "release_name", "info_title", "disc_number",
     "release_year", "production_year", "disc_format", "resolution", "release_image",
+    "disc_season",
 )
 
 

@@ -79,13 +79,17 @@ NOTIFICATION_LEVELS: List[str] = [
 DEFAULT_DISCORD_LEVELS: List[str] = list(DEFAULT_DISCORD_NOTIFICATION_LEVELS)
 
 
-def _send_to_discord(message: str, kind: str, job_id: Optional[str] = None) -> None:
+def _send_to_discord(message: str, kind: str, link_path: Optional[str] = None) -> None:
     """Send a single message to Discord if webhook is configured.
 
     When the Base URL setting (#841) is set and the notification carries a
-    job, a deep link to that job's workflow is appended — the message
-    becomes a door, not just an announcement. Unset base URL leaves the
-    message exactly as before."""
+    ``link_path``, a deep link is appended — the message becomes a door,
+    not just an announcement. Unset base URL leaves the message exactly as
+    before. ``link_path`` is explicit rather than derived from ``job_id``
+    because that field doubles as a dedupe identity and is not always a
+    Job UUID (scan_completed stuffs the DISC id in it — the first shipped
+    link pointed a job route at a disc and dead-ended in
+    "Failed to load workflow")."""
     try:
         from core import discord_config
         from core.utils import notify_discord
@@ -94,12 +98,12 @@ def _send_to_discord(message: str, kind: str, job_id: Optional[str] = None) -> N
             return
         emoji = {"info": "ℹ️", "success": "✅", "warning": "⚠️", "error": "❌"}.get(kind, "ℹ️")
         formatted = f"{emoji} {message}"
-        if job_id:
+        if link_path:
             try:
                 from core.settings import get_base_url
                 base = get_base_url()
                 if base:
-                    formatted += f"\n🔗 Open job: {base}/activity?jobId={job_id}"
+                    formatted += f"\n🔗 Open: {base}{link_path}"
             except Exception as link_exc:
                 logger.debug("Skipping Discord deep link: %s", link_exc)
         notify_discord(webhook_url, formatted)
@@ -196,9 +200,15 @@ async def emit_notification(
     id_key: Optional[str] = None,
     info_title: Optional[str] = None,
     dedupe_ttl: Optional[int] = None,
+    link_path: Optional[str] = None,
 ) -> None:
     """
     Emit a user-facing notification: broadcast on unified WebSocket and optionally send to Discord.
+
+    ``link_path``: relative in-app destination for this notification
+    ("/activity?jobId=…"). Defaults to the job's workflow when ``job_id``
+    is a real Job UUID; pass explicitly (or ``""`` for none) when the
+    notification is not about a job the route can open.
 
     Payload includes a stable envelope (id, timestamp, source) for dedupe and push.
 
@@ -278,6 +288,11 @@ async def emit_notification(
         )
         return
 
+    if link_path is None and job_id is not None:
+        link_path = f"/activity?jobId={job_id}"
+    if link_path:
+        payload["link_path"] = link_path
+
     if send_ws:
         try:
             from api.routers.websockets import _emit_unified
@@ -287,7 +302,7 @@ async def emit_notification(
 
     if send_discord:
         try:
-            _send_to_discord(message, kind, job_id=job_id)
+            _send_to_discord(message, kind, link_path=link_path or None)
         except Exception as e:
             logger.warning("Failed to send notification to Discord: %s", e)
 
@@ -328,6 +343,7 @@ def emit_notification_sync(
     id_key: Optional[str] = None,
     info_title: Optional[str] = None,
     dedupe_ttl: Optional[int] = None,
+    link_path: Optional[str] = None,
 ) -> None:
     """
     Schedule emit_notification from a sync context (e.g. Celery or sync API).
@@ -343,6 +359,7 @@ def emit_notification_sync(
             actions=actions,
             id_key=id_key,
             info_title=info_title,
+            link_path=link_path,
             dedupe_ttl=dedupe_ttl,
         ),
         "notification",

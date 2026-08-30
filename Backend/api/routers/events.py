@@ -465,7 +465,12 @@ async def _notify_disc_scan_complete_async(disc_info: dict) -> None:
                 "scan_completed",
                 action_type="open_ripper_drive",
                 action_payload={"mount_point": str(mount_point)},
+                # NOT a Job UUID — the disc id doubles as the dedupe identity
+                # here. Deep links must not treat it as a job (#841): the
+                # drive card auto-selects on load, so plain /activity is the
+                # right destination.
                 job_id=str(disc_id),
+                link_path="/activity",
                 title=title,
                 actions=actions,
                 id_key=scan_id_key,

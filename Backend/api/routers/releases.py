@@ -1836,6 +1836,8 @@ def _patch_disc_ops_internal(
         if not disc.disc_name:
             disc_name = disc_info.get("disc_name")
             if not disc_name and disc.format:
+                # Last-resort scan value; the labeled-identity refresh below
+                # replaces it with the convention form once a movie is linked.
                 disc_name = disc.format
             if disc_name:
                 disc.disc_name = disc_name
@@ -1848,6 +1850,15 @@ def _patch_disc_ops_internal(
                 disc_slug = _disc_name_sluggify(disc.disc_name)
             if disc_slug:
                 disc.disc_slug = disc_slug
+
+    # Ops may have just linked the movie/release, set the per-disc season, or
+    # changed the format — refresh an auto-generated name/slug to the
+    # convention form (#845). No-op on user-typed names.
+    try:
+        from core.disc_naming import refresh_auto_disc_identity
+        refresh_auto_disc_identity(disc)
+    except Exception as _naming_exc:
+        log.warning(f"auto disc-name refresh failed for disc {disc_id}: {_naming_exc}")
 
     crud.backfill_disc_slug_if_blank(disc)
 

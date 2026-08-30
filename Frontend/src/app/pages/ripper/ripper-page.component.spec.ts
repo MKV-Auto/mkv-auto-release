@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { RouterTestingModule } from '@angular/router/testing';
-import { BehaviorSubject, of } from 'rxjs';
+import { BehaviorSubject, of, throwError } from 'rxjs';
 import { RipperPageComponent } from './ripper-page.component';
 import { DriveService, DiscDetail } from '../../services/drive.service';
 import { SettingsService } from '../../services/settings.service';
@@ -8,6 +8,7 @@ import { JobService } from '../../services/job.service';
 import { SystemService } from '../../services/system.service';
 import { ToastService } from '../../services/toast.service';
 import { MetadataService } from '../../services/metadata.service';
+import { ActivatedRoute } from '@angular/router';
 import { WorkflowService, WorkflowContext, UIOrchestrationState, DiscInfoState } from '../../services/workflow.service';
 // Removed wrapper services - functionality moved to WorkflowService and MetadataService
 import { LoggerService } from '../../services/logger.service';
@@ -117,6 +118,7 @@ class WorkflowServiceStub {
   updateUIOrchestrationState() {}
   updateDiscInfoState() {}
   setSelectedCard() {}
+  clearActiveContext() {}
   syncCoordinator() {}
   setFunctionBindings() {}
   computeDiscDbState() { return 'unknown'; }
@@ -381,6 +383,20 @@ describe('RipperPageComponent', () => {
   // CTA state tests removed - CTA state computation has been moved to WorkflowActionsComponent
   // These tests would need to be updated to test WorkflowActionsComponent instead
   // or test the component's CTA state computation if it still exists
+
+  it('deep link to a dead job falls back with a notice instead of wedging (#844)', () => {
+    const workflowStub = TestBed.inject(WorkflowService) as any;
+    spyOn(workflowStub, 'setContextByCard').and.returnValue(
+      throwError(() => new Error('Failed to fetch context for job:dead'))
+    );
+    const route = TestBed.inject(ActivatedRoute) as any;
+    spyOn(route.snapshot.queryParamMap, 'get').and.callFake((k: string) => (k === 'jobId' ? 'dead-id' : null));
+    const clearSpy = spyOn(workflowStub, 'clearActiveContext');
+    (component as any).bootstrapFromBackend();
+    expect(component.deepLinkFailed).toBeTrue();
+    expect(clearSpy).toHaveBeenCalled();
+    expect(localStorage.getItem((component as any).CURRENT_JOB_KEY)).toBeNull();
+  });
 
   it('component initializes successfully', () => {
     expect(component).toBeTruthy();

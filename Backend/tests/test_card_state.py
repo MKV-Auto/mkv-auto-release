@@ -143,15 +143,48 @@ def test_discord_send_appends_link_only_with_base_and_job(monkeypatch, tmp_path)
 
     import core.settings as st
     monkeypatch.setattr(st, "get_base_url", lambda: "http://192.0.2.10:8080")
-    notif._send_to_discord("Transferred and verified: Rebels.", "success", job_id="job-1")
-    assert sent[-1].endswith("Open job: http://192.0.2.10:8080/activity?jobId=job-1")
+    notif._send_to_discord("Transferred and verified: Rebels.", "success", link_path="/activity?jobId=job-1")
+    assert sent[-1].endswith("Open: http://192.0.2.10:8080/activity?jobId=job-1")
 
-    notif._send_to_discord("No job attached.", "info")
-    assert "Open job" not in sent[-1]
+    notif._send_to_discord("No link attached.", "info")
+    assert "Open:" not in sent[-1]
 
     monkeypatch.setattr(st, "get_base_url", lambda: None)
-    notif._send_to_discord("Base unset.", "info", job_id="job-1")
-    assert "Open job" not in sent[-1]
+    notif._send_to_discord("Base unset.", "info", link_path="/activity?jobId=job-1")
+    assert "Open:" not in sent[-1]
+
+
+def test_link_path_defaults_from_job_id_but_explicit_wins(monkeypatch):
+    """scan_completed regression (#841): its `job_id` is really a DISC id
+    (dedupe identity), and the first shipped link sent users to a job route
+    that 404s — "Failed to load workflow" on every scan notification. The
+    default derivation only applies when the caller did not say otherwise."""
+    import asyncio
+    import core.notifications as notif
+
+    seen = {}
+    monkeypatch.setattr(notif, "_send_to_discord",
+                        lambda message, kind, link_path=None: seen.setdefault("link", link_path))
+    async def fake_emit(payload): seen["payload"] = payload
+    import api.routers.websockets as ws
+    monkeypatch.setattr(ws, "_emit_unified", fake_emit)
+    import core.discord_config as dcfg
+    monkeypatch.setattr(dcfg, "load_discord_config",
+                        lambda: {"enabled": True, "webhook_url": "https://d.invalid/h",
+                                 "notification_preferences": {"action_required": {"in_app": True, "discord": True},
+                                                              "errors": {"in_app": True, "discord": True}}})
+    async def run():
+        # Real job → derived link.
+        await notif.emit_notification("m", "success", "transfer_completed", job_id="job-9",
+                                      dedupe_ttl=0)
+        assert seen.pop("link") == "/activity?jobId=job-9"
+        assert seen.pop("payload")["link_path"] == "/activity?jobId=job-9"
+        # Disc id masquerading as job_id, caller says /activity → explicit wins.
+        await notif.emit_notification("m2", "info", "scan_completed", job_id="disc-1",
+                                      link_path="/activity", dedupe_ttl=0)
+        assert seen.pop("link") == "/activity"
+        assert seen.pop("payload")["link_path"] == "/activity"
+    asyncio.run(run())
 
 
 def test_initial_state_unfinished_card_carries_contract(test_db):

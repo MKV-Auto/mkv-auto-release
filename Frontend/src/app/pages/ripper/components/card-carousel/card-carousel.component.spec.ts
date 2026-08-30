@@ -75,6 +75,18 @@ describe('CardCarouselComponent', () => {
       } as DiscMetadata)).toBe('');
     });
 
+    it('shows the disc season chip only when the backend sends one (#846)', () => {
+      expect(component.getDiscMeta({
+        ...base, movie_name: 'Star Wars: The Clone Wars',
+        release_name: "Star Wars: The Clone Wars - Season 1-5 Collector's Edition",
+        production_year: 2008, disc_format: 'DVD', disc_number: 4, disc_season: 2,
+      } as DiscMetadata)).toBe("(2008) · Season 1-5 Collector's Edition · S2 · DVD · Disc 4");
+      expect(component.getDiscMeta({
+        ...base, movie_name: 'Star Wars Rebels', release_name: 'Star Wars Rebels: Complete Season Two',
+        production_year: 2014, disc_format: 'DVD', disc_number: 1, disc_season: null,
+      } as DiscMetadata)).toBe('(2014) · Complete Season Two · DVD · Disc 1');
+    });
+
     it('omits a release name that merely repeats the show name, and a missing one', () => {
       expect(component.getDiscMeta({
         ...base, movie_name: 'Thor', release_name: 'thor', production_year: 2011, disc_format: 'Blu-Ray',

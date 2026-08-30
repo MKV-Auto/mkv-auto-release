@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.8] - 2026-08-30
+
+### Fixed
+
+- **Discord links from scan notifications no longer dead-end.** The "disc scanned" notification carried the disc's id where job ids normally go, so its deep link opened a job that doesn't exist and the app sat on "Failed to load workflow" with a Retry that could never work. Notification links are now explicit per notification — scan messages link to the Activity page (the drive card selects itself) — and following a link to a job that has since finished shows a short note and the normal view instead of the error card.
+
+### Changed
+
+- **Auto-generated disc names and slugs now describe the disc.** Once a disc is labeled, an automatic name like "DVD" or a raw volume label becomes "Thor: Ragnarok - Blu-Ray" or "Star Wars Rebels: Season 2 - Disc 2 - DVD" (with the matching slug) — the same convention as hand-named discs, and the disc-name style TheDiscDB uses. Names you typed yourself are never touched.
+- **Cards in a multi-season box show the disc's season.** A "Season 1-5" collector's edition now reads "(2008) · Season 1-5 Collector's Edition · S2 · DVD · Disc 4"; single-season releases stay as they were.
+
 ## [1.6.7] - 2026-08-23
 
 ### Added

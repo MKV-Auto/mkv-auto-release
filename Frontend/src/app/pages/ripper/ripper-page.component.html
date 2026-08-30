@@ -35,6 +35,15 @@
   </ng-container>
 </ng-container>
 
+<!-- Deep link pointed at a job that can't be opened (#844): say so once,
+     inline, instead of wedging in the error card below. -->
+<div class="glass card alert warning soft" *ngIf="deepLinkFailed">
+  <div class="loading-content">
+    <div class="loading-text">Couldn't open that job — it may no longer exist.</div>
+    <button type="button" class="btn secondary mt-2" (click)="deepLinkFailed = false">Dismiss</button>
+  </div>
+</div>
+
 <!-- Show error and retry when context fetch failed -->
 <ng-container *ngIf="state?.selectedCard && state?.workflowContextStatus === 'error'">
   <div class="glass card alert warning soft">
