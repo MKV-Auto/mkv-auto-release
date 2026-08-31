@@ -15,6 +15,7 @@ import { MetadataTagListComponent } from '../metadata-tag-list/metadata-tag-list
 import { DetectionBadgeComponent } from '../detection-badge/detection-badge.component';
 import { TitleRowComponent, TitleRowStatus } from '../title-row/title-row.component';
 import { TitleEditorComponent } from '../title-editor/title-editor.component';
+import { PreviewLabelModalComponent } from '../preview-label-modal/preview-label-modal.component';
 import { EmptyStateComponent } from '../../ui/empty-state/empty-state.component';
 import { IconComponent } from '../../ui/icon/icon.component';
 import { BtnComponent } from '../../ui/btn/btn.component';
@@ -30,7 +31,11 @@ import {
   parseDuplicateInfo,
   realSiblingCount,
 } from '../../utils/title-label-entities.util';
-import { TITLE_TYPE_SELECT_OPTIONS } from '../../constants/title-type-options';
+import {
+  BACKDROP_TITLE_NAME,
+  isBackdropTitleType,
+  TITLE_TYPE_SELECT_OPTIONS,
+} from '../../constants/title-type-options';
 
 /** Title labeling step (template: TitlesStep.tsx / TitleCard.tsx). Duplicate group UI when backend provides title duplicate_info. */
 @Component({
@@ -51,6 +56,7 @@ import { TITLE_TYPE_SELECT_OPTIONS } from '../../constants/title-type-options';
     ObfuscationBadgeComponent,
     PillComponent,
     BtnComponent,
+    PreviewLabelModalComponent,
   ],
   templateUrl: './title-label.component.html',
   styleUrls: ['./title-label.component.scss'],
@@ -205,15 +211,31 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     }
   }
 
+  /** True when the row's effective type is Episode — the only type the
+   * multi-part stacking rationale applies to. Episode-scoped EXTRAS
+   * legitimately carry the same (season, episode) as their episode (that's
+   * how Plex attaches them), and must never be pulled into a part group:
+   * on Rebels S2 every "Rebels Recon" short sharing its episode's number
+   * was getting stamped part 2 of 2 ("Split across files"). */
+  private isEpisodeTyped(t: any): boolean {
+    return String(t?.type || '').trim().toLowerCase() === 'episode';
+  }
+
   private multiPartCompanions(patch: TitlePatchRequest): TitlePatchRequest[] {
     const season = patch.season;
     const episode = patch.episode;
     if (season == null || episode == null) return [];
     const me = (this.titles || []).find((t) => this.getTitleId(t) === patch.title_id);
     if (!me) return [];
+    // Parts are for one EPISODE split across files. The patched row and
+    // every companion must be Episode-typed; use the patch's type when the
+    // edit is changing it in the same stroke.
+    const meType = patch.type != null ? patch.type : me.type;
+    if (String(meType || '').trim().toLowerCase() !== 'episode') return [];
     const sameEpisode = (this.titles || []).filter((t) =>
       this.getTitleId(t) !== patch.title_id &&
       !this.isIgnored(t) &&
+      this.isEpisodeTyped(t) &&
       Number(t.season) === Number(season) &&
       Number(t.episode) === Number(episode)
     );
@@ -696,6 +718,11 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     this.labelChanged.emit(this.titles);
   }
 
+  /** Backdrop's name is fixed to "Backdrop" — the name field locks. */
+  isBackdropLockedTitle(title: any): boolean {
+    return isBackdropTitleType(title?.type);
+  }
+
   onTypeChange(title: any, value: any): void {
     // Type is picked, not typed, so it saves immediately. A name the user
     // typed just before may still be buffered — it rides in THIS write
@@ -711,6 +738,7 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
       members.length > 1 ? (this.getDuplicateInfo(primary)?.groupId as string | undefined) : undefined;
 
     if (members.length > 1) {
+      const prevTypes = new Map(members.map((m) => [this.getTitleId(m), m.type]));
       for (const m of members) {
         m.type = value;
         if (this.isIgnored(m)) {
@@ -728,6 +756,14 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
           p.season = null;
           p.episode = null;
           p.edition = null;
+        } else if (isBackdropTitleType(value)) {
+          // Backdrop's name is fixed — overrides any pending typed name.
+          m.title = BACKDROP_TITLE_NAME;
+          p.title = BACKDROP_TITLE_NAME;
+        } else if (isBackdropTitleType(prevTypes.get(id)) && m.title === BACKDROP_TITLE_NAME) {
+          // Leaving Backdrop: the forced name wasn't user data.
+          m.title = '';
+          p.title = null;
         }
         return p;
       });
@@ -748,6 +784,7 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
       const wasIgnore = this.isIgnored(title);
       const pending = this.takePendingFieldsFor(title);
       this.flushPendingFieldEdits(); // unrelated rows' leftovers, if any
+      const prevType = title.type;
       title.type = value;
       if (this.isIgnored(title)) {
         this.clearIgnoredFieldsInMemory(title);
@@ -762,7 +799,17 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
           edition: null,
         });
       } else {
-        this.emitPatch(title, { ...pending, type: normalizedType });
+        const p: TitlePatchRequest = { ...pending, type: normalizedType } as TitlePatchRequest;
+        if (isBackdropTitleType(value)) {
+          // Backdrop's name is fixed — overrides any pending typed name.
+          title.title = BACKDROP_TITLE_NAME;
+          p.title = BACKDROP_TITLE_NAME;
+        } else if (isBackdropTitleType(prevType) && title.title === BACKDROP_TITLE_NAME) {
+          // Leaving Backdrop: the forced name wasn't user data.
+          title.title = '';
+          p.title = null;
+        }
+        this.emitPatch(title, p);
       }
       if (wasIgnore !== this.isIgnored(title)) {
         this.repartitionIgnoredToBottom();
@@ -832,7 +879,7 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
     }
   }
 
-  /** #701: open the mobile quick-preview overlay for a title (no-op without a clip). */
+  /** #701/#848: open the preview+label modal for a title (no-op without a clip). */
   openQuickPreview(title: any): void {
     if (!this.getQuickPreviewUrl(title)) return;
     this.quickPreviewTitle = title;
@@ -840,6 +887,60 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
 
   closeQuickPreview(): void {
     this.quickPreviewTitle = null;
+  }
+
+  // ---- #848: the in-modal labeling loop -------------------------------
+
+  /** Rail-visible rows the modal can navigate: no dedupe siblings, no
+   * claimed clips, no ignored rows. Same gate the rail itself applies. */
+  private quickPreviewCandidates(): any[] {
+    return (this.getDisplayOrderedTitles() || []).filter(
+      (t) =>
+        !this.isDedupeSibling(this.getTitleId(t)) &&
+        !this.isClaimedClip(t) &&
+        !this.isIgnored(t),
+    );
+  }
+
+  /** Unlabeled rows remaining — the modal's header badge. */
+  quickPreviewUnlabeledCount(): number {
+    return this.quickPreviewCandidates().filter((t) => !this.isLabelingComplete(t)).length;
+  }
+
+  /** Advance the modal to the next/previous UNLABELED title, wrapping
+   * around. Titles without a preview clip still open (placeholder shown) —
+   * skipping them silently would hide rows from the loop. Stays put when
+   * everything is labeled. */
+  quickPreviewStep(dir: 1 | -1): void {
+    if (!this.quickPreviewTitle) return;
+    const all = this.quickPreviewCandidates();
+    const n = all.length;
+    if (!n) return;
+    const curId = this.getTitleId(this.quickPreviewTitle);
+    const idx = all.findIndex((t) => this.getTitleId(t) === curId);
+    const start = idx < 0 ? (dir === 1 ? -1 : 0) : idx;
+    for (let step = 1; step <= n; step++) {
+      const cand = all[(((start + dir * step) % n) + n) % n];
+      if (this.getTitleId(cand) === curId) continue;
+      if (!this.isLabelingComplete(cand)) {
+        this.quickPreviewTitle = cand;
+        this.selectTitle(cand);
+        return;
+      }
+    }
+  }
+
+  /** Ignore the modal's current title, then advance the loop. */
+  quickPreviewIgnoreAndNext(): void {
+    const current = this.quickPreviewTitle;
+    if (!current) return;
+    this.quickPreviewStep(1);
+    this.markAsIgnore(current);
+    // Ignoring the last unlabeled title leaves nothing to advance to —
+    // close so the user sees the finished rail, not a stale form.
+    if (this.quickPreviewTitle === current) {
+      this.closeQuickPreview();
+    }
   }
 
   markAsIgnore(title: any): void {

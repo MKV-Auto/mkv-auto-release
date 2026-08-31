@@ -1,0 +1,66 @@
+<div class="plm-backdrop" (click)="closed.emit()">
+  <div class="plm-modal" #modalRoot tabindex="-1" role="dialog" aria-modal="true" (click)="$event.stopPropagation()">
+    <header class="plm-head">
+      <div class="plm-headings">
+        <h4 class="plm-heading" [class.plm-heading--placeholder]="!title?.title">{{ title?.title || 'Untitled' }}</h4>
+        <span class="plm-headmeta" *ngIf="headMeta()">{{ headMeta() }}</span>
+      </div>
+      <span class="plm-count" *ngIf="unlabeledCount !== null">
+        {{ unlabeledCount }} unlabeled
+      </span>
+      <button type="button" class="plm-close" (click)="closed.emit()" aria-label="Close preview">✕</button>
+    </header>
+
+    <div class="plm-body">
+      <div class="plm-video">
+        <app-preview-viewer *ngIf="previewUrl; else noPreview" [src]="previewUrl"></app-preview-viewer>
+        <ng-template #noPreview>
+          <div class="plm-no-preview">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+            <span>No preview clip for this title</span>
+          </div>
+        </ng-template>
+      </div>
+
+      <div class="plm-panel">
+        <div class="plm-fields">
+          <app-title-editor
+            *ngIf="title"
+            [title]="title"
+            [isSeries]="isSeries"
+            [titleProgress]="titleProgress"
+            [titleStatusFn]="titleStatusFn"
+            [titleProgressValueFn]="titleProgressValueFn"
+            [titleActiveFn]="titleActiveFn"
+            [previewUrlFn]="previewUrlFn"
+            [titlePathFn]="titlePathFn"
+            [previewStateFn]="previewStateFn"
+            [labelSaving]="labelSaving"
+            [lastAutosaveOk]="lastAutosaveOk"
+            [devMode]="devMode"
+            [showCloseButton]="false"
+            [hidePreviewControls]="true"
+            [hideIgnoreToggle]="true"
+            [siblings]="[]"
+            [isGroupRepresentative]="false"
+            (titleChanged)="titleChanged.emit()"
+            (titleBlur)="titleBlur.emit()"
+            (titlePatched)="titlePatched.emit($event)">
+          </app-title-editor>
+          <div class="plm-fields-fade" aria-hidden="true"></div>
+        </div>
+        <div class="plm-actions">
+          <button type="button" class="plm-btn plm-btn-ignore" (click)="ignoreNext.emit()">
+            Ignore &amp; next
+          </button>
+          <button type="button" class="plm-btn plm-btn-skip" (click)="next.emit()" title="Next unlabeled (→)">
+            Skip
+          </button>
+          <button type="button" class="plm-btn plm-btn-save" [disabled]="labelSaving" (click)="saveAndNext()" title="Save & next unlabeled (→)">
+            Save &amp; next
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

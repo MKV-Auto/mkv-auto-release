@@ -3,7 +3,11 @@ import { Component, Input, Output, EventEmitter, OnDestroy } from '@angular/core
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { PreviewViewerComponent } from '../preview-viewer/preview-viewer.component';
-import { TITLE_TYPE_SELECT_OPTIONS } from '../../constants/title-type-options';
+import {
+  BACKDROP_TITLE_NAME,
+  isBackdropTitleType,
+  TITLE_TYPE_SELECT_OPTIONS,
+} from '../../constants/title-type-options';
 import { TitlePatchRequest } from '../../services/workflow.service';
 
 @Component({
@@ -111,6 +115,7 @@ export class TitleModalComponent implements OnDestroy {
     if (!this.title) return;
     const pending = this.takePendingFieldsFor(this.title.title_id);
     this.flushPendingFieldEdits(); // other rows' leftovers, if any
+    const prevType = this.title.type;
     this.title.type = value;
     const normalizedType = value === '' ? null : value;
     if (this.isIgnored()) {
@@ -126,9 +131,24 @@ export class TitleModalComponent implements OnDestroy {
         edition: null,
       });
     } else {
-      this.emitFieldPatch({ ...pending, type: normalizedType });
+      const patch: Record<string, unknown> = { ...pending, type: normalizedType };
+      if (isBackdropTitleType(value)) {
+        // Backdrop's name is fixed — overrides any pending typed name.
+        this.title.title = BACKDROP_TITLE_NAME;
+        patch['title'] = BACKDROP_TITLE_NAME;
+      } else if (isBackdropTitleType(prevType) && this.title.title === BACKDROP_TITLE_NAME) {
+        // Leaving Backdrop: the forced name wasn't user data.
+        this.title.title = '';
+        patch['title'] = null;
+      }
+      this.emitFieldPatch(patch as any);
     }
     this.titleChanged.emit();
+  }
+
+  /** Backdrop's name is fixed to "Backdrop" — the name field locks. */
+  isBackdropLocked(): boolean {
+    return isBackdropTitleType(this.title?.type);
   }
 
   /** Typed-field ngModelChange handlers. These used to PATCH per keystroke

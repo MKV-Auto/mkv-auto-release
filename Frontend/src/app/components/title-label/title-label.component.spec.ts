@@ -124,6 +124,59 @@ describe('TitleLabelComponent', () => {
     expect(seen.length).toBe(1);
   });
 
+  it('Backdrop type forces the name to "Backdrop" and clears it on the way out', () => {
+    // Plex/Jellyfin theme videos must be the file literally named "Backdrop".
+    const title = { title_id: 'tid1', title: 'Old', type: null };
+    setTitles([title]);
+    fixture.detectChanges();
+    const seen: any[] = [];
+    spyOn(component.titlePatched, 'emit').and.callFake((p: any) => {
+      seen.push(p);
+      return true as any;
+    });
+    component.onTypeChange(title, 'Backdrop');
+    expect(title.title).toBe('Backdrop');
+    expect(seen[0]).toEqual(jasmine.objectContaining({
+      title_id: 'tid1', type: 'Backdrop', title: 'Backdrop',
+    }));
+    expect(component.isBackdropLockedTitle(title)).toBeTrue();
+    component.onTypeChange(title, 'Featurette');
+    expect(title.title).toBe('');
+    expect(seen[1]).toEqual(jasmine.objectContaining({ type: 'Featurette', title: null }));
+  });
+
+  it('#848: the modal loop steps to the next UNLABELED title, wrapping and skipping labeled rows', () => {
+    const labeled = { title_id: 'a', title: 'Done', type: 'Episode' };
+    const open1 = { title_id: 'b', title: '', type: null };
+    const open2 = { title_id: 'c', title: '', type: null };
+    setTitles([labeled, open1, open2]);
+    fixture.detectChanges();
+
+    component.quickPreviewTitle = open1;
+    component.quickPreviewStep(1);
+    expect(component.quickPreviewTitle.title_id).toBe('c');
+    // Wraps past the labeled row back to the other unlabeled one.
+    component.quickPreviewStep(1);
+    expect(component.quickPreviewTitle.title_id).toBe('b');
+    component.quickPreviewStep(-1);
+    expect(component.quickPreviewTitle.title_id).toBe('c');
+    expect(component.quickPreviewUnlabeledCount()).toBe(2);
+  });
+
+  it('#848: ignore & next on the last unlabeled title closes the modal', () => {
+    const labeled = { title_id: 'a', title: 'Done', type: 'Episode' };
+    const last = { title_id: 'b', title: '', type: null };
+    setTitles([labeled, last]);
+    fixture.detectChanges();
+    spyOn(component.titlePatched, 'emit');
+    spyOn(component.titleBatchPatched, 'emit');
+
+    component.quickPreviewTitle = last;
+    component.quickPreviewIgnoreAndNext();
+    expect(component.quickPreviewTitle).toBeNull();
+    expect((last as any).type).toBe('ignore');
+  });
+
   it('teardown never strands an unsaved edit', () => {
     const title = { title_id: 'tid1', title: 'Old' };
     setTitles([title]);
@@ -945,6 +998,33 @@ describe('TitleLabelComponent', () => {
       expect(byId['a']).toEqual(jasmine.objectContaining({ part: 1, part_of: 2 }));
       expect(byId['b']).toEqual(jasmine.objectContaining({ part: 2, part_of: 2, season: 0, episode: 2 }));
       expect(toastSpy.show).toHaveBeenCalled();
+    });
+
+    it('an episode-scoped EXTRA sharing the episode number is never pulled into a part group', () => {
+      // Rebels S2 regression: "Rebels Recon" (BehindTheScenes) carries the
+      // same (season, episode) as its episode so Plex can attach it — that
+      // is not a split episode, and both directions must stay untouched.
+      const ep: any = { title_id: 'ep', type: 'Episode', season: 2, episode: 6, order_index: 0 };
+      const extra: any = { title_id: 'bts', type: 'BehindTheScenes', season: null, episode: null, order_index: 1 };
+      setTitles([ep, extra]);
+      const single: any[] = [], batch: any[] = [];
+      component.titlePatched.subscribe((p) => single.push(p));
+      component.titleBatchPatched.subscribe((b) => batch.push(b));
+
+      // Direction 1: user labels the extra with the episode's numbers.
+      extra.season = 2; extra.episode = 6;
+      component.onEditorPatch({ title_id: 'bts', season: 2, episode: 6 } as any);
+      expect(batch.length).toBe(0);
+      expect(single.length).toBe(1);
+      expect(single[0].part).toBeUndefined();
+      expect(ep.part).toBeUndefined();
+
+      // Direction 2: extra already numbered, user (re)labels the episode.
+      component.onEditorPatch({ title_id: 'ep', season: 2, episode: 6 } as any);
+      expect(batch.length).toBe(0);
+      expect(single.length).toBe(2);
+      expect(single[1].part).toBeUndefined();
+      expect(extra.part).toBeUndefined();
     });
 
     it('leaves hand-set parts alone', () => {

@@ -70,13 +70,16 @@
       <!-- Title Name -->
       <div class="form-group">
         <label class="form-label">{{ isEpisodeType() ? 'Episode Title' : 'Title Name' }}</label>
-        <input type="text" class="form-input" [(ngModel)]="title.title" [placeholder]="isEpisodeType() ? 'Episode title' : 'Enter title name...'" (ngModelChange)="onTitleNameChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored()">
+        <input type="text" class="form-input" [(ngModel)]="title.title" [placeholder]="isEpisodeType() ? 'Episode title' : 'Enter title name...'" (ngModelChange)="onTitleNameChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()" [disabled]="isIgnored() || isBackdropLocked()">
       </div>
 
       <!-- Type -->
       <div class="form-group">
         <label class="form-label">Type</label>
-        <select class="form-input form-select" [(ngModel)]="title.type" (ngModelChange)="onTypeChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()">
+        <!-- One-way ngModel: onTypeChange needs the PRE-change type (Backdrop
+             leave-clear) and does the title.type assignment itself; the banana
+             writeback ran first and destroyed prevType. -->
+        <select class="form-input form-select" [ngModel]="title.type" (ngModelChange)="onTypeChange($event)" (blur)="flushPendingFieldEdits(); titleBlur.emit()">
           <option *ngFor="let opt of titleTypeOptions" [value]="opt.value" [disabled]="opt.value === ''">{{ opt.label }}</option>
         </select>
         <button type="button" class="ignore-toggle" (click)="markAsIgnore()" [class.ignored]="(title?.type || '').toLowerCase() === 'ignore'">

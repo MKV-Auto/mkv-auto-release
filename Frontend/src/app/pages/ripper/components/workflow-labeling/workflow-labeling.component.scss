@@ -1044,3 +1044,70 @@
     flex-shrink: 0;
   }
 }
+
+// SEASON stat in the titles eyebrow (cleanup mock): a labeled VALUE with a
+// pencil — deliberately not chip/dropdown-shaped and kept away from list
+// filters so it reads "what I'm labeling as", not "filter by season". The
+// real <select> sits transparent on top so a click opens the native picker.
+.titles-season-stat {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+
+  .titles-season-stat-label {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.38);
+  }
+  .titles-season-stat-value {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #c7d2fe;
+  }
+  .titles-season-stat-pen {
+    color: rgba(255, 255, 255, 0.38);
+    align-self: center;
+  }
+  &:hover .titles-season-stat-pen {
+    color: #c7d2fe;
+  }
+  .titles-season-stat-select {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+  }
+}
+
+// Authoritative disc-season field on the Disc step (moved from breadcrumb).
+.disc-season-field {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: 260px;
+
+  .disc-season-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.55);
+    white-space: nowrap;
+  }
+  .disc-season-select {
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+    color: #fff;
+    white-space: nowrap;
+  }
+}

@@ -2889,6 +2889,13 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
     const idx = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
     return idx >= 0 ? path.slice(idx + 1) : path;
   }
+
+  /** [1..n] inclusive — options for the disc-season selects (moved here from
+   * the breadcrumb; #830's Specials=0 option is appended in the template). */
+  seasonsRange(n: number | null): number[] {
+    if (!n || n < 1) return [];
+    return Array.from({ length: n }, (_, i) => i + 1);
+  }
 }
 
 // Folder tree interface for post-process file organization

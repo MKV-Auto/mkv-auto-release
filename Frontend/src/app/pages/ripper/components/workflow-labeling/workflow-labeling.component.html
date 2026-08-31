@@ -18,10 +18,7 @@
       [productionYear]="getProductionYear(state.context)"
       [isMobile]="isMobile"
       [showDiscdbSuggestedBadge]="state.context.discdbResult === 'hit'"
-      [tvSeasonCount]="workflowService.getTvSeasonCount$() | async"
-      [primarySeason]="workflowService.getPrimarySeason$() | async"
-      (stepNavigate)="onStepNavigate($event)"
-      (primarySeasonChange)="workflowService.setPrimarySeason($event)">
+      (stepNavigate)="onStepNavigate($event)">
     </app-workflow-breadcrumb>
 
     <!-- Step Content Container with Animation -->
@@ -252,6 +249,20 @@
             (nameChanged)="onNameChange($event)"
             (fieldBlur)="onNameBlur()">
           </app-disc-label>
+          <!-- Authoritative disc-season field (moved from the breadcrumb):
+               disc identity lives with disc identity. Feeds the auto disc
+               name, the card's S-chip, and the default labeling season. -->
+          <div class="disc-season-field" *ngIf="(workflowService.getTvSeasonCount$() | async) as seasonCount">
+            <label class="disc-season-label" for="disc-primary-season">Season this disc represents</label>
+            <select id="disc-primary-season" class="disc-season-select"
+                    (change)="workflowService.setPrimarySeason(+($any($event.target)).value)"
+                    aria-label="Disc primary season">
+              <option *ngFor="let s of seasonsRange(seasonCount)"
+                      [value]="s"
+                      [selected]="s === ((workflowService.getPrimarySeason$() | async) ?? 1)">Season {{ s }}</option>
+              <option [value]="0" [selected]="(workflowService.getPrimarySeason$() | async) === 0">Specials</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -265,6 +276,26 @@
                 class="eyebrow-tracks"> · {{ tls.rawTitleCount }} tracks</span>
             </p>
             <div class="titles-label-stats-line">
+              <!-- SEASON is a labeled VALUE, not a chip — deliberately not
+                   dropdown-shaped and not grouped with the list filters, so
+                   it reads "what I'm labeling as", never "filter by season".
+                   The select is transparent over the value; native picker
+                   opens on click. Authoritative field lives on the Disc step. -->
+              <label class="titles-season-stat" *ngIf="(workflowService.getTvSeasonCount$() | async) as seasonCount"
+                     title="Season this disc represents — change it here or on the Disc step">
+                <span class="titles-season-stat-label">Season</span>
+                <span class="titles-season-stat-value">{{ ((workflowService.getPrimarySeason$() | async) ?? 1) === 0 ? 'Specials' : ((workflowService.getPrimarySeason$() | async) ?? 1) }}</span>
+                <svg class="titles-season-stat-pen" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>
+                <select class="titles-season-stat-select"
+                        (change)="workflowService.setPrimarySeason(+($any($event.target)).value)"
+                        aria-label="Season being labeled">
+                  <option *ngFor="let s of seasonsRange(seasonCount)"
+                          [value]="s"
+                          [selected]="s === ((workflowService.getPrimarySeason$() | async) ?? 1)">Season {{ s }}</option>
+                  <option [value]="0" [selected]="(workflowService.getPrimarySeason$() | async) === 0">Specials</option>
+                </select>
+              </label>
+              <span class="titles-label-stats-sep" *ngIf="(workflowService.getTvSeasonCount$() | async)">·</span>
               <span>{{ tls.labeledComplete }} labeled</span>
               <span class="titles-label-stats-sep">·</span>
               <span>{{ tls.ignored }} ignored</span>

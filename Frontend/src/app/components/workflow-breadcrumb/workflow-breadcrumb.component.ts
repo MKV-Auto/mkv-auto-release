@@ -36,13 +36,7 @@ export class WorkflowBreadcrumbComponent {
   /** TheDiscDB matched this disc — informational badge (independent of short-workflow / discdbHit). */
   @Input() showDiscdbSuggestedBadge: boolean = false;
 
-  /** #371 — Disc-level primary-season selector. When `tvSeasonCount` is null
-   * or 0 the control hides. `primarySeason` defaults to 1 if unset. */
-  @Input() tvSeasonCount: number | null = null;
-  @Input() primarySeason: number | null = null;
-
   @Output() stepNavigate = new EventEmitter<WorkflowStep>();
-  @Output() primarySeasonChange = new EventEmitter<number>();
 
   dropdownOpen = false;
 
@@ -102,14 +96,4 @@ export class WorkflowBreadcrumbComponent {
     return STEP_ICONS[step] ?? 'info';
   }
 
-  /** [1..n] inclusive helper for the primary-season `<select>`. */
-  seasonsRange(n: number | null): number[] {
-    if (!n || n < 1) return [];
-    return Array.from({ length: n }, (_, i) => i + 1);
-  }
-
-  onPrimarySeasonChange(value: string | number): void {
-    const n = Number(value);
-    if (Number.isInteger(n) && n >= 0) this.primarySeasonChange.emit(n);  // 0 = Specials (#830)
-  }
 }

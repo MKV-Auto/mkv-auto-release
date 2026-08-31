@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.9] - 2026-08-31
+
+### Added
+
+- **Label titles without leaving the preview.** The preview window now shows the full labeling form beside the video — type, episode picker, season/episode, parts, name, description — with *Save & next*, *Skip*, and *Ignore & next* buttons that jump straight to the next unlabeled title (arrow keys work too, and Esc closes). Matching a disc against what's playing becomes: watch, label, arrow, watch.
+- **A play button on every title row.** Every row and card in the title list — including duplicate groups — now has a quick-preview button next to the ignore toggle, dimmed when no preview clip exists.
+
+### Changed
+
+- **The title list reads at a glance.** Each row now leads with a type chip that tells you whose decision it was: amber *Type?* (needs you — the row is outlined), green (you labeled it), indigo (automation labeled it, with DiscDB credited underneath), grey (ignored). The preview and ignore buttons are always visible instead of appearing on hover, ignore is a crossed-out eye (nothing is deleted — the title is just excluded), and tighter rows fit about a third more titles per screen.
+- **The title editor got out of your way.** The type dropdown now comes first (everything else depends on it, and for episodes the episode picker fills in the title for you); filename, duration, size, and the saved indicator share one header line with the Preview button; season/episode/layout fields pack side by side when the panel is wide and stack when it isn't — text never wraps or squeezes; and the optional description tucks behind an *+ Add description* link until you need it.
+- **The season selector moved somewhere sensible.** It used to sit in the step navigation bar; now the disc's season is set on the Disc step with the other disc details, and while labeling titles a small *Season N* value (click to change) sits beside the progress counts.
+- **Keyboard-first labeling in the preview window.** Space plays/pauses the video, Tab and Shift-Tab cycle through every field and button without escaping the window, and the window keeps one fixed size — long forms scroll inside it instead of stretching it. Its header now shows the same name and details as the title row.
+
+### Fixed
+
+- **The preview window now opens centered on your screen.** It used to center on the (often very tall) title list, which on long discs put the video below the fold until you scrolled.
+- **Episodes no longer get split into parts by their extras.** Labeling an episode-scoped extra (like a "behind the scenes" short) with its episode's number was pulling the episode into a bogus "Split Across Files" part group. Parts now only group episodes with episodes.
+- **Backdrop titles name themselves.** Picking the Backdrop (theme video) type sets the name to "Backdrop" — the name media servers require — and locks the field while that type is selected.
+
 ## [1.6.8] - 2026-08-30
 
 ### Fixed

@@ -107,3 +107,27 @@ export function normalizeTitleTypeForSelect(val: string | null | undefined): str
 
   return 'Extra';
 }
+
+/**
+ * Plex and Jellyfin both require a theme video to be the file literally named
+ * "Backdrop" — the type implies the name. Editors force the name to this and
+ * lock the field while the type is Backdrop.
+ */
+export const BACKDROP_TITLE_NAME = 'Backdrop';
+
+/** True when a type value (canonical or raw) means the Backdrop theme-video type. */
+export function isBackdropTitleType(val: string | null | undefined): boolean {
+  return normalizeTitleTypeForSelect(val) === 'Backdrop';
+}
+
+/** Human label for a canonical type value ("MainMovie" → "Main Movie");
+ *  falls back to the raw value for anything unknown. */
+export function titleTypeDisplayLabel(val: string | null | undefined): string {
+  const canon = normalizeTitleTypeForSelect(val);
+  const opt = TITLE_TYPE_SELECT_OPTIONS.find((o) => o.value === canon);
+  if (opt && opt.value) {
+    // "Backdrop (Theme Video)" reads long for a chip — first word carries it.
+    return opt.value === 'Backdrop' ? 'Backdrop' : opt.label;
+  }
+  return (val ?? '').toString();
+}

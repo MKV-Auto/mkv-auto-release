@@ -34,6 +34,23 @@ describe('TitleModalComponent', () => {
     expect(component.formatSize(1024 * 1024 * 500)).toContain('MB');
   });
 
+  it('Backdrop type forces the name to "Backdrop" and clears it on the way out', () => {
+    component.title = { title_id: 't1', title: 'Old', type: null } as any;
+    const seen: any[] = [];
+    spyOn(component.titlePatched, 'emit').and.callFake((p: any) => {
+      seen.push(p);
+      return true as any;
+    });
+    component.onTypeChange('Backdrop');
+    expect(component.title.title).toBe('Backdrop');
+    expect(seen[0]).toEqual(jasmine.objectContaining({ type: 'Backdrop', title: 'Backdrop' }));
+    expect(component.isBackdropLocked()).toBeTrue();
+    component.onTypeChange('Featurette');
+    expect(component.title.title).toBe('');
+    expect(seen[1]).toEqual(jasmine.objectContaining({ type: 'Featurette', title: null }));
+    expect(component.isBackdropLocked()).toBeFalse();
+  });
+
   it('isIgnored returns true when type is ignore', () => {
     component.title = { type: 'ignore' };
     expect(component.isIgnored()).toBe(true);

@@ -63,13 +63,43 @@ describe('TitleEditorComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('.title-editor')).toBeNull();
   });
 
-  it('renders the title heading and form fields when a title is provided', () => {
-    fixture.componentRef.setInput('title', makeTitle());
+  it('renders the header identity line and form fields when a title is provided', () => {
+    // The header carries the filename + meta (cleanup mock), not a generic
+    // heading; the name lives in the form where it's edited.
+    fixture.componentRef.setInput('title', makeTitle({ source_file: '00539.mpls', duration: 8400 }));
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
-    expect(root.querySelector('.title-editor__heading')?.textContent?.trim()).toBe('Inception');
+    expect(root.querySelector('.title-editor__head-fn')?.textContent?.trim()).toBe('00539.mpls');
+    expect(root.querySelector('.title-editor__head-meta')?.textContent).toContain('2h 20m');
     expect(root.querySelector('input.title-editor__input')).toBeTruthy();
     expect(root.querySelector('select.title-editor__select')).toBeTruthy();
+  });
+
+  it('type leads the form: the first grid field is the type select', () => {
+    fixture.componentRef.setInput('title', makeTitle());
+    fixture.detectChanges();
+    const first = (fixture.nativeElement as HTMLElement)
+      .querySelector('.title-editor__form-grid > .title-editor__field');
+    expect(first?.querySelector('select.title-editor__select')).toBeTruthy();
+    expect(first?.textContent).toContain('Type');
+  });
+
+  it('description collapses to a link until opened or filled', () => {
+    fixture.componentRef.setInput('title', makeTitle({ description: '' }));
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('.title-editor__textarea')).toBeNull();
+    const link = root.querySelector('.title-editor__add-description') as HTMLElement;
+    expect(link).toBeTruthy();
+    link.click();
+    fixture.detectChanges();
+    expect(root.querySelector('.title-editor__textarea')).toBeTruthy();
+
+    // A row that already has a description opens expanded.
+    fixture.componentRef.setInput('title', makeTitle({ title_id: 't2', description: 'notes' }));
+    fixture.detectChanges();
+    expect(root.querySelector('.title-editor__textarea')).toBeTruthy();
+    expect(root.querySelector('.title-editor__add-description')).toBeNull();
   });
 
   it('shows the close button only when showCloseButton is true', () => {
@@ -130,17 +160,19 @@ describe('TitleEditorComponent', () => {
     expect(t.episode).toBeNull();
   });
 
-  it('#642: button label reads "Ignore" when not ignored and "Un-ignore" when ignored', () => {
+  it('#642: ignore toggle states — trash to ignore, restore state when ignored', () => {
+    // Icon-only now; the state lives in the aria-label and the is-unignore class.
     fixture.componentRef.setInput('title', makeTitle({ type: 'movie' }));
     fixture.detectChanges();
     const findIgnoreBtn = () =>
-      Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('ui-btn button'))
-        .find((el) => /^(Ignore|Un-ignore)$/.test((el.textContent || '').trim())) as HTMLElement | undefined;
-    expect(findIgnoreBtn()?.textContent?.trim()).toBe('Ignore');
+      (fixture.nativeElement as HTMLElement).querySelector('.title-editor__ignore-btn') as HTMLElement | null;
+    expect(findIgnoreBtn()?.getAttribute('aria-label')).toBe('Ignore this title');
+    expect(findIgnoreBtn()?.classList.contains('is-unignore')).toBeFalse();
 
     fixture.componentRef.setInput('title', makeTitle({ type: 'ignore' }));
     fixture.detectChanges();
-    expect(findIgnoreBtn()?.textContent?.trim()).toBe('Un-ignore');
+    expect(findIgnoreBtn()?.getAttribute('aria-label')).toBe('Un-ignore this title');
+    expect(findIgnoreBtn()?.classList.contains('is-unignore')).toBeTrue();
   });
 
   it('formats duration in h/m/s — sub-60s falls back to seconds', () => {
@@ -235,9 +267,9 @@ describe('TitleEditorComponent', () => {
     // button was a visible no-op until the user picked a type.
     const toggleText = () => {
       const root = fixture.nativeElement as HTMLElement;
-      const btn = [...root.querySelectorAll('.title-editor__type-row ui-btn')]
-        .find(b => /ignore/i.test(b.textContent || ''));
-      return btn ? (btn.textContent || '').trim() : null;
+      const btn = root.querySelector('.title-editor__type-row .title-editor__ignore-btn');
+      if (!btn) return null;
+      return btn.getAttribute('aria-label') === 'Un-ignore this title' ? 'Un-ignore' : 'Ignore';
     };
 
     it('hides the toggle on an auto-flagged row awaiting review', () => {
@@ -355,8 +387,10 @@ describe('TitleEditorComponent', () => {
     // #602: component clips render below the description + metadata footer
     // (reference content, not part of the active edit). Pin the DOM order so
     // a future template reshuffle can't silently regress.
-    it('#602 — clips section renders after description and metadata footer', () => {
-      fixture.componentRef.setInput('title', makeTitle({ title_id: 'mpls-1' }));
+    it('#602 — clips section renders after the description area', () => {
+      // Metadata folded into the header line (cleanup mock); the clips
+      // section stays reference content at the bottom, after description.
+      fixture.componentRef.setInput('title', makeTitle({ title_id: 'mpls-1', description: 'notes' }));
       fixture.componentRef.setInput('componentClips', [
         { title_id: 'c1', source_file: '02807.m2ts', duration: 98 },
       ]);
@@ -364,16 +398,11 @@ describe('TitleEditorComponent', () => {
       const root = fixture.nativeElement as HTMLElement;
       const clipsSection = Array.from(root.querySelectorAll('section.title-editor__dupe'))
         .find((s) => (s.textContent || '').includes('Component clips'));
-      const metadata = root.querySelector('.title-editor__metadata');
       const description = root.querySelector('.title-editor__textarea');
       expect(clipsSection).toBeTruthy();
-      expect(metadata).toBeTruthy();
       expect(description).toBeTruthy();
       // documentPosition: FOLLOWING (4) means clipsSection comes AFTER the
       // other element in document order.
-      expect(metadata!.compareDocumentPosition(clipsSection!) & Node.DOCUMENT_POSITION_FOLLOWING)
-        .withContext('clips section must follow metadata in DOM order')
-        .toBeTruthy();
       expect(description!.compareDocumentPosition(clipsSection!) & Node.DOCUMENT_POSITION_FOLLOWING)
         .withContext('clips section must follow description in DOM order')
         .toBeTruthy();
@@ -935,6 +964,60 @@ describe('TitleEditorComponent', () => {
       const spy = spyOn(component.titlePatched, 'emit');
       component.flushPendingFieldEdits();
       expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('Backdrop type forces the name to "Backdrop", locks the field, and clears on the way out', () => {
+      // Plex/Jellyfin theme videos must be the file literally named
+      // "Backdrop" — the type implies the name.
+      bindTitle();
+      const seen: any[] = [];
+      spyOn(component.titlePatched, 'emit').and.callFake((p: any) => { seen.push(p); return true as any; });
+      component.onTypeChange('Backdrop');
+      expect(component.title.title).toBe('Backdrop');
+      expect(seen[0]).toEqual(jasmine.objectContaining({
+        title_id: 'tid-1', type: 'Backdrop', title: 'Backdrop',
+      }));
+      expect(component.isBackdropLocked()).toBeTrue();
+      // Switching away clears the forced name — it was never user data.
+      component.onTypeChange('Featurette');
+      expect(component.title.title).toBe('');
+      expect(seen[1]).toEqual(jasmine.objectContaining({ type: 'Featurette', title: null }));
+      expect(component.isBackdropLocked()).toBeFalse();
+    });
+
+    it('Backdrop leave-clear survives the real select binding (rc.1 regression)', async () => {
+      // Caught live on the RC: [(ngModel)] wrote title.type BEFORE
+      // onTypeChange ran, so prevType saw the new value and the forced name
+      // never cleared. The select is one-way bound now; this test goes
+      // through the DOM so a reintroduced banana fails it.
+      bindTitle();
+      fixture.detectChanges();
+      const sel: HTMLSelectElement = fixture.nativeElement.querySelector('select');
+      sel.value = 'Backdrop';
+      sel.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(component.title.title).toBe('Backdrop');
+      sel.value = 'Featurette';
+      sel.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(component.title.title).toBe('');
+      expect(component.title.type).toBe('Featurette');
+    });
+
+    it('Backdrop overrides a name typed just before, and leaving keeps a non-forced name', () => {
+      bindTitle();
+      component.onTitleNameChange('Typed name');
+      const seen: any[] = [];
+      spyOn(component.titlePatched, 'emit').and.callFake((p: any) => { seen.push(p); return true as any; });
+      component.onTypeChange('Backdrop');
+      expect(seen[0].title).toBe('Backdrop');
+      // A name that is NOT the forced one survives the switch away.
+      component.title.title = 'My Theme';
+      component.onTypeChange('Featurette');
+      expect(component.title.title).toBe('My Theme');
+      expect('title' in seen[1]).toBeFalse();
     });
 
     it('ignoring with a pending name clears it in the same write (no resurrection)', () => {

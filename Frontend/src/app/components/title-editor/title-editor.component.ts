@@ -9,7 +9,11 @@ import { PillComponent, PillTone } from '../../ui/pill/pill.component';
 import { BtnComponent } from '../../ui/btn/btn.component';
 import { ObfuscationBadgeComponent } from '../obfuscation-badge/obfuscation-badge.component';
 import { DuplicateCompareModalComponent } from '../duplicate-compare-modal/duplicate-compare-modal.component';
-import { TITLE_TYPE_SELECT_OPTIONS } from '../../constants/title-type-options';
+import {
+  BACKDROP_TITLE_NAME,
+  isBackdropTitleType,
+  TITLE_TYPE_SELECT_OPTIONS,
+} from '../../constants/title-type-options';
 import { SystemService } from '../../services/system.service';
 import { WorkflowService, TmdbEpisodeSummary, TitlePatchRequest } from '../../services/workflow.service';
 
@@ -113,6 +117,9 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
   ngOnChanges(changes: SimpleChanges): void {
     if ('title' in changes) {
       this.extraScopeSeason$.next(this.extraSeason);
+      // New row: the description link collapses again (unless the row has
+      // content, which descriptionVisible() covers on its own).
+      this.showDescriptionField = false;
     }
   }
 
@@ -151,6 +158,35 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
   @Input() devMode = false;
   /** When true, renders an X close button in the header. Side panel use. */
   @Input() showCloseButton = false;
+  /** #848: true when embedded in the preview+label modal — the Preview
+   * row is redundant there (the video is beside the form). */
+  @Input() hidePreviewControls = false;
+  /** True inside the preview modal — its action bar owns Ignore, so the
+   * inline eye toggle would be redundant. */
+  @Input() hideIgnoreToggle = false;
+
+  /** Description reveals on demand (cleanup mock); auto-open when it has
+   * content. Reset per row in ngOnChanges. */
+  showDescriptionField = false;
+
+  descriptionVisible(): boolean {
+    return this.showDescriptionField || !!this.title?.description || !!this.title?.note;
+  }
+
+  /** Header preview affordances: the compact Play button when a clip is
+   * ready, a small spinner while one is being generated. */
+  headerPreviewAvailable(): boolean {
+    if (!this.title) return false;
+    const state = this.previewStateFn(this.title);
+    if (state) return state.status === 'completed';
+    return !!this.previewUrlFn(this.title);
+  }
+
+  headerPreviewPending(): boolean {
+    if (!this.title) return false;
+    const state = this.previewStateFn(this.title);
+    return !!state && (state.status === 'queued' || state.status === 'running');
+  }
 
   /**
    * Sibling titles in the same Path B sorted-segment-set dedupe group as the
@@ -192,6 +228,11 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
   /** User clicked "Ungroup" / "Re-group" on the panel header. Parent
    * hits POST /discs/{disc_id}/titles/{title_id}/ungroup-duplicate. */
   @Output() ungroupDuplicate = new EventEmitter<void>();
+  /** #848/#849: bound by hosts that render the shared preview+label modal.
+   * When observed, Play preview delegates instead of opening the internal
+   * overlay (which fixed-positions against filtered ancestors, not the
+   * viewport). */
+  @Output() previewOpen = new EventEmitter<any>();
 
   previewTitle: any | null = null;
   previewUrl: string | null = null;
@@ -399,6 +440,13 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
     if (!this.title) return;
     const url = this.previewUrlFn(this.title);
     if (!url) return;
+    // #849: when a parent listens, it owns the overlay (portaled to body so
+    // fixed-positioning isn't hijacked by backdrop-filter ancestors). The
+    // internal overlay remains for hosts that don't bind (title-modal).
+    if (this.previewOpen.observed) {
+      this.previewOpen.emit(this.title);
+      return;
+    }
     this.previewTitle = this.title;
     this.previewUrl = url;
   }
@@ -508,6 +556,7 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
     if (!this.title) return;
     const pending = this.takePendingFieldsFor(this.title.title_id);
     this.flushPendingFieldEdits(); // other rows' leftovers, if any
+    const prevType = this.title.type;
     this.title.type = value;
     const normalizedType = value === '' ? null : value;
     if (this.isIgnored()) {
@@ -532,6 +581,15 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
       if (this.isSeasonScopableExtra() && this.title.season === null && implied !== null) {
         this.title.season = implied;
         patch['season'] = implied;
+      }
+      if (isBackdropTitleType(value)) {
+        // Backdrop's name is fixed — overrides any pending typed name.
+        this.title.title = BACKDROP_TITLE_NAME;
+        patch['title'] = BACKDROP_TITLE_NAME;
+      } else if (isBackdropTitleType(prevType) && this.title.title === BACKDROP_TITLE_NAME) {
+        // Leaving Backdrop: the forced name wasn't user data.
+        this.title.title = '';
+        patch['title'] = null;
       }
       this.emitFieldPatch(patch as any);
     }
@@ -695,6 +753,11 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
   /** True when this title carries an edition — a main movie, per-type. */
   isMainMovie(): boolean {
     return (this.title?.type || '').toString().toLowerCase() === 'mainmovie';
+  }
+
+  /** Backdrop's name is fixed to "Backdrop" — the name field locks. */
+  isBackdropLocked(): boolean {
+    return isBackdropTitleType(this.title?.type);
   }
 
   /** True when this row is a series extra that can be scoped to one season.

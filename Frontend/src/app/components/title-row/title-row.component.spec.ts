@@ -14,6 +14,9 @@ import { TitleRowComponent, TitleRowStatus } from './title-row.component';
       [status]="status"
       [progress]="progress"
       [selected]="selected"
+      [userType]="userType"
+      [autoType]="autoType"
+      [discdbHit]="discdbHit"
       (selected$)="onSelected()">
     </app-title-row>
   `,
@@ -26,6 +29,9 @@ class HostComponent {
   status: TitleRowStatus = 'pending';
   progress: number | null = null;
   selected = false;
+  userType: string | null = null;
+  autoType: string | null = null;
+  discdbHit = false;
   selectedCount = 0;
   onSelected() { this.selectedCount++; }
 }
@@ -56,17 +62,37 @@ describe('TitleRowComponent', () => {
     expect(name?.classList.contains('title-row__name--placeholder')).toBeTrue();
   });
 
-  it('shows the play-icon thumb fallback when previewUrl is null', () => {
-    expect((fixture.nativeElement as HTMLElement).querySelector('.title-row__thumb-icon')).toBeTruthy();
-    expect((fixture.nativeElement as HTMLElement).querySelector('.title-row__thumb-img')).toBeNull();
+  it('leads with the type chip: amber Type? when unlabeled, amber row outline', () => {
+    // The chip replaced the decorative gradient thumb (cleanup mock).
+    const chip = () => (fixture.nativeElement as HTMLElement).querySelector('.title-row__chip');
+    expect(chip()?.getAttribute('data-chip')).toBe('todo');
+    expect(chip()?.textContent?.trim()).toBe('Type?');
+    expect((fixture.nativeElement as HTMLElement).querySelector('.title-row.is-unlabeled')).toBeTruthy();
+    expect((fixture.nativeElement as HTMLElement).querySelector('.title-row__thumb')).toBeNull();
   });
 
-  it('shows the preview image when previewUrl is set', () => {
-    host.previewUrl = 'https://example.com/preview.jpg';
+  it('chip states: green for user-labeled, indigo for auto (DiscDB in sub-line), grey for ignored', () => {
+    const chip = () => (fixture.nativeElement as HTMLElement).querySelector('.title-row__chip');
+
+    host.userType = 'Episode';
     fixture.detectChanges();
-    const img = (fixture.nativeElement as HTMLElement).querySelector('img.title-row__thumb-img');
-    expect(img).toBeTruthy();
-    expect(img?.getAttribute('src')).toBe('https://example.com/preview.jpg');
+    expect(chip()?.getAttribute('data-chip')).toBe('done');
+    expect(chip()?.textContent?.trim()).toBe('Episode');
+
+    host.userType = null;
+    host.autoType = 'MainMovie';
+    host.discdbHit = true;
+    fixture.detectChanges();
+    expect(chip()?.getAttribute('data-chip')).toBe('auto');
+    expect(chip()?.textContent?.trim()).toBe('Main Movie');
+    expect((fixture.nativeElement as HTMLElement).querySelector('.title-row__discdb')?.textContent?.trim()).toBe('DiscDB');
+
+    host.autoType = 'ignore';
+    fixture.detectChanges();
+    expect(chip()?.getAttribute('data-chip')).toBe('off');
+    expect(chip()?.textContent?.trim()).toBe('Ignored');
+    // Unlabeled outline never fires on decided rows.
+    expect((fixture.nativeElement as HTMLElement).querySelector('.title-row.is-unlabeled')).toBeNull();
   });
 
   it('shows the running progress when status is running and progress > 0', () => {
@@ -83,21 +109,20 @@ describe('TitleRowComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('.title-row__progress')).toBeNull();
   });
 
-  it('renders a runtime status pill for running/failed (source chips win for complete)', () => {
+  it('running shows a plain % (the number IS the information); only failed gets a pill', () => {
     host.status = 'running';
+    host.progress = 42;
     fixture.detectChanges();
-    let pill = (fixture.nativeElement as HTMLElement).querySelector('ui-pill');
-    expect(pill?.textContent?.trim()).toBe('Running');
-    expect(pill?.querySelector('.ui-pill')?.getAttribute('data-tone')).toBe('blue');
+    expect((fixture.nativeElement as HTMLElement).querySelector('.title-row__progress')?.textContent?.trim()).toBe('42%');
+    expect((fixture.nativeElement as HTMLElement).querySelector('ui-pill')).toBeNull();
 
-    // 'complete' yields the source chip set (silent here — no user/auto type
-    // configured), not a "Complete" pill. The labeling step's job is to
-    // surface label *source*, and the overall rip status already lives in
-    // the breadcrumb / progress bar above.
+    host.status = 'failed';
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('ui-pill')?.textContent?.trim()).toBe('Failed');
+
     host.status = 'complete';
     fixture.detectChanges();
-    pill = (fixture.nativeElement as HTMLElement).querySelector('ui-pill');
-    expect(pill).toBeNull();
+    expect((fixture.nativeElement as HTMLElement).querySelector('ui-pill')).toBeNull();
   });
 
   it('reflects selected as aria-pressed and a modifier class', () => {

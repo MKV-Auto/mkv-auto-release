@@ -85,47 +85,12 @@ describe('WorkflowBreadcrumbComponent', () => {
     });
   });
 
-  describe('primary-season select (#536)', () => {
-    it('renders Season N as selected when primarySeason input is N', () => {
-      component.tvSeasonCount = 4;
-      component.primarySeason = 3;
-      fixture.detectChanges();
-      const sel = fixture.nativeElement.querySelector('select.breadcrumb-primary-season-select') as HTMLSelectElement;
-      expect(sel).toBeTruthy();
-      expect(sel.value).toBe('3');
-      const selectedOption = sel.options[sel.selectedIndex];
-      expect(selectedOption.text).toContain('Season 3');
-    });
-
-    it('renders Season 1 as the fallback when primarySeason is null', () => {
-      component.tvSeasonCount = 4;
-      component.primarySeason = null;
-      fixture.detectChanges();
-      const sel = fixture.nativeElement.querySelector('select.breadcrumb-primary-season-select') as HTMLSelectElement;
-      expect(sel.value).toBe('1');
-    });
-
-    it('hides the select entirely when tvSeasonCount is null or 0', () => {
-      for (const n of [null, 0]) {
-        component.tvSeasonCount = n as any;
-        component.primarySeason = 2;
-        fixture.detectChanges();
-        const sel = fixture.nativeElement.querySelector('select.breadcrumb-primary-season-select') as HTMLSelectElement | null;
-        expect(sel).toBeNull();
-      }
-    });
-
-    it('emits primarySeasonChange with the picked integer on change', () => {
-      component.tvSeasonCount = 4;
-      component.primarySeason = 1;
-      fixture.detectChanges();
-      let emitted: number | undefined;
-      component.primarySeasonChange.subscribe((v) => (emitted = v));
-      const sel = fixture.nativeElement.querySelector('select.breadcrumb-primary-season-select') as HTMLSelectElement;
-      sel.value = '3';
-      sel.dispatchEvent(new Event('change'));
-      expect(emitted).toBe(3);
-    });
+  it('carries no season control — the selector moved to the Disc step + titles eyebrow', () => {
+    // The breadcrumb is wayfinding; the primary-season select that lived
+    // here (#371/#536) now renders in WorkflowLabeling (authoritative field
+    // on the Disc step, SEASON stat in the titles eyebrow).
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('select')).toBeNull();
   });
 
   describe('toggleDropdown and closeDropdown', () => {

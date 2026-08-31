@@ -1,43 +1,16 @@
 import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { IconComponent } from '../../ui/icon/icon.component';
-import { PillComponent, PillTone } from '../../ui/pill/pill.component';
-import { TitleChipsComponent } from '../title-chips/title-chips.component';
+import { PillComponent } from '../../ui/pill/pill.component';
+import { titleTypeDisplayLabel } from '../../constants/title-type-options';
 
 export type TitleRowStatus = 'complete' | 'running' | 'failed' | 'pending' | 'ignored' | 'duplicate';
 
-const STATUS_TONE: Record<TitleRowStatus, PillTone> = {
-  complete: 'emerald',
-  running: 'blue',
-  failed: 'red',
-  pending: 'slate',
-  ignored: 'slate',
-  duplicate: 'purple',
-};
-
-const STATUS_LABEL: Record<TitleRowStatus, string> = {
-  complete: 'Complete',
-  running: 'Running',
-  failed: 'Failed',
-  pending: 'Pending',
-  ignored: 'Ignored',
-  duplicate: 'Duplicate',
-};
-
-/** Statuses where the runtime pill wins over the source chips. Only
- * `running` and `failed` need attention — `complete` is the expected
- * end state during the labeling step and just duplicates the global
- * stage progress bar. Letting the source chip (DiscDB / Canonical /
- * Ignored) win on completed rows surfaces *where the label came from*,
- * which is what the labeling step is actually about. */
-const RUNTIME_STATUSES = new Set<TitleRowStatus>(['running', 'failed']);
-
 /**
- * Compact summary row for a single title in the labeling step. Adapted from the
- * prototype's `TitleListRow` (research/MKV Auto UI/labeling.jsx). Renders a
- * 40px gradient thumbnail (or actual preview image when provided), the title /
- * source / duration, and a status pill on the right. Click selects the title
- * for editing in the side-panel `TitleEditor`.
+ * Compact summary row for a single title in the labeling step (approved
+ * cleanup mock). A fixed-width TYPE CHIP leads the row — it carries labeled
+ * state, its source (user vs automation), and ignored state in one object —
+ * followed by name over source · duration, then rip progress %, then the
+ * parent's suffix slot (badges + the always-visible preview/ignore buttons).
  *
  * This component is intentionally read-only — all editable fields live in
  * `TitleEditor`. Keeping the row compact lets the user scan a long disc
@@ -46,7 +19,7 @@ const RUNTIME_STATUSES = new Set<TitleRowStatus>(['running', 'failed']);
 @Component({
   selector: 'app-title-row',
   standalone: true,
-  imports: [CommonModule, IconComponent, PillComponent, TitleChipsComponent],
+  imports: [CommonModule, PillComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <button
@@ -54,14 +27,14 @@ const RUNTIME_STATUSES = new Set<TitleRowStatus>(['running', 'failed']);
       class="title-row"
       [class.is-selected]="selected"
       [class.is-ignored]="status === 'ignored'"
+      [class.is-unlabeled]="chipState() === 'todo'"
       [attr.aria-pressed]="selected ? 'true' : 'false'"
       (click)="selected$.emit()">
-      <span class="title-row__thumb" [style.background]="thumbBackground">
-        <img *ngIf="previewUrl" [src]="previewUrl" [alt]="''" class="title-row__thumb-img" loading="lazy" />
-        <span class="title-row__thumb-icon" *ngIf="!previewUrl" aria-hidden="true">
-          <ui-icon name="play" [size]="11"></ui-icon>
-        </span>
-      </span>
+      <!-- Type chip leads the row: amber = needs you, green = you labeled
+           it, indigo = automation labeled it, grey = ignored. Replaces the
+           decorative gradient thumb, the standalone green check, and the
+           right-side source chips — one status object per row. -->
+      <span class="title-row__chip" [attr.data-chip]="chipState()">{{ chipLabel() }}</span>
 
       <span class="title-row__body">
         <span class="title-row__name" [class.title-row__name--placeholder]="!title">
@@ -71,27 +44,16 @@ const RUNTIME_STATUSES = new Set<TitleRowStatus>(['running', 'failed']);
           <span class="title-row__source" *ngIf="sourceFile">{{ sourceFile }}</span>
           <span aria-hidden="true" *ngIf="sourceFile && duration"> · </span>
           <span class="title-row__duration" *ngIf="duration">{{ duration }}</span>
-          <span aria-hidden="true" *ngIf="(sourceFile || duration) && progress != null && progress > 0 && status === 'running'"> · </span>
-          <span class="title-row__progress" *ngIf="progress != null && progress > 0 && status === 'running'">{{ progress }}%</span>
+          <span aria-hidden="true" *ngIf="(sourceFile || duration) && chipState() === 'auto' && discdbHit"> · </span>
+          <span class="title-row__discdb" *ngIf="chipState() === 'auto' && discdbHit">DiscDB</span>
         </span>
       </span>
 
       <span class="title-row__status">
-        <!-- Source attribution chips render FIRST so they line up with the
-             Canonical / Likely decoy pills that come from the parent's
-             uiRowSuffix slot (those are pills too). Keeping every pill on
-             the left of the labeling-complete check icon gives a
-             consistent "[source] [status]" reading order regardless of
-             whether the pill came from this component or the slot. -->
-        <app-title-chips
-          *ngIf="!showRuntimePill"
-          [userType]="userType"
-          [autoType]="autoType"
-          [discdbHit]="discdbHit">
-        </app-title-chips>
-        <!-- Runtime statuses (running / failed) own a pill — those are
-             real-time progress signals worth highlighting on the row. -->
-        <ui-pill *ngIf="showRuntimePill" [tone]="pillTone()">{{ pillLabel() }}</ui-pill>
+        <!-- Rip progress is a plain number — the % IS the information.
+             Failures keep a red pill; they need attention. -->
+        <span class="title-row__progress" *ngIf="status === 'running' && progress != null && progress > 0">{{ progress }}%</span>
+        <ui-pill *ngIf="status === 'failed'" tone="red">Failed</ui-pill>
         <ng-content select="[uiRowSuffix]"></ng-content>
       </span>
     </button>
@@ -101,11 +63,11 @@ const RUNTIME_STATUSES = new Set<TitleRowStatus>(['running', 'failed']);
       all: unset;
       cursor: pointer;
       display: grid;
-      grid-template-columns: 40px 1fr auto;
-      gap: 10px;
+      grid-template-columns: 86px 1fr auto;
+      gap: 9px;
       align-items: center;
-      padding: 10px;
-      border-radius: 8px;
+      padding: 7px 9px;
+      border-radius: 9px;
       background: transparent;
       border: 1px solid transparent;
       transition: background 150ms ease, border-color 150ms ease;
@@ -113,38 +75,34 @@ const RUNTIME_STATUSES = new Set<TitleRowStatus>(['running', 'failed']);
       width: 100%;
     }
     .title-row:hover { background: rgba(255, 255, 255, 0.03); }
+    .title-row.is-unlabeled { border-color: rgba(251, 191, 36, 0.28); }
     .title-row.is-selected {
       background: rgba(99, 102, 241, 0.10);
       border-color: rgba(99, 102, 241, 0.45);
     }
-    .title-row.is-ignored { opacity: 0.65; }
+    .title-row.is-ignored { opacity: 0.55; }
     .title-row:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.45);
     }
 
-    .title-row__thumb {
-      width: 40px;
-      height: 40px;
-      border-radius: 6px;
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
+    .title-row__chip {
+      width: 86px;
+      box-sizing: border-box;
+      text-align: center;
+      font-size: 10.5px;
+      font-weight: 600;
+      border-radius: 999px;
+      padding: 2.5px 6px;
+      white-space: nowrap;
       overflow: hidden;
+      text-overflow: ellipsis;
       flex-shrink: 0;
-      position: relative;
     }
-    .title-row__thumb-img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-    }
-    .title-row__thumb-icon {
-      color: rgba(255, 255, 255, 0.6);
-      display: inline-flex;
-    }
+    .title-row__chip[data-chip='todo'] { background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
+    .title-row__chip[data-chip='done'] { background: rgba(74, 222, 128, 0.10); color: #4ade80; }
+    .title-row__chip[data-chip='auto'] { background: rgba(99, 102, 241, 0.14); color: #818cf8; }
+    .title-row__chip[data-chip='off']  { background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.55); }
 
     .title-row__body {
       min-width: 0;
@@ -180,14 +138,21 @@ const RUNTIME_STATUSES = new Set<TitleRowStatus>(['running', 'failed']);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .title-row__progress {
-      color: #93c5fd;
+    .title-row__discdb {
+      color: #818cf8;
       font-weight: 600;
+    }
+    .title-row__progress {
+      color: #60a5fa;
+      font-weight: 600;
+      font-size: 10.5px;
+      font-variant-numeric: tabular-nums;
     }
 
     .title-row__status {
       display: flex;
       align-items: center;
+      gap: 6px;
     }
   `],
 })
@@ -222,14 +187,27 @@ export class TitleRowComponent {
 
   @Output() selected$ = new EventEmitter<void>();
 
-  get showRuntimePill(): boolean {
-    return RUNTIME_STATUSES.has(this.status);
+  /** One status object per row (approved cleanup mock):
+   *  'off'  — ignored;
+   *  'done' — the USER labeled the type (green: your decision);
+   *  'auto' — automation labeled it and the user hasn't confirmed (indigo;
+   *           the sub-line says "DiscDB" when that's the source);
+   *  'todo' — no effective type yet (amber "Type?", row outlined). */
+  chipState(): 'todo' | 'done' | 'auto' | 'off' {
+    const user = (this.userType ?? '').toString().trim();
+    const auto = (this.autoType ?? '').toString().trim();
+    const effective = user || auto;
+    if (effective.toLowerCase() === 'ignore' || this.status === 'ignored') return 'off';
+    if (user) return 'done';
+    if (auto) return 'auto';
+    return 'todo';
   }
 
-  pillTone(): PillTone {
-    return STATUS_TONE[this.status] ?? 'slate';
-  }
-  pillLabel(): string {
-    return STATUS_LABEL[this.status] ?? 'Pending';
+  chipLabel(): string {
+    const state = this.chipState();
+    if (state === 'off') return 'Ignored';
+    if (state === 'todo') return 'Type?';
+    const value = state === 'done' ? this.userType : this.autoType;
+    return titleTypeDisplayLabel(value);
   }
 }

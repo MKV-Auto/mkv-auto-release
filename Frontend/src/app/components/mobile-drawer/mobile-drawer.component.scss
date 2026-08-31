@@ -20,8 +20,14 @@
   top: auto !important;
   width: 100% !important;
   max-width: 100% !important;
+  // dvh = DYNAMIC viewport: shrinks while Safari's bottom bar is showing.
+  // Plain vh is the large viewport (bars collapsed), which pushed the
+  // drawer's footer under the bar and made its buttons unclickable. The vh
+  // line stays as the fallback for engines without dvh.
   height: 85vh !important;
   max-height: 85vh !important;
+  height: 85dvh !important;
+  max-height: 85dvh !important;
   margin: 0 !important;
   padding: 0 !important;
   pointer-events: auto !important;

@@ -1077,11 +1077,13 @@ select {
   }
 
   // Template TitleMobileDrawer: footer flex gap-3 p-5 border-t, two buttons flex-1
+  // Bottom padding clears the iOS home indicator / Safari bottom bar
+  // (env() is 0 everywhere else).
   .title-drawer-footer {
     display: flex;
     gap: 12px;
     margin-top: 24px;
-    padding: 20px 0 0;
+    padding: 20px 0 env(safe-area-inset-bottom, 0px);
     border-top: 1px solid rgba(255, 255, 255, 0.1);
   }
 
@@ -1746,41 +1748,66 @@ select {
   margin-left: 2px;
 }
 
-// #701: quick-ignore ✕ on desktop rows. Faint until the row is hovered/focused
-// so a full disc doesn't read as a wall of close buttons; reddens on hover.
-.title-label-row-ignore {
+// Approved cleanup mock: row actions are ALWAYS visible as quiet 26px
+// squares — on the rows you triage most, hover-reveal hid that the two
+// actions existed at all. Ignore is the crossed-out eye (red: excluded,
+// not deleted); ignored rows show a green restore arrow instead.
+.title-label-row-ignore,
+.title-label-row-preview {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   margin-left: 2px;
-  border-radius: 6px;
-  color: rgba(255, 255, 255, 0.35);
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.04);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 150ms ease, background 150ms ease, color 150ms ease;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
 
   svg { display: block; }
 
-  &:hover {
-    background: rgba(248, 113, 113, 0.12);
-    color: #f87171;
-  }
   &:focus-visible {
     outline: none;
-    opacity: 1;
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.45);
   }
-  // Un-ignore affordance stays visibly green so ignored rows advertise the toggle-back.
+}
+
+.title-label-row-ignore {
+  color: rgba(248, 113, 113, 0.85);
+  border-color: rgba(248, 113, 113, 0.25);
+
+  &:hover {
+    background: rgba(248, 113, 113, 0.14);
+    color: #f87171;
+  }
   &.is-unignore {
-    opacity: 1;
     color: #4ade80;
+    border-color: rgba(74, 222, 128, 0.3);
+
+    &:hover {
+      background: rgba(74, 222, 128, 0.14);
+    }
   }
 }
-.title-row:hover .title-label-row-ignore,
-.title-label-row-suffix:hover .title-label-row-ignore {
-  opacity: 1;
+
+.title-label-row-preview {
+  color: #c7cde0;
+
+  &:hover {
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+  }
+  &.is-disabled {
+    cursor: default;
+    opacity: 0.3;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: #c7cde0;
+    }
+  }
 }
 
 
@@ -1814,61 +1841,6 @@ select {
   }
   .title-label-list {
     max-height: 360px;
-  }
-}
-
-// #701: mobile quick-preview overlay. Mirrors the title-modal preview modal
-// (single ✕ close, no footer button — the redundancy this batch removes).
-.quick-preview-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.9);
-  z-index: 3000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-}
-.quick-preview-modal {
-  background: var(--bg-primary, #0b1220);
-  border-radius: 12px;
-  max-width: 90vw;
-  max-height: 90vh;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-
-  .quick-preview-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-
-    h4 {
-      margin: 0;
-      font-size: 0.9rem;
-      font-weight: 600;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-  .quick-preview-close {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0.4rem 0.6rem;
-    border-radius: 8px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 1rem;
-    flex-shrink: 0;
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.1);
-      color: #fff;
-    }
   }
 }
 
