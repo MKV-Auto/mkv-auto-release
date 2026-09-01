@@ -637,7 +637,7 @@ def _lower(v: Any) -> Optional[str]:
     return str(v).strip().lower()
 
 
-def _validate_job_status_transition(current: Optional[str], new: str) -> None:
+def _validate_job_status_transition(current: Optional[str], new: str, *, allow_recovery: bool = False) -> None:
     import json, time, traceback
     if new not in ALLOWED_JOB_STATUS:
         raise StateViolation(f"Invalid job_status: {new}")
@@ -650,6 +650,12 @@ def _validate_job_status_transition(current: Optional[str], new: str) -> None:
     if new == "failed":
         return
     if cur == "failed":
+        # Recovery (resume/retry endpoints) is a FIRST-CLASS transition, not a
+        # devmode privilege: the old devmode-only escape hatch was stripped
+        # from release builds, which left "Retry processing" 409ing on every
+        # failed job in production (caught live on 1.6.10).
+        if allow_recovery and new in ("pending", "running"):
+            return
         raise StateViolation("Cannot transition job_status from failed")
     if cur == "completed":
         raise StateViolation("Cannot transition job_status from completed")
@@ -774,15 +780,22 @@ def normalize_state_updates(updates: Mapping[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def validate_job_state_transition(current: Any, updates: Mapping[str, Any]) -> None:
+def validate_job_state_transition(current: Any, updates: Mapping[str, Any], *, allow_recovery: bool = False) -> None:
     """
     Validate that applying updates to current job state does not create invalid or backward transitions.
     Does not mutate current.
+
+    allow_recovery: permits job_status failed -> pending/running for the
+    resume/retry endpoints (a sanctioned recovery, available on release
+    builds — never devmode-gated).
     """
     normalized = normalize_state_updates(updates)
 
     if "job_status" in normalized:
-        _validate_job_status_transition(getattr(current, "job_status", None), normalized["job_status"])
+        _validate_job_status_transition(
+            getattr(current, "job_status", None), normalized["job_status"],
+            allow_recovery=allow_recovery,
+        )
 
     for field in ("scan_state", "rip_state", "label_state", "finalize_state", "post_state", "transfer_state", "finalize_release_state"):
         if field in normalized:
@@ -969,12 +982,15 @@ def _validate_stage_dependencies(job: Any, normalized_updates: Mapping[str, Any]
 
 
 def apply_job_state(
-    db: Session, job: Any, *, updates: Mapping[str, Any], reason: str | None = None, skip_context_changed: bool = False
+    db: Session, job: Any, *, updates: Mapping[str, Any], reason: str | None = None, skip_context_changed: bool = False,
+    allow_recovery: bool = False,
 ) -> Any:
     """
     Validate and apply state updates to a job row.
     Non-state fields are applied as-is; state fields are normalized and validated.
     skip_context_changed: If True, do not emit context_changed (e.g. complete_label uses POST response on frontend).
+    allow_recovery: permits job_status failed -> pending/running (resume/retry
+    endpoints only) — a first-class transition on release builds.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -998,7 +1014,7 @@ def apply_job_state(
             change_str,
             f" (reason: {reason})" if reason else "",
         )
-    validate_job_state_transition(job, normalized)
+    validate_job_state_transition(job, normalized, allow_recovery=allow_recovery)
 
     # Apply updates (normalized for known state fields; as-is for the rest)
     for k, v in normalized.items():

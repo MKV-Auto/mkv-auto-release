@@ -5327,15 +5327,43 @@ def resume_job(job_id: str, db: Session = Depends(get_db)):
     post_state = job.derived_post_state
     if post_state == "running":
         log.warning("Job %s: Resuming stuck post-process (post_state=running)", job.id)
-        # Use devmode to allow backward transition (running -> pending -> running)
+        try:
+            apply_job_state(
+                db,
+                job,
+                updates={
+                    "job_status": "running",
+                    "phase": "postprocess",
+                    "error_reason": None,  # Clear any error
+                },
+                reason="resume stuck postprocess",
+                allow_recovery=True,
+            )
+        except StateViolation as exc:
+            raise HTTPException(409, detail=f"State violation: {exc}") from exc
     elif post_state not in ("pending", "ready", "failed"):
         raise HTTPException(400, detail=f"Post-process is {post_state}; resume only allowed when pending/ready/failed/running")
-    else:
-        # Normal resume case - use devmode if job is failed to allow backward transition
-        if job.job_status == "failed":
-            pass
-        else:
-            pass  # Job not failed; postprocess_started below sets running
+    elif job.job_status == "failed":
+        # Recovery is a FIRST-CLASS transition. This used to run through the
+        # devmode-only state helper inside dev-strip markers, which release
+        # builds remove — so on every release build, "Retry processing" on a
+        # failed job 409'd with "Cannot transition job_status from failed"
+        # (caught live on 1.6.10).
+        log.info("Job %s: Resuming failed post-process", job.id)
+        try:
+            apply_job_state(
+                db,
+                job,
+                updates={
+                    "job_status": "running",  # running (not pending) so validating can follow
+                    "phase": "postprocess",
+                    "error_reason": None,
+                },
+                reason="resume failed postprocess",
+                allow_recovery=True,
+            )
+        except StateViolation as exc:
+            raise HTTPException(409, detail=f"State violation: {exc}") from exc
 
     try:
         StageState.postprocess_started(db, job, reason="resume postprocess requested", error_reason=None)

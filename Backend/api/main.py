@@ -1463,6 +1463,7 @@ def _startup_cleanup_terminal_jobs() -> None:
     logger = get_logger(__name__, "_startup_cleanup_terminal_jobs")
     db = database.SessionLocal()
     try:
+        from core.job_cleanup import job_source_is_safe_to_clean
         uncleaned = (
             db.query(db_models.Job)
             .filter(
@@ -1471,6 +1472,11 @@ def _startup_cleanup_terminal_jobs() -> None:
             )
             .all()
         )
+        # A FAILED job whose transfer never completed still holds the ONLY
+        # copy of its rip in raw/ — cleaning it at boot destroyed a 48GB UHD
+        # rip on prod (failed post-process, transfer pending). cleanup_job_mkv
+        # re-checks this, but don't even enqueue.
+        uncleaned = [j for j in uncleaned if job_source_is_safe_to_clean(j)]
         if not uncleaned:
             logger.info("No terminal jobs need cleanup on startup")
             return

@@ -76,6 +76,21 @@ def job_has_cleanable_files(paths: JobPaths, *, include_previews: bool = True) -
 
 
 # Backward-compatible alias
+def job_source_is_safe_to_clean(job) -> bool:
+    """True when a job's source MKVs are safe for AUTOMATED deletion.
+
+    The rip in raw/ is the ONLY copy until a transfer completes. A job that
+    failed before transferring (post-process failure, transfer never ran)
+    must keep its files or the user has to re-rip the disc — on prod the
+    startup cleanup deleted a 48GB UHD rip of exactly that shape. Automated
+    cleaners (startup, hourly reconciliation, stale cleanup) call this;
+    explicit user actions may override at the call site.
+    """
+    status = (getattr(job, "job_status", None) or "").strip().lower()
+    transfer = (getattr(job, "transfer_state", None) or "").strip().lower()
+    return status == "completed" or transfer == "completed"
+
+
 def job_has_mkv_files(paths: JobPaths) -> bool:
     """
     Return True if paths.raw or paths.transient contain any *.mkv file,

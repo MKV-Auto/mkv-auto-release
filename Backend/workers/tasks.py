@@ -6046,12 +6046,26 @@ def cleanup_job_mkv(job_id: str, reason: str):
     Reason: user_finish, transfer_cleanup, stale_cleanup, or reconciliation.
     Idempotent: if no .mkv left, only sets transfer_source_cleaned = True.
     """
-    from core.job_cleanup import job_has_mkv_files, remove_mkv_files_from_job
+    from core.job_cleanup import job_has_mkv_files, job_source_is_safe_to_clean, remove_mkv_files_from_job
 
     db = database.SessionLocal()
     try:
         job = crud.get_job(db, job_id)
         if not job:
+            return
+        # LAST LINE OF DEFENSE against deleting the only copy: automated
+        # cleanups may only remove MKVs once the content is safe elsewhere —
+        # the job finished, or its transfer verified. A job that FAILED
+        # before transferring holds the sole copy of the rip in raw/; on
+        # prod, startup_cleanup ate a 48GB UHD rip of exactly that shape
+        # (failed post-process, transfer never ran). Explicit user actions
+        # (user_finish) keep their authority.
+        if reason != "user_finish" and not job_source_is_safe_to_clean(job):
+            log.warning(
+                "cleanup_job_mkv: REFUSING to clean job %s (reason=%s): job_status=%s "
+                "transfer_state=%s — the rip may be the only copy",
+                job_id, reason, getattr(job, "job_status", None), getattr(job, "transfer_state", None),
+            )
             return
         paths = JobPaths.for_id(job_id)
         if job_has_mkv_files(paths):
@@ -6126,11 +6140,13 @@ def reconcile_job_mkv_cleanup():
     One worker does all the leg work; no per-job task enqueue.
     """
     from api import models as db_models
-    from core.job_cleanup import job_has_mkv_files, remove_mkv_files_from_job
+    from core.job_cleanup import job_has_mkv_files, job_source_is_safe_to_clean, remove_mkv_files_from_job
 
     db = database.SessionLocal()
     try:
-        # Only terminal jobs; exclude pending, running, validating
+        # Only terminal jobs; exclude pending, running, validating. A FAILED
+        # job is only cleanable when its transfer completed — otherwise the
+        # rip in raw/ is the sole copy (prod lost a 48GB UHD rip to this).
         cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
         rows = (
             db.query(db_models.Job)
@@ -6141,6 +6157,7 @@ def reconcile_job_mkv_cleanup():
             )
             .all()
         )
+        rows = [j for j in rows if job_source_is_safe_to_clean(j)]
         processed = 0
         for job in rows:
             try:

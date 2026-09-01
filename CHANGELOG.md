@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.11] - 2026-09-01
+
+### Fixed
+
+- **Failed jobs no longer lose their ripped files.** The automatic cleanup that removes source files after a successful transfer was also running against jobs that FAILED before transferring — on the next app restart it would delete the rip, which was the only copy, forcing a full re-rip of the disc. Cleanup now runs only when the job completed or its transfer verified; everything else keeps its files, no matter how it failed.
+- **"Retry processing" now actually works on failed jobs.** The recovery path that lets a failed job go back to running was accidentally marked as development-only code, which gets stripped from every released build — so on real installs the retry button silently failed with a state error. Recovery is now a proper part of the state machine on all builds.
+
 ## [1.6.10] - 2026-09-01
 
 ### Fixed

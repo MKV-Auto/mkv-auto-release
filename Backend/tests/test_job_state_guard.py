@@ -40,6 +40,27 @@ def test_job_status_disallows_completed_to_running():
         validate_job_state_transition(job, {"job_status": "running"})
 
 
+def test_failed_to_running_needs_the_recovery_flag_and_it_ships():
+    """Recovery is a FIRST-CLASS transition, not a devmode privilege: the
+    old devmode-only escape hatch was stripped from release builds, so
+    "Retry processing" on a failed job 409'd on every prod install (caught
+    live on 1.6.10)."""
+    job = SimpleNamespace(job_status="failed")
+    # Without the flag: still refused (nothing else may leave failed).
+    with pytest.raises(StateViolation):
+        validate_job_state_transition(job, {"job_status": "running"})
+    # With it: the resume endpoints may go to pending/running — nothing else.
+    validate_job_state_transition(job, {"job_status": "running"}, allow_recovery=True)
+    validate_job_state_transition(job, {"job_status": "pending"}, allow_recovery=True)
+    with pytest.raises(StateViolation):
+        validate_job_state_transition(job, {"job_status": "completed"}, allow_recovery=True)
+    # completed stays terminal even for recovery.
+    with pytest.raises(StateViolation):
+        validate_job_state_transition(
+            SimpleNamespace(job_status="completed"), {"job_status": "running"}, allow_recovery=True
+        )
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Stage-state guards (pre-existing + extensions)
 # ──────────────────────────────────────────────────────────────────────────

@@ -475,13 +475,17 @@ class TestReconcileJobMkvCleanup:
             job_dir2 = tmp_path / "mkvauto_data" / job_id2
             job_dir2.mkdir(parents=True)
             (job_dir2 / "raw").mkdir(parents=True, exist_ok=True)
+            # Failed AND transferred: still safely cleanable (marks-only —
+            # no .mkv present). A failed job with transfer pending would be
+            # SKIPPED now: its raw/ holds the only copy of the rip.
             job2 = models.Job(
                 id=job_id2,
                 disc_id=disc.id,
                 disc_num="1",
                 mount_point="/dev/sr0",
                 job_status="failed",
-                rip_state="failed",
+                rip_state="completed",
+                transfer_state="completed",
                 transfer_source_cleaned=False,
                 updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
             )
@@ -554,7 +558,9 @@ class TestStartupCleanupTerminalJobs:
             )
             session.add(job1)
 
-            # Job 2: failed, uncleaned → should get cleanup enqueued
+            # Job 2: failed, transfer never ran → must be SKIPPED (raw/
+            # holds the only copy of the rip; cleaning it at boot destroyed
+            # a 48GB UHD rip on prod)
             job_id2 = str(uuid.uuid4())
             job_dir2 = tmp_path / "mkvauto_data" / job_id2
             job_dir2.mkdir(parents=True)
@@ -603,14 +609,16 @@ class TestStartupCleanupTerminalJobs:
             for j in (job1, job2, job3, job4):
                 session.refresh(j)
             yield {
-                "should_clean": [str(job1.id), str(job2.id)],
-                "should_skip": [str(job3.id), str(job4.id)],
+                "should_clean": [str(job1.id)],
+                "should_skip": [str(job2.id), str(job3.id), str(job4.id)],
             }, session
 
     def test_startup_cleanup_enqueues_for_uncleaned_terminal_jobs(
         self, setup_jobs_for_startup, monkeypatch,
     ):
-        """Startup cleanup enqueues cleanup_job_mkv for completed/failed jobs with transfer_source_cleaned=False."""
+        """Startup cleanup enqueues cleanup_job_mkv only for jobs whose
+        source is safe to remove — completed, or failed WITH a completed
+        transfer. A failed job that never transferred keeps its rip."""
         job_info, session = setup_jobs_for_startup
         session.close()
 
