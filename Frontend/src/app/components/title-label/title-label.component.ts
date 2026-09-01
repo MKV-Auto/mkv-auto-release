@@ -928,6 +928,14 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
         return;
       }
     }
+    // Nothing left to advance to. If the current row is itself settled
+    // (just saved or ignored), the loop is DONE — close, so Save & next on
+    // the last unlabeled title doesn't read as a dead button. A skip on a
+    // still-unlabeled last title keeps the modal open (there is nowhere to
+    // skip to, and the row still needs the user).
+    if (this.isLabelingComplete(this.quickPreviewTitle) || this.isIgnored(this.quickPreviewTitle)) {
+      this.closeQuickPreview();
+    }
   }
 
   /** Ignore the modal's current title, then advance the loop. */

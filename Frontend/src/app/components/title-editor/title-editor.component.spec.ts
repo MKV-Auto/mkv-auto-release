@@ -75,6 +75,30 @@ describe('TitleEditorComponent', () => {
     expect(root.querySelector('select.title-editor__select')).toBeTruthy();
   });
 
+  it('clearing the Through-ep field does not snap Layout back to Single', () => {
+    // The layout was purely derived from part/episode_end, so emptying the
+    // conditional field reverted the dropdown under the user's hands.
+    fixture.componentRef.setInput('title', makeTitle({ type: 'Episode', season: 2, episode: 5 }));
+    fixture.detectChanges();
+    component.onEpisodeLayoutChange('span');
+    expect(component.episodeLayout).toBe('span');
+    // The template's [(ngModel)] writes the field; the handler only buffers.
+    component.title.episode_end = null;
+    component.onEpisodeEndChange('');
+    expect(component.episodeLayout).toBe('span');
+
+    // Same protection for split while its fields are cleared.
+    component.onEpisodeLayoutChange('split');
+    component.title.part = null;
+    component.onPartChange('');
+    expect(component.episodeLayout).toBe('split');
+
+    // The pick belongs to the row — a new title derives fresh.
+    fixture.componentRef.setInput('title', makeTitle({ title_id: 't2', type: 'Episode' }));
+    fixture.detectChanges();
+    expect(component.episodeLayout).toBe('single');
+  });
+
   it('type leads the form: the first grid field is the type select', () => {
     fixture.componentRef.setInput('title', makeTitle());
     fixture.detectChanges();

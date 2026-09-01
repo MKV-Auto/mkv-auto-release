@@ -163,6 +163,24 @@ describe('TitleLabelComponent', () => {
     expect(component.quickPreviewUnlabeledCount()).toBe(2);
   });
 
+  it('#848: SAVE on the last unlabeled title closes the modal; SKIP keeps it open', () => {
+    const labeled = { title_id: 'a', title: 'Done', type: 'Episode' };
+    const last: any = { title_id: 'b', title: '', type: null };
+    setTitles([labeled, last]);
+    fixture.detectChanges();
+    component.quickPreviewTitle = last;
+
+    // Skip with nothing else unlabeled: the row still needs the user — stay.
+    component.quickPreviewStep(1);
+    expect(component.quickPreviewTitle).toBe(last);
+
+    // The save made it complete; advancing now ends the loop.
+    last.type = 'Episode';
+    last.title = 'Finale';
+    component.quickPreviewStep(1);
+    expect(component.quickPreviewTitle).toBeNull();
+  });
+
   it('#848: ignore & next on the last unlabeled title closes the modal', () => {
     const labeled = { title_id: 'a', title: 'Done', type: 'Episode' };
     const last = { title_id: 'b', title: '', type: null };

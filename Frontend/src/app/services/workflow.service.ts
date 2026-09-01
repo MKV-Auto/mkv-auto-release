@@ -31,6 +31,10 @@ function drivesEqual(a: Drive, b: Drive): boolean {
 export const DISC_METADATA_UPDATED_FIELDS = [
   'movie_name', 'release_name', 'info_title', 'disc_number',
   'release_year', 'production_year', 'disc_format', 'resolution', 'release_image',
+  'disc_season',
+  // #845: label saves auto-rename the disc — carry the new name/slug or every
+  // surface shows the stale pre-label name until a hard refresh.
+  'disc_name', 'disc_slug',
 ] as const;
 
 /** Backend-derived card contract fields (#839) — see core/card_state.py. */
@@ -3198,6 +3202,29 @@ export class WorkflowService implements OnDestroy {
           return next;
         });
         if (touched) this._discs.next(mergedDiscs);
+        // #845: the auto-rename also has to reach the ACTIVE workflow's label
+        // form — the Disc step and workflow header render
+        // labelForm.disc_name, which otherwise shows the stale pre-rename
+        // name until a hard refresh. The event carries the SAVED name, so
+        // clobbering an in-flight keystroke is not a concern here.
+        const renameCtx = this._activeContext$.value as any;
+        const renameCtxDiscId =
+          renameCtx?.labelForm?.disc_id ?? renameCtx?.discInfo?.disc_id ?? null;
+        if (
+          renameCtx && metaDiscId && renameCtxDiscId === metaDiscId &&
+          (Object.prototype.hasOwnProperty.call(message, 'disc_name') ||
+           Object.prototype.hasOwnProperty.call(message, 'disc_slug'))
+        ) {
+          const lf: any = { ...(renameCtx.labelForm ?? {}) };
+          let lfTouched = false;
+          for (const k of ['disc_name', 'disc_slug', 'disc_number'] as const) {
+            if (Object.prototype.hasOwnProperty.call(message, k) && message[k] != null && lf[k] !== message[k]) {
+              lf[k] = message[k];
+              lfTouched = true;
+            }
+          }
+          if (lfTouched) this.updateContext({ labelForm: lf } as any);
+        }
         break;
       }
 

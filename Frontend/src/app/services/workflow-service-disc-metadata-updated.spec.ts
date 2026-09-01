@@ -97,6 +97,40 @@ describe('WorkflowService disc_metadata_updated (#832)', () => {
     expect(discs.find(d => d.disc_id === 'd2').release_name).toBeUndefined();
   });
 
+  it('#845: an auto-rename reaches the card AND the active label form without a refresh', () => {
+    (service as any)._discs.next([
+      { disc_id: 'd1', disc_state: 'unfinished', job_id: 'job-1', scan_state: 'ready', disc_name: 'DVD' },
+    ]);
+    (service as any)._activeContext$.next({
+      labelForm: { disc_id: 'd1', disc_name: 'DVD', disc_slug: 'dvd' },
+    });
+    (service as any).handleUnifiedMessage({
+      type: 'disc_metadata_updated', disc_id: 'd1', job_id: 'job-1',
+      disc_name: 'Star Wars: The Clone Wars: Season 4 - Disc 5 - DVD',
+      disc_slug: 'star_wars-_the_clone_wars-_season_4_-_disc_5_-_dvd',
+      disc_number: 5,
+    });
+    const card = ((service as any)._discs.value as any[]).find(d => d.disc_id === 'd1');
+    expect(card.disc_name).toBe('Star Wars: The Clone Wars: Season 4 - Disc 5 - DVD');
+    const lf = ((service as any)._activeContext$.value as any).labelForm;
+    expect(lf.disc_name).toBe('Star Wars: The Clone Wars: Season 4 - Disc 5 - DVD');
+    expect(lf.disc_slug).toBe('star_wars-_the_clone_wars-_season_4_-_disc_5_-_dvd');
+    expect(lf.disc_number).toBe(5);
+  });
+
+  it('#845: a rename for a DIFFERENT disc never touches the active label form', () => {
+    (service as any)._discs.next([
+      { disc_id: 'd2', disc_state: 'unfinished', job_id: 'job-2', scan_state: 'ready' },
+    ]);
+    (service as any)._activeContext$.next({
+      labelForm: { disc_id: 'd1', disc_name: 'My Disc' },
+    });
+    (service as any).handleUnifiedMessage({
+      type: 'disc_metadata_updated', disc_id: 'd2', job_id: 'job-2', disc_name: 'Other - DVD',
+    });
+    expect(((service as any)._activeContext$.value as any).labelForm.disc_name).toBe('My Disc');
+  });
+
   it('matches by job_id when the card has no disc_id yet and ignores unknown cards', () => {
     (service as any)._discs.next([
       { disc_id: 'job-9', disc_state: 'unfinished', job_id: 'job-9', scan_state: 'ready' },

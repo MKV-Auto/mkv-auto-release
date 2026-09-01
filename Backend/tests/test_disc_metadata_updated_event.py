@@ -20,7 +20,9 @@ def _series_disc(session):
                              slug=f"season-two-{uuid.uuid4().hex[:6]}", upc="012345678905",
                              cover_front_url="https://example.invalid/front.jpg")
     disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"h-{uuid.uuid4().hex[:8]}", release_id=release.id,
-                       disc_number=2, format="DVD")
+                       disc_number=2, format="DVD",
+                       disc_name="Star Wars Rebels: Season 2 - Disc 2 - DVD",
+                       disc_slug="star_wars_rebels-_season_2_-_disc_2_-_dvd")
     session.add_all([movie, release, disc])
     session.commit()
     return disc.id
@@ -39,6 +41,10 @@ def test_payload_carries_identity_fields_and_nothing_stateful(test_db):
     assert payload["release_name"] == "Season Two"
     assert payload["disc_number"] == 2
     assert payload["disc_format"] == "DVD"
+    # #845: label saves auto-rename the disc; the event must carry the new
+    # name/slug or the client shows the stale one until a hard refresh.
+    assert payload["disc_name"] == "Star Wars Rebels: Season 2 - Disc 2 - DVD"
+    assert payload["disc_slug"] == "star_wars_rebels-_season_2_-_disc_2_-_dvd"
     for stateful in ("disc_state", "scan_state", "mount_point", "disc_num"):
         assert stateful not in payload
     assert set(payload) == {"disc_id", "job_id", *DISC_METADATA_UPDATED_FIELDS}

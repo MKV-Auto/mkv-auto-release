@@ -270,6 +270,8 @@ def _build_disc_metadata(disc: db_models.Disc, disc_state: str, job_id: Optional
         scan_error=scan_error,
         movie_name=movie_name,
         release_name=release_name,
+        disc_name=getattr(disc, "disc_name", None),
+        disc_slug=getattr(disc, "disc_slug", None),
         info_title=disc.info_title,
         disc_number=disc.disc_number,
         discdb_disc_num=getattr(disc, "discdb_disc_num", None),
@@ -812,6 +814,9 @@ DISC_METADATA_UPDATED_FIELDS: tuple[str, ...] = (
     "movie_name", "release_name", "info_title", "disc_number",
     "release_year", "production_year", "disc_format", "resolution", "release_image",
     "disc_season",
+    # #845: label saves auto-rename the disc; without these the client keeps
+    # the stale pre-label name until a hard refresh.
+    "disc_name", "disc_slug",
 )
 
 

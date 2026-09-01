@@ -118,8 +118,10 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
     if ('title' in changes) {
       this.extraScopeSeason$.next(this.extraSeason);
       // New row: the description link collapses again (unless the row has
-      // content, which descriptionVisible() covers on its own).
+      // content, which descriptionVisible() covers on its own), and the
+      // layout pick belongs to the previous row.
       this.showDescriptionField = false;
+      this.layoutChoice = null;
     }
   }
 
@@ -879,10 +881,17 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
    * one source of truth: `part` set means the disc split one episode across
    * files, `episode_end` set means one file covers several episodes.
    */
+  /** The user's explicit Layout pick for THIS row. Without it, clearing the
+   * conditional field (Through-ep, Part) snapped the derived layout back to
+   * "Single episode" mid-edit — the dropdown reverted under the user's
+   * hands. Data still wins when set; this only holds the mode open while
+   * its field is empty. Reset per row in ngOnChanges. */
+  private layoutChoice: 'single' | 'split' | 'span' | null = null;
+
   get episodeLayout(): 'single' | 'split' | 'span' {
     if (this.title?.part != null) return 'split';
     if (this.title?.episode_end != null) return 'span';
-    return 'single';
+    return this.layoutChoice ?? 'single';
   }
 
   /** Layout is a picked control — it writes immediately, so it must absorb
@@ -891,6 +900,8 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
    * Same contract as onTypeChange / onEpisodePicked. */
   onEpisodeLayoutChange(value: string): void {
     if (!this.title) return;
+    this.layoutChoice =
+      value === 'split' || value === 'span' || value === 'single' ? value : null;
     const pending = this.takePendingFieldsFor(this.title.title_id);
     this.flushPendingFieldEdits();
     if (value === 'split') {

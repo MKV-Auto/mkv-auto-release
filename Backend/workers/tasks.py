@@ -4842,6 +4842,61 @@ def _maybe_auto_dispatch_local_transfer(job_id: str, task_self) -> None:
         db.close()
 
 
+
+def resume_expected_title_count(job, disc) -> int:
+    """How many source MKVs the resume guard should demand before letting
+    post-process run.
+
+    Precedence:
+    1. DiscDB hit -- the selected titles (``title_filename_map``): the rip
+       only ever produced those.
+    2. The DB title rows minus ignored ones. The on-disk scan map can be
+       STALE relative to the rip (seen on prod: ``disc_info.json`` held 121
+       titles, MakeMKV saved exactly the 119 in its rip set, the DB had 119
+       rows -- and the old map-based count aborted a resume that had every
+       file it needed). DB rows also carry the user's labels, so ignored
+       titles -- which have no destination and need no source file --
+       subtract correctly; the map's types never reflect labels.
+    3. Fallback: the scan map count minus map-typed ignores (pre-DB jobs).
+    """
+    payload = getattr(job, "disc_payload", None) or {}
+    if (
+        payload.get("discdb_hit")
+        and isinstance(payload.get("title_filename_map"), dict)
+        and payload["title_filename_map"]
+    ):
+        return len(payload["title_filename_map"])
+
+    db_title_rows = list(getattr(getattr(job, "disc", None), "titles", None) or [])
+    if db_title_rows:
+        return sum(
+            1 for t in db_title_rows
+            if (getattr(t, "type", None) or "").strip().lower() != "ignore"
+        )
+
+    expected_count = 0
+    map_titles = getattr(disc, "titles", None) or []
+    if map_titles:
+        expected_count = len(map_titles)
+        ignored_count = sum(
+            1 for t in map_titles
+            if (getattr(t, "type", None) or "").strip().lower() == "ignore"
+        )
+        if ignored_count:
+            expected_count = max(0, expected_count - ignored_count)
+        return expected_count
+    disc_info = getattr(getattr(job, "disc", None), "disc_info", None)
+    if disc_info:
+        titles_map = disc_info.get("titles") or disc_info.get("titles_map")
+        if isinstance(titles_map, dict):
+            return len(titles_map)
+    if payload:
+        titles_map = payload.get("titles") or payload.get("tracks")
+        if isinstance(titles_map, dict):
+            return len(titles_map)
+    return expected_count
+
+
 def _run_prep_phase(self, job_id: str):
     """Shared body for the post-rip prep work (rename + hash + validate).
 
@@ -5086,32 +5141,7 @@ def _run_prep_phase(self, job_id: str):
         # If files are already in transient, skip file count check in source_dir
         if not files_already_moved:
             # Verify we have a full set of ripped titles before attempting post-process.
-            expected_count = 0
-            if disc.titles:
-                expected_count = len(disc.titles)
-            elif hasattr(job, "disc") and job.disc and job.disc.disc_info:
-                titles_map = job.disc.disc_info.get("titles") or job.disc.disc_info.get("titles_map")
-                if isinstance(titles_map, dict):
-                    expected_count = len(titles_map)
-            elif job.disc_payload:
-                titles_map = job.disc_payload.get("titles") or job.disc_payload.get("tracks")
-                if isinstance(titles_map, dict):
-                    expected_count = len(titles_map)
-            # For discdb hits, expect only the selected titles (title_filename_map), not the full disc map
-            payload = job.disc_payload or {}
-            if payload.get("discdb_hit") and isinstance(payload.get("title_filename_map"), dict) and payload["title_filename_map"]:
-                expected_count = len(payload["title_filename_map"])
-            # Subtract titles marked 'ignore' — they have no destination and don't need a source file
-            # in raw (their content may be a duplicate of another title that postprocess never moves
-            # for ignored rows). Without this, a disc with auto-ignored duplicates would always trip
-            # the count check on retry after sync filled some primaries with 'ignore'.
-            if disc.titles:
-                ignored_count = sum(
-                    1 for t in disc.titles
-                    if (getattr(t, "type", None) or "").strip().lower() == "ignore"
-                )
-                if ignored_count:
-                    expected_count = max(0, expected_count - ignored_count)
+            expected_count = resume_expected_title_count(job, disc)
             actual_count = 0
             if source_dir and source_dir.exists():
                 for _, _, filenames in os.walk(source_dir):

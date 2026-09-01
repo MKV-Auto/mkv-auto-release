@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.10] - 2026-09-01
+
+### Fixed
+
+- **The labeling loop now finishes cleanly.** Saving the last unlabeled title from the preview window closes it (the button previously appeared to do nothing), and clearing the "Through ep" or "Part" field no longer snaps the Layout dropdown back to "Single episode" while you're still editing.
+- **"Retry processing" no longer aborts on discs where you ignored most titles.** The resume safety check counted every title from the original disc scan — including ones that were never ripped and ones you marked ignore — and refused to run with "only N/M titles found" even though every needed file was present. It now counts what post-processing actually needs: your non-ignored titles.
+- **Auto-generated disc names now appear without a page refresh.** When labeling renames a disc (e.g. to "Star Wars: The Clone Wars: Season 4 - Disc 5 - DVD"), the new name reaches the open page immediately — cards, the disc form, and the workflow header all update live instead of showing the old name until you reload.
+
 ## [1.6.9] - 2026-08-31
 
 ### Added

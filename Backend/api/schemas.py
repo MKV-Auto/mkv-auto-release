@@ -234,6 +234,11 @@ class DiscMetadata(BaseModel):
     # Card display metadata
     movie_name: Optional[str] = None
     release_name: Optional[str] = None  # Release title (for card display)
+    # The disc's own name/slug. Auto-renamed at label time (#845), so the
+    # disc_metadata_updated event must carry them or every surface shows the
+    # stale pre-label name until a hard refresh.
+    disc_name: Optional[str] = None
+    disc_slug: Optional[str] = None
     info_title: Optional[str] = None  # MakeMKV info_title from disc scan
     disc_number: Optional[int] = None  # Ordinal in release (e.g. Disc 1, 2) for card title
     discdb_disc_num: Optional[int] = None  # TheDiscDB matched disc index (reference only)
