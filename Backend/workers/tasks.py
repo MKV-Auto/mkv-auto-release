@@ -2240,6 +2240,7 @@ def _post_postprocess_complete_callback(
     post_progress: int = 100,
     disc_payload_updates: dict | None = None,
     error_reason: str | None = None,
+    failure_kind: str | None = None,
 ) -> None:
     """Apply postprocess-complete state directly via DB (#365 cleanup).
 
@@ -2287,6 +2288,7 @@ def _post_postprocess_complete_callback(
                 db, job,
                 error_reason=error_reason or "Postprocess failed",
                 reason="postprocess_complete in-process (failure)",
+                failure_kind=failure_kind,
             )
     except Exception as exc:
         logging.warning("postprocess-complete in-process apply failed for job %s: %s", job_id, exc)
@@ -5086,7 +5088,8 @@ def _run_prep_phase(self, job_id: str):
                 error_msg = f"No raw directory found to resume and no files in transient. Checked directories: {', '.join([f'{d[0]} ({d[2]} exists, {d[4]} MKV files)' for d in directories_checked])}"
                 self.add_log(job, db, f"resume_postprocess: {error_msg}")
                 post_log(f"file_discovery: {error_msg}", "error")
-                _post_postprocess_complete_callback(job_id, success=False, error_reason=error_msg)
+                _post_postprocess_complete_callback(job_id, success=False, error_reason=error_msg,
+                                                    failure_kind="precondition")
                 return
         disc = Disc(job.disc_num, job.mount_point)
         # Load disc map - use source_dir if files not moved, otherwise use raw (where disc map should still exist)
@@ -5180,14 +5183,16 @@ def _run_prep_phase(self, job_id: str):
             if expected_count and actual_count < expected_count:
                 msg = f"Resume aborted: only {actual_count}/{expected_count} titles found; rerun rip."
                 self.add_log(job, db, msg)
-                _post_postprocess_complete_callback(job_id, success=False, error_reason=msg)
+                _post_postprocess_complete_callback(job_id, success=False, error_reason=msg,
+                                                    failure_kind="precondition")
                 # if source_dir:
                 #     self.cleanup_dirs(job, [str(source_dir)])
                 return
             if actual_count == 0:
                 msg = "Resume aborted: no MKV files found to post-process; rerun rip."
                 self.add_log(job, db, msg)
-                _post_postprocess_complete_callback(job_id, success=False, error_reason=msg)
+                _post_postprocess_complete_callback(job_id, success=False, error_reason=msg,
+                                                    failure_kind="precondition")
                 # if source_dir:
                 #     self.cleanup_dirs(job, [str(source_dir)])
                 return

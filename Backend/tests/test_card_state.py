@@ -17,9 +17,30 @@ def _job(**kw):
         derived_post_state=None, transfer_state=None, transfer_phase=None,
         rip_phase=None, stage_profile="miss",
         rip_progress=None, post_progress=None, transfer_progress=None,
+        failure_kind=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)
+
+
+def test_failure_kind_gates_the_retry_pill():
+    """#853: 'Retry' only when retry can succeed. precondition names the
+    real remedy; config points at settings; transient/unknown keep retry."""
+    d = derive_card_state(_job(job_status="failed", derived_post_state="failed",
+                               failure_kind="precondition"))
+    assert (d["card_state"], d["pill"]) == ("failed_post", "Re-rip needed")
+
+    d = derive_card_state(_job(job_status="failed", transfer_state="failed",
+                               failure_kind="config"))
+    assert (d["card_state"], d["pill"]) == ("failed_transfer", "Fix settings")
+
+    d = derive_card_state(_job(job_status="failed", derived_post_state="failed",
+                               failure_kind="transient"))
+    assert (d["card_state"], d["pill"]) == ("failed_post", "Retry processing")
+
+    # Unknown/legacy NULL keeps today's behavior exactly.
+    d = derive_card_state(_job(job_status="failed", derived_post_state="failed"))
+    assert (d["card_state"], d["pill"]) == ("failed_post", "Retry processing")
 
 
 CASES = [

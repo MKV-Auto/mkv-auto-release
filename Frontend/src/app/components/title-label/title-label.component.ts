@@ -420,6 +420,18 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['titles']) {
       const titles = this.titles || [];
+      // The preview modal holds an OBJECT reference; every autosave echo
+      // replaces the titles array, leaving the modal editing a detached
+      // copy (selectedTitle avoids this by re-resolving via its getter).
+      // Re-point it at the fresh row by id — the editor's per-row state
+      // survives because its reset keys on title_id, not identity.
+      if (this.quickPreviewTitle) {
+        const qpId = this.getTitleId(this.quickPreviewTitle);
+        const fresh = titles.find((t) => this.getTitleId(t) === qpId);
+        if (fresh && fresh !== this.quickPreviewTitle) {
+          this.quickPreviewTitle = fresh;
+        }
+      }
       if (titles.length === 0) {
         this.displayOrderIds = [];
         this.lastTitleIdSnapshot = [];

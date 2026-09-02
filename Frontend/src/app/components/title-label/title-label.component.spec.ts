@@ -163,6 +163,19 @@ describe('TitleLabelComponent', () => {
     expect(component.quickPreviewUnlabeledCount()).toBe(2);
   });
 
+  it('#848: the modal re-points at the fresh row when the titles array is replaced (autosave echo)', () => {
+    const original = { title_id: 'q1', title: '', type: null };
+    setTitles([original]);
+    fixture.detectChanges();
+    component.quickPreviewTitle = original;
+
+    // The echo delivers a NEW array with NEW objects for the same rows.
+    const echoed = { title_id: 'q1', title: 'Saved Name', type: 'Episode' };
+    setTitles([echoed]);
+    fixture.detectChanges();
+    expect(component.quickPreviewTitle).toBe(echoed);
+  });
+
   it('#848: SAVE on the last unlabeled title closes the modal; SKIP keeps it open', () => {
     const labeled = { title_id: 'a', title: 'Done', type: 'Episode' };
     const last: any = { title_id: 'b', title: '', type: null };

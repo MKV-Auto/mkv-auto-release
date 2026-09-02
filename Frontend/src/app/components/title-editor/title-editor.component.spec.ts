@@ -93,7 +93,17 @@ describe('TitleEditorComponent', () => {
     component.onPartChange('');
     expect(component.episodeLayout).toBe('split');
 
-    // The pick belongs to the row — a new title derives fresh.
+    // The AUTOSAVE ECHO rebinds the SAME row as a fresh object — the pick
+    // must survive it (the 1.6.10 hole: reset ran on every rebind, so the
+    // server echo snapped Layout back to Single right after the user
+    // cleared the conditional field).
+    component.onEpisodeLayoutChange('span');
+    component.title.episode_end = null;
+    fixture.componentRef.setInput('title', makeTitle({ type: 'Episode', season: 2, episode: 5, episode_end: null }));
+    fixture.detectChanges();
+    expect(component.episodeLayout).toBe('span');
+
+    // The pick belongs to the row — a DIFFERENT title derives fresh.
     fixture.componentRef.setInput('title', makeTitle({ title_id: 't2', type: 'Episode' }));
     fixture.detectChanges();
     expect(component.episodeLayout).toBe('single');

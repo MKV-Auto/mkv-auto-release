@@ -490,6 +490,10 @@ class Job(Base):
     transfer_total_bytes = Column(BigInteger, nullable=True)
     transfer_conflict_resolution = Column(String, nullable=True)
     transfer_source_cleaned = Column(Boolean, nullable=False, server_default=text("false"))
+    # #853 — typed failure classification set by the code that failed:
+    # 'transient' (retry valid) | 'precondition' (inputs missing; retry cannot
+    # succeed) | 'config' (fix settings first) | NULL = unknown/legacy.
+    failure_kind = Column(String, nullable=True)
     transfer_validation_status = Column(String, nullable=True)  # "pending", "passed", "failed"
     transfer_validation_error = Column(Text, nullable=True)
     transfer_deduplicated = Column(Boolean, nullable=False, server_default=text("false"))

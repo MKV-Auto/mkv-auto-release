@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.12] - 2026-09-02
+
+### Added
+
+- **Failure cards now say what will actually help.** When a job fails because its files are genuinely missing, the card says *Re-rip needed* instead of offering a retry that cannot succeed; failures caused by settings say *Fix settings*; stalls and other transient failures keep *Retry*. Older failures without a recorded cause behave exactly as before.
+
+### Fixed
+
+- **"Scan complete" now means it.** The notification used to fire as soon as the disc was identified, while the full title scan still had minutes to go — telling you to "start copying" before you could. It now arrives when scanning is actually finished and the workflow is ready to open.
+- **The Layout dropdown truly holds now.** 1.6.10's fix survived the click but not the autosave a moment later — the save's round-trip refreshed the form and wiped the picked layout, snapping it back to "Single episode" anyway. The pick now survives saves and only resets when you move to a different title. The preview window also stays bound to the live title row across saves instead of a detached copy.
+
 ## [1.6.11] - 2026-09-01
 
 ### Fixed

@@ -1253,11 +1253,13 @@ class StageState:
         error_reason: str,
         reason: str | None = None,
         error_type: Optional[str] = None,
+        failure_kind: str | None = None,
     ) -> Any:
         """Set rip and job to failed. error_type (e.g. "disc_read") is used for notification only."""
         updates: Dict[str, Any] = {
             "rip_state": "failed",
             "job_status": "failed",
+            "failure_kind": failure_kind,
             "error_reason": error_reason,
             "phase": "failed",
             "rip_phase": None,
@@ -1341,6 +1343,7 @@ class StageState:
         *,
         error_reason: str,
         reason: str | None = None,
+        failure_kind: str | None = None,
     ) -> Any:
         """Set postprocess and job to failed."""
         # #365 step 3d — no more post_state="failed" write. Job.derived_post_state
@@ -1350,6 +1353,7 @@ class StageState:
         updates: Dict[str, Any] = {
             "job_status": "failed",
             "error_reason": error_reason,
+            "failure_kind": failure_kind,
         }
         return apply_job_state(db, job, updates=updates, reason=reason or "postprocess_failed callback")
 
@@ -1420,6 +1424,8 @@ class StageState:
             "transfer_state": "failed",
             "transfer_error": error_reason,
         }
+        if kwargs.get("failure_kind") is not None:
+            updates["failure_kind"] = kwargs.get("failure_kind")
         if dest_paths is not None:
             updates["transfer_paths"] = dest_paths
         updates.update(kwargs)

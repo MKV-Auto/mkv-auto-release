@@ -427,57 +427,11 @@ async def _notify_disc_scan_complete_async(disc_info: dict) -> None:
             actual_disc_num,
         )
 
-    # In-app toast / optional Discord: drive scan finished; user can start copy from Ripper (#scan_completed)
-    if disc_id and mount_point and not scan_failed:
-        try:
-            from core.job_state import _public_app_base_url
-            from core.notifications import emit_notification
-
-            info_title = (
-                enriched.get("movie_name")
-                or enriched.get("info_title")
-                or enriched.get("makemkv_disc_name")
-                or enriched.get("disc_name")
-            )
-            dn = enriched.get("disc_number")
-            dn_str = str(dn).strip() if dn is not None and str(dn).strip() else None
-            if info_title:
-                scan_label = f"{info_title} Disc #{dn_str}" if dn_str else str(info_title)
-            elif dn_str:
-                scan_label = f"Disc #{dn_str}"
-            else:
-                scan_label = "Disc"
-            title = f"Scan complete: {scan_label}"
-            if len(title) > 120:
-                title = "Scan complete"
-            body = f"Scan finished: {scan_label}. Open MKV Auto to start copying."
-            base = _public_app_base_url()
-            actions = None
-            if base:
-                link = f"{base}/ripper"
-                body = f"{body} {link}"
-                actions = [{"label": "Open MKV-Auto", "url": link}]
-            # id_key distinguishes dedupe per content hash so re-scans after eject can notify again
-            scan_id_key = str(disc_hash) if disc_hash else None
-            await emit_notification(
-                body,
-                "success",
-                "scan_completed",
-                action_type="open_ripper_drive",
-                action_payload={"mount_point": str(mount_point)},
-                # NOT a Job UUID — the disc id doubles as the dedupe identity
-                # here. Deep links must not treat it as a job (#841): the
-                # drive card auto-selects on load, so plain /activity is the
-                # right destination.
-                job_id=str(disc_id),
-                link_path="/activity",
-                title=title,
-                actions=actions,
-                id_key=scan_id_key,
-                info_title=str(info_title) if info_title else None,
-            )
-        except Exception as exc:
-            logger.warning("Failed to emit scan_completed notification: %s", exc)
+    # #856: the scan_completed notification used to fire HERE — the end of
+    # the identification phase (hash + DiscDB match) — while the full title
+    # scan (_load_disc_info_async) was still minutes from done, so the user
+    # was told "start copying" while the UI honestly showed scanning. It now
+    # fires from _load_disc_info_async's success path instead.
 
     # Auto-rip on insert (#331): best-effort, after set_cached() above so the
     # start_rip path sees this scan in the disc-manager cache. start_rip is
@@ -676,6 +630,62 @@ def _clean_discinfo_payload(payload: dict) -> dict:
     return cleaned
 
 
+async def _emit_scan_completed_notification(enriched: dict, disc_id: str, mount_point: str, disc_hash: Optional[str]) -> None:
+    """In-app toast / optional Discord: the disc is fully scanned and the user
+    can actually start copying. Emitted at the END of the full title scan
+    (#856) — the identification phase alone finishes minutes earlier and
+    told users "start copying" while the UI honestly still showed scanning."""
+    try:
+        from core.job_state import _public_app_base_url
+        from core.notifications import emit_notification
+
+        info_title = (
+            enriched.get("movie_name")
+            or enriched.get("info_title")
+            or enriched.get("makemkv_disc_name")
+            or enriched.get("disc_name")
+        )
+        dn = enriched.get("disc_number")
+        dn_str = str(dn).strip() if dn is not None and str(dn).strip() else None
+        if info_title:
+            scan_label = f"{info_title} Disc #{dn_str}" if dn_str else str(info_title)
+        elif dn_str:
+            scan_label = f"Disc #{dn_str}"
+        else:
+            scan_label = "Disc"
+        title = f"Scan complete: {scan_label}"
+        if len(title) > 120:
+            title = "Scan complete"
+        body = f"Scan finished: {scan_label}. Open MKV Auto to start copying."
+        base = _public_app_base_url()
+        actions = None
+        if base:
+            link = f"{base}/ripper"
+            body = f"{body} {link}"
+            actions = [{"label": "Open MKV-Auto", "url": link}]
+        # id_key distinguishes dedupe per content hash so re-scans after eject can notify again
+        scan_id_key = str(disc_hash) if disc_hash else None
+        await emit_notification(
+            body,
+            "success",
+            "scan_completed",
+            action_type="open_ripper_drive",
+            action_payload={"mount_point": str(mount_point)},
+            # NOT a Job UUID — the disc id doubles as the dedupe identity
+            # here. Deep links must not treat it as a job (#841): the
+            # drive card auto-selects on load, so plain /activity is the
+            # right destination.
+            job_id=str(disc_id),
+            link_path="/activity",
+            title=title,
+            actions=actions,
+            id_key=scan_id_key,
+            info_title=str(info_title) if info_title else None,
+        )
+    except Exception as exc:
+        logger.warning("Failed to emit scan_completed notification: %s", exc)
+
+
 async def _load_disc_info_async(disc_num: str, mount_point: str, source: str = "async") -> dict:
     """
     Load disc info using Disc Manager, then persist to DB.
@@ -782,7 +792,11 @@ async def _load_disc_info_async(disc_num: str, mount_point: str, source: str = "
                 logger.info(f"Emitted disc_ready for {disc_num} (disc_id: {disc_id})")
             except Exception as exc:
                 logger.warning(f"Failed to emit disc_ready to coordinator: {exc}")
-        
+            # #856: notify only now — the full title scan is done and "start
+            # copying" is genuinely actionable (dedupe by content hash keeps
+            # re-scans from spamming).
+            await _emit_scan_completed_notification(enriched, str(disc_id), str(mount_point), disc_hash)
+
         return enriched
     except DriveManagerError as exc:
         logger.warning("Disc info load failed for %s at %s: %s", disc_num, mount_point, exc)

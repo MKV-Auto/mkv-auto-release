@@ -1624,7 +1624,7 @@ def _cleanup_stale_jobs(
                         if not recovery_successful:
                             # Recovery failed - mark as failed via StageState
                             StageState.postprocess_failed(
-                                db, job, error_reason=error_msg, reason="stale post-process health check"
+                                db, job, error_reason=error_msg, reason="stale post-process health check", failure_kind="transient"
                             )
                             apply_job_state(
                                 db, job,
@@ -1653,7 +1653,7 @@ def _cleanup_stale_jobs(
                         log.error("Job %s: Recovery system error: %s", job.id, recovery_exc, exc_info=True)
                         # Fall back to marking as failed via StageState
                         StageState.postprocess_failed(
-                            db, job, error_reason=error_msg, reason="stale post-process health check"
+                            db, job, error_reason=error_msg, reason="stale post-process health check", failure_kind="transient"
                         )
                         apply_job_state(
                             db, job,
@@ -5335,6 +5335,7 @@ def resume_job(job_id: str, db: Session = Depends(get_db)):
                     "job_status": "running",
                     "phase": "postprocess",
                     "error_reason": None,  # Clear any error
+                    "failure_kind": None,
                 },
                 reason="resume stuck postprocess",
                 allow_recovery=True,
@@ -5358,6 +5359,7 @@ def resume_job(job_id: str, db: Session = Depends(get_db)):
                     "job_status": "running",  # running (not pending) so validating can follow
                     "phase": "postprocess",
                     "error_reason": None,
+                    "failure_kind": None,
                 },
                 reason="resume failed postprocess",
                 allow_recovery=True,

@@ -117,11 +117,20 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
   ngOnChanges(changes: SimpleChanges): void {
     if ('title' in changes) {
       this.extraScopeSeason$.next(this.extraSeason);
-      // New row: the description link collapses again (unless the row has
-      // content, which descriptionVisible() covers on its own), and the
-      // layout pick belongs to the previous row.
-      this.showDescriptionField = false;
-      this.layoutChoice = null;
+      // Reset per-ROW state only when the ROW actually changed. The title
+      // input also rebinds with a fresh object for the SAME row on every
+      // autosave echo (context refresh) — resetting then wiped the user's
+      // Layout pick moments after they made it, so clearing Through-ep
+      // still snapped the dropdown back to Single on 1.6.10.
+      const prevId = changes['title'].previousValue?.title_id ?? null;
+      const currId = changes['title'].currentValue?.title_id ?? null;
+      if (prevId !== currId) {
+        // New row: the description link collapses again (unless the row
+        // has content, which descriptionVisible() covers on its own), and
+        // the layout pick belongs to the previous row.
+        this.showDescriptionField = false;
+        this.layoutChoice = null;
+      }
     }
   }
 

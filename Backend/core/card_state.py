@@ -79,6 +79,22 @@ def derive_card_state(job: Any, *, transfer_destination: Optional[bool] = None) 
 
     # --- terminal -----------------------------------------------------
     if job_status == "failed":
+        # #853: the failure KIND decides whether "Retry" is honest. A
+        # precondition failure (inputs missing/unreadable) cannot succeed on
+        # retry — the pill names the real remedy; a config failure points at
+        # settings. transient/unknown keep the retry verb.
+        failure_kind = (getattr(job, "failure_kind", None) or "").strip().lower()
+        if failure_kind == "precondition":
+            if rip_state == "failed":
+                return out("failed_copy", FAMILY_FIX, "See error",
+                           getattr(job, "rip_progress", None))
+            return out("failed_post" if post_state == "failed" else "failed",
+                       FAMILY_FIX, "Re-rip needed",
+                       getattr(job, "post_progress", None))
+        if failure_kind == "config":
+            return out("failed_transfer" if transfer_state == "failed" else "failed",
+                       FAMILY_FIX, "Fix settings",
+                       getattr(job, "transfer_progress", None))
         if transfer_state == "failed":
             return out("failed_transfer", FAMILY_FIX, "Retry transfer",
                        getattr(job, "transfer_progress", None))
