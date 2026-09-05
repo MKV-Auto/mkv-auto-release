@@ -181,6 +181,7 @@ def _build_disc_metadata(disc: db_models.Disc, disc_state: str, job_id: Optional
         return n if n >= 0 else None
 
     disc_season = None
+    disc_season_ordinal = None
     if disc.release is not None:
         try:
             sibling_seasons = {_season_of(d) for d in (disc.release.discs or [])} - {None}
@@ -188,6 +189,16 @@ def _build_disc_metadata(disc: db_models.Disc, disc_state: str, job_id: Optional
                 disc_season = _season_of(disc)
         except Exception:
             disc_season = None
+    # Within-season position, only when the season chip itself shows: the
+    # boxset's release-wide disc_number (say 14) stays on the card, and this
+    # adds the number the disc NAME counts by ("Season 5 - Disc 4") so the
+    # two stop looking contradictory (#846, #845 numbering).
+    if disc_season is not None:
+        try:
+            from core.disc_naming import season_scoped_disc_ordinal
+            disc_season_ordinal = season_scoped_disc_ordinal(disc)
+        except Exception:
+            disc_season_ordinal = None
 
     # Get resolution from release or disc
     resolution = None
@@ -284,6 +295,7 @@ def _build_disc_metadata(disc: db_models.Disc, disc_state: str, job_id: Optional
         created_at=created_at,
         has_completed_job=has_completed_job,
         disc_season=disc_season,
+        disc_season_ordinal=disc_season_ordinal,
         job_status=job_status,
         finalized=finalized_flag,
         finalized_release_id=finalized_release_id,
@@ -813,7 +825,7 @@ async def _emit_disc_updated_with_job(disc_id: str, job_id: Optional[str] = None
 DISC_METADATA_UPDATED_FIELDS: tuple[str, ...] = (
     "movie_name", "release_name", "info_title", "disc_number",
     "release_year", "production_year", "disc_format", "resolution", "release_image",
-    "disc_season",
+    "disc_season", "disc_season_ordinal",
     # #845: label saves auto-rename the disc; without these the client keeps
     # the stale pre-label name until a hard refresh.
     "disc_name", "disc_slug",

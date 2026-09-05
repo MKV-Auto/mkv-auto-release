@@ -31,7 +31,7 @@ function drivesEqual(a: Drive, b: Drive): boolean {
 export const DISC_METADATA_UPDATED_FIELDS = [
   'movie_name', 'release_name', 'info_title', 'disc_number',
   'release_year', 'production_year', 'disc_format', 'resolution', 'release_image',
-  'disc_season',
+  'disc_season', 'disc_season_ordinal',
   // #845: label saves auto-rename the disc — carry the new name/slug or every
   // surface shows the stale pre-label name until a hard refresh.
   'disc_name', 'disc_slug',
@@ -54,6 +54,8 @@ export interface DiscMetadata {
   release_name?: string | null;
   /** The disc's own season, present only when the release spans seasons (#846). */
   disc_season?: number | null;
+  /** Within-season position ("Disc 4" of "Season 5 - Disc 4"), only alongside disc_season (#846). */
+  disc_season_ordinal?: number | null;
   card_state?: string | null;
   card_family?: CardFamily | null;
   card_pill?: string | null;
@@ -4797,6 +4799,49 @@ export class WorkflowService implements OnDestroy {
   /**
    * Update the current context with partial updates
    */
+  // ---- #845: disc-identity dirty tracking -------------------------------
+  // The label form always contained disc_name/disc_slug, and every save
+  // POSTed the WHOLE form — so a save the user triggered by editing
+  // something else echoed the displayed (often machine-generated) name back,
+  // and the backend recorded the echo as a user edit. That race clobbered
+  // freshly auto-generated names ("DVD" overwrote the convention name) and
+  // then froze them. Only fields the user actually edited may ship;
+  // shape-based filtering server-side was rejected because a user can
+  // legitimately type a machine-looking name ("Blu-Ray").
+  private discIdentityEdits = new Set<'disc_name' | 'disc_slug'>();
+  private discIdentityScope: string | null = null;
+
+  private currentDiscIdentityScope(): string | null {
+    const ctx = this._activeContext$.value as any;
+    if (!ctx) return null;
+    return `${ctx.type ?? ''}:${ctx.id ?? ''}`;
+  }
+
+  private syncDiscIdentityScope(): void {
+    const scope = this.currentDiscIdentityScope();
+    if (scope !== this.discIdentityScope) {
+      this.discIdentityScope = scope;
+      this.discIdentityEdits.clear();
+    }
+  }
+
+  /** Call from the disc name/slug inputs' change handlers — a real edit. */
+  markDiscIdentityEdited(field: 'disc_name' | 'disc_slug'): void {
+    this.syncDiscIdentityScope();
+    this.discIdentityEdits.add(field);
+  }
+
+  /** Remove disc_name/disc_slug from an outgoing label payload unless the
+   * user edited them this workflow — the backend treats their absence as
+   * "no user opinion" and keeps/derives its own value. */
+  stripUneditedDiscIdentity<T extends Record<string, any>>(payload: T): T {
+    this.syncDiscIdentityScope();
+    const out: any = { ...payload };
+    if (!this.discIdentityEdits.has('disc_name')) delete out.disc_name;
+    if (!this.discIdentityEdits.has('disc_slug')) delete out.disc_slug;
+    return out;
+  }
+
   updateContext(updates: Partial<WorkflowContext>): void {
     const current = this._activeContext$.value;
     if (current) {
@@ -6087,8 +6132,33 @@ export class WorkflowService implements OnDestroy {
         Object.prototype.hasOwnProperty.call(selection, key);
       /** Film-step "Change": clear movie must drop release/boxset and release-derived fields or PATCH re-links the disc. */
       const clearingMovie = hasSelectionProp('movieId') && selection.movieId == null;
+      /** #858: switching to a DIFFERENT movie must equally drop the old release's
+       * identity — the stale release_name/year prefilled the create-release form
+       * and rode every autosave (prod: a Clone Wars disc gained a release named
+       * "Resident Evil: Limited Edition Collection"). Placed before the
+       * selection's own fields so a combined movie+release selection still wins. */
+      const priorMovieId = (context.labelForm as Record<string, unknown>)['movie_id'] ?? null;
+      const switchingMovie = hasSelectionProp('movieId') && selection.movieId != null
+        && priorMovieId != null && selection.movieId !== priorMovieId;
       const updatedLabelForm = {
         ...context.labelForm,
+        ...(switchingMovie && {
+          release_id: null,
+          release_slug: null,
+          release_name: null,
+          release_year: null,
+          boxset_id: null,
+          boxset_slug: null,
+          tmdb_id: null,
+          movie_name: null,
+          movie_production_year: null,
+          movie_cover_url: null,
+          movie_cover_path: null,
+          cover_front_url: null,
+          cover_back_url: null,
+          upc: null,
+          asin: null,
+        }),
         ...(hasSelectionProp('movieId') && { movie_id: selection.movieId }),
         ...(hasSelectionProp('tmdbId') && { tmdb_id: selection.tmdbId }),
         ...(hasSelectionProp('groupType') && selection.groupType && { group_type: selection.groupType, mode: selection.groupType }),
@@ -7672,9 +7742,14 @@ export class WorkflowService implements OnDestroy {
     // disc_titles at fetch time, but any further edits made in-session
     // desync it again. Omitting `tracks` here makes backend skip the
     // overwrite block and trust the disc_titles rows the PATCHes wrote.
-    const labelForm = context?.labelForm ? { ...context.labelForm } : undefined;
+    let labelForm = context?.labelForm ? { ...context.labelForm } : undefined;
     if (labelForm && 'tracks' in labelForm) {
       delete (labelForm as any).tracks;
+    }
+    // #845: never echo an unedited disc name/slug at completion — this is
+    // exactly when the backend auto-names the disc, and the echo overwrote it.
+    if (labelForm) {
+      labelForm = this.stripUneditedDiscIdentity(labelForm);
     }
     return this.jobSvc.completeLabel(jobId, labelForm).pipe(
       catchError((err) => {

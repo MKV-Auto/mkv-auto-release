@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.13] - 2026-09-05
+
+### Fixed
+
+- **Auto disc names can no longer be clobbered or frozen.** Two live failure modes are closed: a slow save round-trip could echo the client's stale name (e.g. "DVD") back over a freshly generated one, and any machine-written name that didn't exactly match the current convention (an old render, or TheDiscDB's display string) was mistaken for a user-typed name and locked out of auto-naming forever. Machine-shaped names are now recognized in every form they've ever taken and never recorded as user edits; only names you actually typed are preserved.
+- **Correcting a mislabeled disc's movie no longer drags the wrong release along.** Re-labeling a disc to a different movie used to carry the old release's name and year into the new label — creating a phantom release like "Resident Evil: Limited Edition Collection" attached to a Clone Wars disc — and could even re-point a release shared by other discs at the new movie. Switching the movie now detaches the disc from the old release cleanly (picking the new movie's release in the same step still works), on both the form and the server.
+- **An expired MakeMKV key no longer masquerades as a bad disc.** When a rip fails because MakeMKV's registration has lapsed (or the key is missing), the job now says so — a *Fix settings* card pointing at Settings instead of a misleading "check the disc" message. The saved registration key also survives container recreates: it is re-applied from settings at every boot, and the MakeMKV health panel now reports whether a key is present and whether it has expired.
+
+### Changed
+
+- **Multi-season box sets number disc names within the season.** A "Season 1-5" box keeps its release-wide disc numbers (Disc 1-22) for ordering, but the disc NAME now reads "…: Season 4 - Disc 1 - DVD" instead of "…: Season 4 - Disc 12 - DVD".
+- **Job cards show both disc numbers for box sets.** A multi-season disc's card meta line now pairs the within-season position with the boxset position — "S5 Disc 4 · DVD · Disc 14" — so the number in the disc's name and the number on the card no longer look contradictory. When the two counts coincide (season 1 discs), only one is shown.
+
 ## [1.6.12] - 2026-09-02
 
 ### Added

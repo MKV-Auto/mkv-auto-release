@@ -87,6 +87,30 @@ describe('CardCarouselComponent', () => {
       } as DiscMetadata)).toBe('(2014) · Complete Season Two · DVD · Disc 1');
     });
 
+    it('pairs the within-season position with the season chip, keeping the boxset number (#846)', () => {
+      // S5's 4th disc is the box's 14th: both numbers show.
+      expect(component.getDiscMeta({
+        ...base, movie_name: 'Star Wars: The Clone Wars',
+        release_name: "Star Wars: The Clone Wars - Season 1-5 Collector's Edition",
+        production_year: 2008, disc_format: 'DVD',
+        disc_number: 14, disc_season: 5, disc_season_ordinal: 4,
+      } as DiscMetadata)).toBe("(2008) · Season 1-5 Collector's Edition · S5 Disc 4 · DVD · Disc 14");
+      // Season 1 discs: the counts coincide, so the redundant boxset copy is dropped.
+      expect(component.getDiscMeta({
+        ...base, movie_name: 'Star Wars: The Clone Wars',
+        release_name: "Star Wars: The Clone Wars - Season 1-5 Collector's Edition",
+        production_year: 2008, disc_format: 'DVD',
+        disc_number: 3, disc_season: 1, disc_season_ordinal: 3,
+      } as DiscMetadata)).toBe("(2008) · Season 1-5 Collector's Edition · S1 Disc 3 · DVD");
+      // No ordinal from the backend (unnumbered siblings): chip stays bare, as before.
+      expect(component.getDiscMeta({
+        ...base, movie_name: 'Star Wars: The Clone Wars',
+        release_name: "Star Wars: The Clone Wars - Season 1-5 Collector's Edition",
+        production_year: 2008, disc_format: 'DVD',
+        disc_number: 4, disc_season: 2, disc_season_ordinal: null,
+      } as DiscMetadata)).toBe("(2008) · Season 1-5 Collector's Edition · S2 · DVD · Disc 4");
+    });
+
     it('omits a release name that merely repeats the show name, and a missing one', () => {
       expect(component.getDiscMeta({
         ...base, movie_name: 'Thor', release_name: 'thor', production_year: 2011, disc_format: 'Blu-Ray',

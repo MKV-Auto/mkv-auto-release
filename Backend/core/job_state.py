@@ -510,6 +510,16 @@ def _emit_job_state_websocket_updates(
                                     "postprocess_failed",
                                     job_id=job_id,
                                 )
+                            elif normalized_updates.get("error_type") == "registration":
+                                emit_notification_sync(
+                                    f"{label}: MakeMKV needs a valid registration key — its "
+                                    "evaluation period has expired, so Blu-ray/UHD discs can't "
+                                    "be opened. Enter your key in Settings → MakeMKV, then retry.",
+                                    "error",
+                                    "error_registration",
+                                    job_id=job_id,
+                                    title="MakeMKV registration required",
+                                )
                             elif normalized_updates.get("error_type") == "disc_read":
                                 emit_notification_sync(
                                     f"{label}: The drive couldn't read the disc. Try reinserting the disc or disconnecting and reconnecting the drive.",

@@ -9,7 +9,10 @@ import pytest
 from api import models
 
 
-@pytest.mark.xfail(reason="staging baseline fail; tracked in #405", strict=True)
+# Was xfail("staging baseline fail; tracked in #405"): _apply_label_to_records
+# only flushed inside its titles branch, so a titles-less apply left the
+# release.movie_id change pending and the test's db.refresh() discarded it.
+# The #845 rc.4 fix flushes at function level, which repaired this for real.
 def test_apply_label_to_records_prefers_movie_id_over_tmdb_id(test_db, monkeypatch):
     """Stale tmdb_id must not set releases.movie_id when movie_id is present."""
     from api.routers.jobs import _apply_label_to_records
@@ -53,9 +56,19 @@ def test_apply_label_to_records_prefers_movie_id_over_tmdb_id(test_db, monkeypat
             "tmdb_id": movie_a.tmdb_id,
             "disc_number": 1,
         }
+        rel_id = rel.id
         _apply_label_to_records(disc, lp, db)
-        db.refresh(rel)
-        assert rel.movie_id == movie_b.id
+        db.refresh(disc)
+        # #858 changed the outcome of this scenario: a movie SWITCH no longer
+        # re-points the linked release's movie_id in place (that dragged
+        # sibling discs along on shared releases) — the disc detaches, and
+        # the release, now orphaned (it had only this disc), is cleaned up.
+        # The original moral still holds: the stale tmdb_id (movie A's) must
+        # not win — movie_id B is what lands in the draft, and nothing
+        # re-links toward movie A.
+        assert db.query(models.Release).filter(models.Release.id == rel_id).first() is None
+        assert disc.release_id is None
+        assert disc.label_draft.get("movie_id") == movie_b.id
 
 
 def test_apply_label_to_records_updates_titles_from_tracks_key(test_db, monkeypatch):

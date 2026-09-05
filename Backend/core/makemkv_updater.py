@@ -1134,8 +1134,13 @@ def get_registration_status(force_refresh: bool = False) -> tuple[bool, Optional
                 return _reg_status_cache["expired"], _reg_status_cache["message"], _reg_status_cache["key"]
     try:
         binary_path = get_makemkvcon_path()
+        # "-r info disc:9999" exits right after the startup MSG stream (no
+        # disc/drive needed) — the same invocation the key probe uses. A bare
+        # makemkvcon run just prints usage text, which can never contain the
+        # registration/expiry messages this function greps for, so the old
+        # probe reported "not expired" unconditionally (prod, 2026-09-03).
         result = subprocess.run(
-            [binary_path],
+            [binary_path, "-r", "info", "disc:9999"],
             capture_output=True,
             text=True,
             check=False,
@@ -1230,6 +1235,31 @@ def _write_app_key_preserving(key: str) -> Optional[str]:
     lines.append(f'app_Key = "{key}"')
     settings_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return prior_text
+
+
+def reapply_stored_registration_key() -> bool:
+    """
+    Re-write ``app_Key`` into ``~/.MakeMKV/settings.conf`` from the app's
+    stored settings (the durable copy in /data).
+
+    ``settings.conf`` lives in the container layer, so every image upgrade
+    destroys it — and nothing re-created it unless the key was ALSO provided
+    via the environment. A key registered through the UI therefore silently
+    evaporated on the next upgrade, and makemkvcon ran unregistered until the
+    evaluation window lapsed and Blu-ray/UHD rips started failing (prod,
+    2026-09-03). Called at boot; the env-provided key takes precedence and is
+    written by the caller before this runs. Returns True when the file was
+    (re)written.
+    """
+    from core import settings as app_settings
+
+    stored = (app_settings.load_settings().get("makemkv_registration_key") or "").strip()
+    if not stored or not _MAKEMKV_KEY_RE.match(stored):
+        return False
+    if _read_settings_key() == stored:
+        return False
+    _write_app_key_preserving(stored)
+    return True
 
 
 def _restore_settings_conf(prior_text: Optional[str]) -> None:

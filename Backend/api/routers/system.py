@@ -179,7 +179,7 @@ def _makemkv_health_payload_sync() -> dict:
     from core import makemkv_predownload_state
 
     validation = validate_makemkv_installation()
-    expired, _, _ = get_registration_status()
+    expired, _, current_key = get_registration_status()
     wf = disc_workflow_block_fields(validation, expired)
     return {
         "installed": validation["is_valid"],
@@ -190,6 +190,13 @@ def _makemkv_health_payload_sync() -> dict:
         "error": validation["error_message"],
         "binary_path": validation["binary_path"],
         "download": makemkv_predownload_state.snapshot(),
+        # Registration visibility: makemkvcon only reveals an expired
+        # evaluation when it actually opens a protected disc, so
+        # key_present=False is the early warning the UI can act on —
+        # unregistered installs work on DVDs (and on Blu-ray only until the
+        # trial lapses), which is how prod ran unregistered for weeks
+        # without anything surfacing it.
+        "registration": {"key_present": bool(current_key), "expired": expired},
         **wf,
     }
 
@@ -382,11 +389,17 @@ async def makemkv_register(req: MakeMKVRegistrationRequest) -> MakeMKVRegistrati
     except MakeMKVUpdateError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     
-    # Save to app settings
+    # Save to app settings — this is the DURABLE copy (settings.conf is
+    # container-layer and dies on upgrade; boot re-applies from here). A
+    # silent failure here used to mean the key survived only until the next
+    # image upgrade, so log it loudly.
     try:
         settings.save_settings({"makemkv_registration_key": req.key})
-    except Exception:
-        pass
+    except Exception as exc:
+        log.error(
+            "MakeMKV key registered with makemkvcon but could NOT be saved to "
+            "settings.json — it will be lost on the next container upgrade: %s", exc
+        )
     
     # Check current status
     expired, status_msg, key = await loop.run_in_executor(None, get_registration_status)

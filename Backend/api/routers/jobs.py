@@ -588,8 +588,11 @@ def _reapply_label_draft_link_hints_from_lp(disc, lp: Dict[str, Any]) -> None:
         draft["release_id"] = lp["release_id"]
     if "boxset_id" in lp:
         draft["boxset_id"] = lp["boxset_id"]
-    allowed_label_draft_keys = {"movie_id", "group_type", "release_id", "boxset_id"}
-    disc.label_draft = {k: v for k, v in draft.items() if k in allowed_label_draft_keys}
+    # Update the link keys but PRESERVE everything else (primary_season, the
+    # disc-card season pick): filtering the whole draft down to the link keys
+    # is the same replace-wipe that froze auto-names on prod (#845 rc.2) —
+    # this helper kept doing it on the explicit release-clear branch.
+    disc.label_draft = draft
     from sqlalchemy.orm.attributes import flag_modified
 
     flag_modified(disc, "label_draft")
@@ -608,6 +611,52 @@ def _strip_stale_release_hints_if_movie_cleared(lp: Dict[str, Any]) -> None:
     lp["boxset_id"] = None
 
 
+def _strip_stale_release_hints_on_movie_switch(disc, lp: Dict[str, Any], db: Session) -> None:
+    """
+    Switching the movie must not carry the old release's identity (#858).
+
+    The clear-guard above only covers movie_id -> None. A switch to a
+    DIFFERENT movie passed straight through, so the merged labelForm's
+    release fields — which describe the OLD movie's release — were
+    persisted under the new one (prod: a Clone Wars disc gained a release
+    named "Resident Evil: Limited Edition Collection"), and a linked
+    release even had its movie_id re-pointed in place, dragging sibling
+    discs with it on shared releases.
+
+    Strips the stale hints and forces the unlink through the explicit-clear
+    branch (orphan cleanup included) — unless the payload's release_id
+    already belongs to the new movie, which is a legitimate combined
+    movie+release selection and passes untouched.
+    """
+    incoming = lp.get("movie_id")
+    if incoming is None or str(incoming).strip() == "":
+        return
+    incoming = str(incoming).strip()
+    rel = getattr(disc, "release", None)
+    current = str(rel.movie_id) if rel is not None and getattr(rel, "movie_id", None) else None
+    if current is None:
+        draft = disc.label_draft if isinstance(disc.label_draft, dict) else {}
+        current = str(draft["movie_id"]) if draft.get("movie_id") else None
+    if current is None or incoming == current:
+        return
+    new_release_id = lp.get("release_id")
+    if new_release_id:
+        target = (
+            db.query(db_models.Release)
+            .filter(db_models.Release.id == new_release_id)
+            .first()
+        )
+        if target is not None and str(getattr(target, "movie_id", "") or "") == incoming:
+            return
+    for key in (
+        "release_slug", "release_name", "release_year", "original_year",
+        "upc", "asin", "cover_front_url", "cover_back_url",
+        "boxset_id", "boxset_slug",
+    ):
+        lp.pop(key, None)
+    lp["release_id"] = None
+
+
 def _apply_label_to_records(disc, lp: Dict[str, Any], db: Session) -> None:
     """Persist label data onto release/disc/track records (record-first)."""
     rel = getattr(disc, "release", None)
@@ -617,6 +666,7 @@ def _apply_label_to_records(disc, lp: Dict[str, Any], db: Session) -> None:
         raise HTTPException(400, detail="Disc is finalized and cannot be modified")
 
     _strip_stale_release_hints_if_movie_cleared(lp)
+    _strip_stale_release_hints_on_movie_switch(disc, lp, db)
 
     # Unlink movie: unlink disc from release, delete orphaned release, then delete orphaned boxset if any
     if "movie_id" in lp and (lp.get("movie_id") is None or lp.get("movie_id") == ""):
@@ -798,7 +848,11 @@ def _apply_label_to_records(disc, lp: Dict[str, Any], db: Session) -> None:
             disc_name = auto_name
             disc.disc_name = disc_name
     elif disc_name:
-        # User provided disc_name, use it
+        # User provided disc_name, use it. The CLIENT is responsible for
+        # omitting this field when the user didn't edit it (dirty-tracked) —
+        # an unconditional echo of the displayed value clobbered freshly
+        # generated names on prod. Shape-based filtering here is wrong: a
+        # user may legitimately type a machine-looking name ("Blu-Ray").
         disc.disc_name = disc_name
 
     apply_disc_slug_from_label_payload(disc, lp.get("disc_slug"))
@@ -958,19 +1012,23 @@ def _apply_label_to_records(disc, lp: Dict[str, Any], db: Session) -> None:
         # Flush changes to database before commit (ensures SQLAlchemy writes pending changes)
         db.flush()
 
-        # Labeled identity is now settled (movie/release link, disc number,
-        # per-disc season) — refresh an auto-generated disc name/slug to the
-        # convention form (#845). User-typed names are never touched.
-        try:
-            from core.disc_naming import refresh_auto_disc_identity
-            db.refresh(disc)
-            refresh_auto_disc_identity(disc)
-        except Exception as exc:
-            log.warning("auto disc-name refresh failed for disc %s: %s", getattr(disc, "id", None), exc)
-
         # Note: We do NOT delete/recreate tracks when updating title metadata
         # Tracks are separate entities that should only be modified when streams data changes
         # This function only updates title metadata (type, title, description, etc.), not streams
+
+    # Labeled identity may have changed on ANY apply (movie/release link,
+    # disc number, format, per-disc season) — refresh an auto-generated disc
+    # name/slug to the convention form (#845). User-typed names are never
+    # touched. Function level on purpose: this used to sit inside the
+    # titles branch above, so a titles-less autosave (a format click) wrote
+    # the new identity but never re-rendered the name (1.6.13-rc.3 rig).
+    try:
+        from core.disc_naming import refresh_auto_disc_identity
+        db.flush()
+        db.refresh(disc)
+        refresh_auto_disc_identity(disc)
+    except Exception as exc:
+        log.warning("auto disc-name refresh failed for disc %s: %s", getattr(disc, "id", None), exc)
 
 
 def _sync_job_disc_payload_disc_label_fields(job: db_models.Job, disc: db_models.Disc) -> None:
@@ -3505,11 +3563,20 @@ def rip_complete_callback(
             json.dumps(body.debug, default=str) if body.debug else None,
             (body.error_reason or "")[:2000],
         )
+    # Server-side re-derivation: a registration/eval failure carries BOTH the
+    # MakeMKV shareware markers and "Failed to open disc", and an older worker
+    # (or a path that skipped classification) may deliver it untyped or as
+    # disc_read. Registration wins — the fix is a key, not the drive.
+    error_type = body.error_type
+    from core.utils import is_registration_error
+    if error_type in (None, "disc_read") and is_registration_error(body.error_reason or ""):
+        error_type = "registration"
     StageState.rip_failed(
         db, job,
         error_reason=body.error_reason or "Rip failed",
         reason="rip_complete callback (failure)",
-        error_type=body.error_type,
+        error_type=error_type,
+        failure_kind="config" if error_type == "registration" else None,
     )
     return {"ok": True}
 
@@ -7813,7 +7880,14 @@ def save_job_workflow_context(
     # Save updated label_draft back to disc_payload and to disc.label_draft (so _build_labelform_from_job sees it)
     disc_payload["label_draft"] = label_draft
     job.disc_payload = disc_payload
-    disc.label_draft = dict(label_draft)
+    # MERGE into disc.label_draft — never replace it. The disc-scoped save
+    # path persists keys this endpoint doesn't own (primary_season, the
+    # #536 disc-card season pick); replacing the dict wiped the season on
+    # EVERY job-context autosave (any format click or name blur), which is
+    # what left labeled discs season-less and froze their auto-names
+    # (found on the 1.6.13-rc.2 rig, reproducing the prod incident).
+    existing_draft = disc.label_draft if isinstance(disc.label_draft, dict) else {}
+    disc.label_draft = {**existing_draft, **label_draft}
 
     # Force SQLAlchemy to persist JSON column changes (in-place dict mutation is not detected)
     from sqlalchemy.orm.attributes import flag_modified

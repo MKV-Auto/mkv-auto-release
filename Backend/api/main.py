@@ -598,6 +598,23 @@ async def lifespan(app: FastAPI):
                 get_logger(__name__, "lifespan").error(
                     "Could not write the env-provided MakeMKV key to settings.conf: %s", exc
                 )
+        else:
+            # No env key: re-apply the UI-registered key from settings.json.
+            # settings.conf is container-layer and dies on every image
+            # upgrade; without this, a key registered through the UI silently
+            # evaporated on upgrade and MakeMKV ran unregistered until its
+            # evaluation window lapsed (prod, 2026-09-03).
+            try:
+                from core.makemkv_updater import reapply_stored_registration_key
+
+                if reapply_stored_registration_key():
+                    get_logger(__name__, "lifespan").info(
+                        "Re-applied stored MakeMKV registration key to settings.conf"
+                    )
+            except Exception as exc:
+                get_logger(__name__, "lifespan").error(
+                    "Could not re-apply the stored MakeMKV key to settings.conf: %s", exc
+                )
     except Exception as exc:
         get_logger(__name__, "lifespan").warning(
             "Failed to apply environment settings: %s", exc

@@ -183,4 +183,31 @@ describe('WorkflowService disc_metadata_updated (#832)', () => {
     (service as any).mergeCardProgress({ type: 'progress_update', job_id: 'job-1', rip_progress: 99 });
     expect(((service as any)._discs.value as any[])[0].card_progress).toBeNull();
   });
+
+  describe('disc-identity dirty tracking (#845)', () => {
+    beforeEach(() => {
+      (service as any)._activeContext$.next({ type: 'job', id: 'job-1', labelForm: {} });
+    });
+
+    it('strips unedited disc_name/disc_slug from outgoing payloads', () => {
+      const out = (service as any).stripUneditedDiscIdentity({ disc_name: 'DVD', disc_slug: 'dvd', movie_id: 'm1' });
+      expect('disc_name' in out).toBeFalse();
+      expect('disc_slug' in out).toBeFalse();
+      expect(out.movie_id).toBe('m1');
+    });
+
+    it('keeps fields the user actually edited — even machine-looking values', () => {
+      (service as any).markDiscIdentityEdited('disc_name');
+      const out = (service as any).stripUneditedDiscIdentity({ disc_name: 'Blu-Ray', disc_slug: 'dvd' });
+      expect(out.disc_name).toBe('Blu-Ray');
+      expect('disc_slug' in out).toBeFalse();
+    });
+
+    it('edits are scoped to the workflow: switching discs resets them', () => {
+      (service as any).markDiscIdentityEdited('disc_name');
+      (service as any)._activeContext$.next({ type: 'job', id: 'job-2', labelForm: {} });
+      const out = (service as any).stripUneditedDiscIdentity({ disc_name: 'DVD' });
+      expect('disc_name' in out).toBeFalse();
+    });
+  });
 });

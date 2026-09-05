@@ -245,6 +245,10 @@ class DiscMetadata(BaseModel):
     # The disc's own season, present only when its release spans multiple
     # seasons (#846) — the card renders it as "S2".
     disc_season: Optional[int] = None
+    # Within-season position (the "Disc 4" of "Season 5 - Disc 4"), populated
+    # only alongside disc_season — the card shows it beside the release-wide
+    # disc_number so a boxset disc reads "S5 Disc 4 · Disc 14" (#846).
+    disc_season_ordinal: Optional[int] = None
     release_image: Optional[str] = None
     disc_format: Optional[str] = None
     resolution: Optional[str] = None

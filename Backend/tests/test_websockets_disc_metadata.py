@@ -69,6 +69,63 @@ def test_build_disc_metadata_includes_disc_number(test_db_session):
     assert meta.disc_id == str(disc.id)
 
 
+def test_build_disc_metadata_season_ordinal_on_multi_season_release(test_db_session):
+    """#846: a multi-season box surfaces the within-season position beside the
+    release-wide disc_number — S4's first disc (boxset disc 12) carries
+    disc_season=4 and disc_season_ordinal=1. Single-season releases (no season
+    chip) carry neither."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    movie = models.Movie(id=str(uuid.uuid4()), name="The Clone Wars", tmdb_type="tv")
+    release = models.Release(
+        id=str(uuid.uuid4()),
+        slug="clone-wars-s1-5",
+        type="series",
+        name="Season 1-5 Collector's Edition",
+        movie_id=movie.id,
+    )
+    discs = [
+        models.Disc(
+            id=str(uuid.uuid4()),
+            content_hash=f"hash-cw-{n}",
+            release_id=release.id,
+            disc_number=n,
+            label_draft={"primary_season": season},
+            format="DVD",
+            created_at=now,
+            updated_at=now,
+        )
+        for n, season in [(1, 1), (2, 1), (12, 4), (13, 4)]
+    ]
+    test_db_session.add_all([movie, release, *discs])
+    test_db_session.commit()
+
+    def _meta_for(disc_id):
+        loaded = (
+            test_db_session.query(models.Disc)
+            .options(joinedload(models.Disc.release).joinedload(models.Release.movie))
+            .filter(models.Disc.id == disc_id)
+            .first()
+        )
+        return _build_disc_metadata(loaded, disc_state="unfinished", job_id=None, created_at=now)
+
+    meta = _meta_for(discs[2].id)  # boxset disc 12, first disc of season 4
+    assert meta.disc_number == 12
+    assert meta.disc_season == 4
+    assert meta.disc_season_ordinal == 1
+
+    meta = _meta_for(discs[1].id)  # boxset disc 2, second disc of season 1
+    assert meta.disc_season == 1
+    assert meta.disc_season_ordinal == 2
+
+    # Collapse to a single season: the chip and the ordinal both stay off.
+    for d in discs:
+        d.label_draft = {"primary_season": 1}
+    test_db_session.commit()
+    meta = _meta_for(discs[2].id)
+    assert meta.disc_season is None
+    assert meta.disc_season_ordinal is None
+
+
 def test_build_disc_metadata_omits_finalized_signal_when_not_finalized(test_db_session):
     """#603: finalized=False leaves all four finalized_* fields None so the
     carousel falls through to the regular "Now Reading" drive card."""

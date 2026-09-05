@@ -989,3 +989,50 @@ def test_label_complete_still_writes_titles_deliberately(client, test_db):
         assert title.user_title == "Deliberate Save", "still recorded as a user value"
     finally:
         session.close()
+
+
+def test_job_workflow_context_save_preserves_primary_season_in_label_draft(client, test_db):
+    """rc.2 rig finding (#845): this endpoint rebuilt disc.label_draft from
+    the job payload filtered to the four link keys, wiping primary_season
+    (the #536 disc-card season pick) on EVERY autosave — a format click or
+    name blur was enough. Season loss then froze the auto disc name.
+    Link keys are this endpoint's to own; everything else must survive."""
+    session = test_db()
+    try:
+        movie = models.Movie(id=str(uuid.uuid4()), name="Season Keeper", tmdb_type="tv")
+        release = models.Release(
+            id=str(uuid.uuid4()), slug="season-keeper-rel", type="series",
+            name="Season Keeper Box", movie_id=movie.id,
+        )
+        disc = models.Disc(
+            id=str(uuid.uuid4()),
+            content_hash="hash-season-keeper",
+            release_id=release.id,
+            disc_number=3,
+            format="DVD",
+            disc_name="Season Keeper: Season 4 - Disc 1 - DVD",
+            disc_slug="season_keeper-_season_4_-_disc_1_-_dvd",
+            label_draft={"movie_id": movie.id, "release_id": release.id,
+                         "group_type": "series", "primary_season": 4},
+        )
+        job = models.Job(
+            id=str(uuid.uuid4()), disc_id=disc.id, disc_num="1",
+            mount_point="/dev/sr0", job_status="running", rip_state="completed",
+            disc_payload={"label_draft": {"movie_id": movie.id, "release_id": release.id,
+                                          "group_type": "series"}},
+        )
+        session.add_all([movie, release, disc, job])
+        session.commit()
+
+        payload = {"labelForm": {"movie_id": movie.id, "release_id": release.id,
+                                 "disc_format": "Blu-Ray", "workflow_step": "disc"}}
+        response = client.put(f"/jobs/{job.id}/workflow-context", json=payload)
+        assert response.status_code == 200, response.text
+
+        session.refresh(disc)
+        assert disc.label_draft.get("primary_season") == 4
+        # …and the auto name follows the format on a titles-less autosave
+        # (the refresh used to hide inside the titles branch — rc.3 rig).
+        assert disc.disc_name == "Season Keeper: Season 4 - Disc 1 - Blu-Ray"
+    finally:
+        session.close()

@@ -48,7 +48,12 @@ describe('WorkflowLabelingComponent', () => {
       'getTvSeasonCount$',
       'getPrimarySeason$',
       'setPrimarySeason',
+      // #845 — disc-identity dirty tracking.
+      'markDiscIdentityEdited',
+      'stripUneditedDiscIdentity',
     ]);
+    // Pass-through: the service-level strip behavior has its own specs.
+    workflowSpy.stripUneditedDiscIdentity.and.callFake((p: any) => p);
     workflowSpy.getTvSeasonCount$.and.returnValue(of(null));
     workflowSpy.getPrimarySeason$.and.returnValue(of(1));
     workflowSpy.createAndLinkMovieToActiveContext = jasmine.createSpy('createAndLinkMovieToActiveContext')
@@ -534,6 +539,8 @@ describe('WorkflowLabelingComponent', () => {
       seed({ disc_name: 'Pre' });
       component.onNameChange('Predator');
       expect(store.context.labelForm.disc_name).toBe('Predator');
+      // #845 — a typed name is flagged as user-owned so saves may carry it.
+      expect(workflowSvc.markDiscIdentityEdited).toHaveBeenCalledWith('disc_name');
     });
 
     it('per-keystroke edits collapse into one trailing save with the final value', fakeAsync(() => {

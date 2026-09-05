@@ -713,6 +713,29 @@ def get_rip_output_stall_seconds() -> int:
     return max(0, v)
 
 
+def is_registration_error(message: str) -> bool:
+    """
+    True when MakeMKV output indicates a missing/expired/invalid registration
+    rather than a bad disc. Matches only makemkvcon's own explicit markers, so
+    it is safe to run on arbitrary rip output.
+
+    MUST be checked BEFORE :func:`is_disc_read_error`: an expired evaluation
+    aborts with BOTH MSG:5055 and "Failed to open disc" in the same output, and
+    classifying by the latter told the user to reseat a healthy disc/drive
+    while the real fix was a registration key (prod, 2026-09-03).
+    """
+    if not message:
+        return False
+    msg = message.lower()
+    return (
+        "msg:5055" in msg
+        or "evaluation period has expired" in msg
+        or "shareware functionality unavailable" in msg
+        or "msg:5020" in msg  # stored activation key is invalid
+        or "msg:5021" in msg  # binary too old for the key/beta window
+    )
+
+
 def is_registration_related_makemkv_failure(exc: BaseException) -> bool:
     """
     True when makemkvcon failure likely needs a valid registration key (not a drive read error).
@@ -720,11 +743,11 @@ def is_registration_related_makemkv_failure(exc: BaseException) -> bool:
     """
     if isinstance(exc, MakeMKVError):
         msg = str(exc).lower()
+        if is_registration_error(msg):
+            return True
         if "253" in msg or "expired" in msg or "out of date" in msg:
             return True
         if "registration" in msg and "key" in msg:
-            return True
-        if "shareware" in msg or "evaluation period" in msg:
             return True
         if "purchase" in msg and "makemkv" in msg:
             return True

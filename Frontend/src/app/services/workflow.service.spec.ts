@@ -2233,6 +2233,110 @@ describe('WorkflowService', () => {
         error: done.fail,
       });
     });
+
+    it('should cascade-clear release identity when SWITCHING to a different movie (#858)', (done) => {
+      const jobId = '11111111-1111-1111-1111-111111111111';
+      const seededContext: WorkflowContext = {
+        id: jobId,
+        type: 'job',
+        labelForm: {
+          movie_id: 'movie-old',
+          tmdb_id: 'tmdb-old',
+          movie_name: 'Resident Evil',
+          release_id: 'release-old',
+          release_slug: 'resident-evil-limited-edition-collection',
+          release_name: 'Resident Evil: Limited Edition Collection',
+          release_year: 2020,
+          boxset_id: 'boxset-old',
+          boxset_slug: 'old-boxset',
+          cover_front_url: 'http://front',
+          cover_back_url: 'http://back',
+          upc: '111',
+          asin: 'B00OLD',
+        } as any,
+        jobStatus: {} as any,
+        discInfo: { disc_id: 'd1', disc_num: '1' } as any,
+        titles: [], titleOrder: [], titlesComplete: false,
+        movieOptions: [], boxsetOptions: [], releaseOptions: [], groupOptions: [],
+        labelDraftProcessed: false, discNameLocked: false, discSlugLocked: false,
+        isSeries: false, discdbHit: false, discMode: 'rip',
+        lastReleaseDetails: null, releaseNameHint: '', releaseSlugHint: '',
+        postProcessFiles: [], transferDestination: null, releaseDiscs: [], boxsetMovies: [],
+        movieCover: null, movieName: null, productionYear: null,
+        labelSaving: false, lastAutosaveOk: false, hasLabelContent: false,
+        devMode: false, showTitleStatus: false,
+      };
+
+      (service as any)._activeContext$.next(seededContext);
+      (service as any).syncStateFromContext(seededContext);
+      spyOn(service, 'saveJobWorkflowContext').and.callFake((_id: string, labelForm: any) =>
+        of({ ...seededContext, labelForm } as any)
+      );
+
+      service.applyMetadataSelectionToActiveContext({ movieId: 'movie-new' }).subscribe({
+        next: () => {
+          const [, passed] = (service.saveJobWorkflowContext as jasmine.Spy).calls.mostRecent().args;
+          expect(passed.movie_id).toBe('movie-new');
+          // The old release's identity must not ride along into the new movie.
+          expect(passed.release_id).toBeNull();
+          expect(passed.release_slug).toBeNull();
+          expect(passed.release_name).toBeNull();
+          expect(passed.release_year).toBeNull();
+          expect(passed.boxset_id).toBeNull();
+          expect(passed.upc).toBeNull();
+          // tmdb_id is stripped (removed) whenever movie_id is present — see
+          // _stripStaleTmdbIdWhenMovieIdPresent; either way the stale id is gone.
+          expect(passed.tmdb_id).toBeUndefined();
+          done();
+        },
+        error: done.fail,
+      });
+    });
+
+    it('should keep a combined movie+release selection intact on switch (#858)', (done) => {
+      const jobId = '11111111-1111-1111-1111-111111111111';
+      const seededContext: WorkflowContext = {
+        id: jobId,
+        type: 'job',
+        labelForm: {
+          movie_id: 'movie-old',
+          release_id: 'release-old',
+          release_name: 'Old Release',
+        } as any,
+        jobStatus: {} as any,
+        discInfo: { disc_id: 'd1', disc_num: '1' } as any,
+        titles: [], titleOrder: [], titlesComplete: false,
+        movieOptions: [], boxsetOptions: [], releaseOptions: [], groupOptions: [],
+        labelDraftProcessed: false, discNameLocked: false, discSlugLocked: false,
+        isSeries: false, discdbHit: false, discMode: 'rip',
+        lastReleaseDetails: null, releaseNameHint: '', releaseSlugHint: '',
+        postProcessFiles: [], transferDestination: null, releaseDiscs: [], boxsetMovies: [],
+        movieCover: null, movieName: null, productionYear: null,
+        labelSaving: false, lastAutosaveOk: false, hasLabelContent: false,
+        devMode: false, showTitleStatus: false,
+      };
+
+      (service as any)._activeContext$.next(seededContext);
+      (service as any).syncStateFromContext(seededContext);
+      spyOn(service, 'saveJobWorkflowContext').and.callFake((_id: string, labelForm: any) =>
+        of({ ...seededContext, labelForm } as any)
+      );
+
+      service
+        .applyMetadataSelectionToActiveContext({
+          movieId: 'movie-new', releaseId: 'release-new', releaseName: 'New Release',
+        })
+        .subscribe({
+          next: () => {
+            const [, passed] = (service.saveJobWorkflowContext as jasmine.Spy).calls.mostRecent().args;
+            expect(passed.movie_id).toBe('movie-new');
+            expect(passed.release_id).toBe('release-new');
+            expect(passed.release_name).toBe('New Release');
+            done();
+          },
+          error: done.fail,
+        });
+    });
   });
 
   // ---- TMDB episode catalog (#370) -------------------------------------

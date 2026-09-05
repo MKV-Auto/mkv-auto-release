@@ -438,14 +438,22 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
       parts.push(releaseName);
     }
     // Only set when the release spans multiple seasons (#846) — tells the
-    // four discs of a "Season 1-5" box apart at a glance.
+    // four discs of a "Season 1-5" box apart at a glance. The within-season
+    // position joins it ("S5 Disc 4") so the chip matches the number the
+    // disc NAME counts by, while the release-wide disc_number keeps the
+    // boxset position at the end ("Disc 14").
     if (disc.disc_season != null) {
-      parts.push(`S${disc.disc_season}`);
+      parts.push(disc.disc_season_ordinal != null
+        ? `S${disc.disc_season} Disc ${disc.disc_season_ordinal}`
+        : `S${disc.disc_season}`);
     }
     if (disc.disc_format) {
       parts.push(disc.disc_format);
     }
-    if (disc.disc_number != null && disc.disc_number !== undefined) {
+    // Skip the boxset position when it's the same number the season chip
+    // already shows (season 1 discs, where the counts coincide).
+    if (disc.disc_number != null &&
+        !(disc.disc_season != null && disc.disc_season_ordinal === disc.disc_number)) {
       parts.push(`Disc ${disc.disc_number}`);
     }
     return parts.length > 0 ? parts.join(' · ') : '—';

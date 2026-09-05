@@ -570,8 +570,12 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
   private performLabelSave$(): Observable<unknown> {
     const context = this.workflowService.getCurrentContext();
     if (!context || !context.id || !context.type || !context.labelForm) return of(null);
-    // Strip nothing here: payload mirrors the old saveLabelForm shape
-    const payload = { ...context.labelForm, tracks: context.labelForm?.tracks || [] };
+    // #845: disc_name/disc_slug ship only when the user edited them this
+    // workflow — the full-form echo was overwriting freshly auto-generated
+    // names ("DVD" clobbered the convention name) and freezing them.
+    const payload = this.workflowService.stripUneditedDiscIdentity(
+      { ...context.labelForm, tracks: context.labelForm?.tracks || [] }
+    );
     let save$: Observable<WorkflowContext | null>;
     if (context.type === 'job') {
       save$ = this.workflowService.saveJobWorkflowContext(context.id, payload, false);
@@ -798,6 +802,11 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
   onNameChange(value?: string): void {
     const currentContext = this.workflowService.getCurrentContext();
     if (!currentContext?.labelForm) return;
+    if (typeof value === 'string') {
+      // #845: a REAL edit — from now on this workflow's saves may carry
+      // disc_name (unedited forms omit it so the backend's auto-name wins).
+      this.workflowService.markDiscIdentityEdited('disc_name');
+    }
     this.workflowService.updateContext({
       labelForm: typeof value === 'string'
         ? { ...currentContext.labelForm, disc_name: value }
@@ -815,6 +824,7 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
   onSlugEdited(): void {
     // The value is already updated in the context via ngModel binding
     // Just trigger a context update to persist the changes
+    this.workflowService.markDiscIdentityEdited('disc_slug');
     const currentContext = this.workflowService.getCurrentContext();
     if (currentContext && currentContext.labelForm) {
       this.workflowService.updateContext({

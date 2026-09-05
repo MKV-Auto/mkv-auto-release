@@ -48,6 +48,39 @@ def _primary_season(disc: Any) -> Optional[int]:
     return n if n >= 0 else None
 
 
+def season_scoped_disc_ordinal(disc: Any) -> Optional[int]:
+    """Within-season disc ordinal for multi-season releases.
+
+    A "Season 1-5" box numbers its discs 1..22 release-wide (that stays in
+    ``disc_number`` — the boxset position), but the NAME should say
+    "Season 4 - Disc 1", not "Season 4 - Disc 12". Rank this disc's
+    ``disc_number`` among the release's discs that carry the same season.
+    Returns None when the season, siblings, or numbers aren't available —
+    callers fall back to ``disc_number``. Public: the card carousel surfaces
+    it as ``disc_season_ordinal`` beside the boxset position (#846).
+    """
+    season = _primary_season(disc)
+    if season is None:
+        return None
+    release = getattr(disc, "release", None)
+    siblings = getattr(release, "discs", None) if release else None
+    if not siblings:
+        return None
+    my_number = getattr(disc, "disc_number", None)
+    if my_number is None:
+        return None
+    same_season_numbers = sorted(
+        n for n in (
+            getattr(d, "disc_number", None)
+            for d in siblings
+            if _primary_season(d) == season
+        ) if n is not None
+    )
+    if my_number not in same_season_numbers:
+        return None
+    return same_season_numbers.index(my_number) + 1
+
+
 def labeled_disc_name(disc: Any) -> Optional[str]:
     """The convention-formatted name, or None when identity is missing."""
     release = getattr(disc, "release", None)
@@ -62,7 +95,10 @@ def labeled_disc_name(disc: Any) -> Optional[str]:
     if tmdb_type == "tv":
         season = _primary_season(disc)
         parts.append(f"{movie_name}: Season {season}" if season else movie_name)
-        disc_number = getattr(disc, "disc_number", None)
+        disc_number = (
+            (season_scoped_disc_ordinal(disc) if season else None)
+            or getattr(disc, "disc_number", None)
+        )
         if disc_number:
             parts.append(f"Disc {disc_number}")
     else:
@@ -72,15 +108,77 @@ def labeled_disc_name(disc: Any) -> Optional[str]:
     return " - ".join(parts)
 
 
+# Spellings normalize_disc_format can produce — used to recognize renders
+# made under a format the disc no longer carries.
+_KNOWN_FORMATS = ("DVD", "Blu-Ray", "Blu-Ray 3D", "UHD", "4K UHD")
+
+
+def _convention_variants(disc: Any) -> set[str]:
+    """Every name a PAST convention render could have produced for this disc.
+
+    Identity evolves during labeling — the season arrives after the movie
+    link, the disc gets renumbered when it joins a multi-disc release, the
+    numbering switched from release-wide to within-season. A name generated
+    at any earlier point must still be recognized as machine-written, or the
+    refresh treats it as the user's and never updates it again (seen live:
+    'Star Wars: The Clone Wars - Disc 5 - DVD' froze once Season 4 was set,
+    because only the current render was checked).
+    """
+    release = getattr(disc, "release", None)
+    movie = getattr(release, "movie", None) if release else None
+    movie_name = _clean(getattr(movie, "name", None))
+    if not movie_name:
+        return set()
+    # ALL formats, not just the current one: a render made before a format
+    # correction ("… - DVD" while the disc is now Blu-Ray) must still be
+    # recognized, or changing the format freezes the name (seen on the
+    # 1.6.13-rc.1 rig).
+    fmts = set(_KNOWN_FORMATS)
+    if getattr(disc, "format", None):
+        fmts.add(normalize_disc_format(disc.format))
+    season = _primary_season(disc)
+    numbers = {n for n in (
+        getattr(disc, "disc_number", None),
+        season_scoped_disc_ordinal(disc),
+    ) if n}
+    heads = {movie_name}
+    if season is not None:
+        heads.add(f"{movie_name}: Season {season}")
+    variants: set[str] = set()
+    for head in heads:
+        stems = {head}
+        for n in numbers:
+            stems.add(f"{head} - Disc {n}")
+        for stem in stems:
+            variants.add(stem)
+            for f in fmts:
+                variants.add(f"{stem} - {f}")
+    return variants
+
+
 def is_auto_disc_name(disc: Any) -> bool:
-    """True when the stored name is one automation wrote (safe to replace).
+    """True when the stored name is one automation wrote (safe to replace)."""
+    return machine_generated_name(disc, getattr(disc, "disc_name", None))
+
+
+def machine_generated_name(disc: Any, candidate: Any) -> bool:
+    """True when ``candidate`` is a name automation could have produced for
+    this disc — safe to replace, and NEVER to be recorded as a user edit.
 
     Recognized shapes: blank, a bare format ("DVD", "Blu-Ray", …), the
     scan-time default ("{info_title} - {format}" and its degenerate forms),
-    or a previous output of :func:`labeled_disc_name` for the disc's
-    current identity. Anything else is treated as user-authored.
+    any past or present convention render for this disc's identity
+    (see :func:`_convention_variants`), or a TheDiscDB-style composite
+    ("{movie} - {release name} - …" — machine data, never typed by a user).
+    Anything else is treated as user-authored.
+
+    Used only to decide whether a STORED name is automation's to replace
+    (refresh_auto_disc_identity). Incoming payloads are never shape-filtered:
+    the client dirty-tracks disc_name/disc_slug and omits them unless the
+    user actually edited them, so anything that arrives is a user edit —
+    even a machine-looking value like "Blu-Ray".
     """
-    name = _clean(getattr(disc, "disc_name", None))
+    name = _clean(candidate)
     if not name:
         return True
     fmt_raw = getattr(disc, "format", None)
@@ -91,10 +189,33 @@ def is_auto_disc_name(disc: Any) -> bool:
         default_disc_name(fmt_raw, getattr(disc, "info_title", None)),
         labeled_disc_name(disc),
     ) if c}
+    candidates |= _convention_variants(disc)
     lowered = {c.lower() for c in candidates}
     # Bare formats regardless of stored spelling ("BluRay", "Blu-Ray", "dvd").
     lowered.update({"dvd", "blu-ray", "bluray", "blu-ray 3d", "uhd", "4k uhd", "4k"})
-    return name.lower() in lowered
+    if name.lower() in lowered:
+        return True
+    # TheDiscDB-style composite: "{movie} - {release name} - …". Machine
+    # origin by construction (seen live overwriting the convention name and
+    # then masquerading as user-typed).
+    release = getattr(disc, "release", None)
+    movie = getattr(release, "movie", None) if release else None
+    movie_name = _clean(getattr(movie, "name", None))
+    release_name = _clean(getattr(release, "name", None)) if release else None
+    if movie_name and release_name:
+        prefixes = {f"{movie_name} - {release_name}".lower()}
+        # Real imports often store the release name ALREADY movie-prefixed
+        # ("Star Wars: The Clone Wars - Season 1-5 Collector's Edition");
+        # the composite disc name is then just "{release.name} - …". Only
+        # honored when the release name carries the movie prefix itself, so
+        # a short user-typed name can't collide (rc.4 rig: the double-
+        # prefixed guess above never matched prod rows).
+        if release_name.lower().startswith(movie_name.lower() + " - "):
+            prefixes.add(release_name.lower())
+        for prefix in prefixes:
+            if name.lower() == prefix or name.lower().startswith(prefix + " - "):
+                return True
+    return False
 
 
 def refresh_auto_disc_identity(disc: Any) -> bool:

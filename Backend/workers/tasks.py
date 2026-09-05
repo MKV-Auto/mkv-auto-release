@@ -13,6 +13,7 @@ from core.utils import (
     hash_file,
     is_dev_mode,
     is_disc_read_error,
+    is_registration_error,
     move_with_progress,
     resolve_jobs_root,
     retrieve_discdb_data,
@@ -3271,7 +3272,11 @@ def rip_disc(
                 current_status = getattr(job, "job_status", None)
                 if current_status != "failed":
                     try:
-                        err_type = "disc_read" if is_disc_read_error(str(exc)) else None
+                        err_type = (
+                            "registration" if is_registration_error(str(exc))
+                            else "disc_read" if is_disc_read_error(str(exc))
+                            else None
+                        )
                         _post_rip_complete_callback(
                             str(job.id), success=False, error_reason=str(exc), error_type=err_type
                         )
@@ -3517,7 +3522,11 @@ def recover_running_rip(
             except Exception as rec_exc:
                 logging.warning("Recovery rip-complete callback failed for job %s: %s", job_id, rec_exc)
                 self.add_log(job, db, f"Recovery callback failed: {rec_exc}")
-                err_type = "disc_read" if is_disc_read_error(str(rec_exc)) else None
+                err_type = (
+                    "registration" if is_registration_error(str(rec_exc))
+                    else "disc_read" if is_disc_read_error(str(rec_exc))
+                    else None
+                )
                 try:
                     _post_rip_complete_callback(
                         str(job.id),
