@@ -2339,6 +2339,28 @@ describe('WorkflowService', () => {
     });
   });
 
+  describe('episode-catalog prefetch on applied context (#861)', () => {
+    it('fires the prefetch whenever a matching server context is applied', () => {
+      const ctx = { id: 'job-1', type: 'job', labelForm: { tmdb_id: '106379', group_type: 'series' } } as any;
+      spyOn(service as any, 'contextMatchesSelection').and.returnValue(true);
+      spyOn(service as any, 'applyFetchedContext');
+      const prefetch = spyOn(service as any, '_prefetchTmdbEpisodeCatalog');
+      expect(service.applyContextIfMatchesSelection(ctx)).toBeTrue();
+      // Selecting an EXISTING movie reaches the catalog only through this
+      // path (Path A covers createAndLinkMovie only) — without it the
+      // Disc-step season dropdown stays hidden until a page refresh.
+      expect(prefetch).toHaveBeenCalled();
+    });
+
+    it('does not fire for a stale non-matching context', () => {
+      const ctx = { id: 'job-2', type: 'job', labelForm: {} } as any;
+      spyOn(service as any, 'contextMatchesSelection').and.returnValue(false);
+      const prefetch = spyOn(service as any, '_prefetchTmdbEpisodeCatalog');
+      expect(service.applyContextIfMatchesSelection(ctx)).toBeFalse();
+      expect(prefetch).not.toHaveBeenCalled();
+    });
+  });
+
   // ---- TMDB episode catalog (#370) -------------------------------------
 
   describe('TMDB episode catalog prefetch (#370)', () => {

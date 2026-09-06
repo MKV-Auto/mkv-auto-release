@@ -65,6 +65,8 @@ export interface JobStatus {
   finalize_state?: string | null;
   post_state?: string | null;
   transfer_state?: string | null;
+  /** Stage-admission queue marker (#863): non-null while the job waits for a heavy-stage slot. */
+  dispatch_queued_at?: string | null;
   finalize_release_state?: string | null;
   artifacts?: Record<string, any> | null;
   disc_hash?: string | null;

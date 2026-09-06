@@ -2050,7 +2050,19 @@ def _patch_disc_ops_internal(
     db.refresh(disc)
     if release:
         db.refresh(release)
-    
+
+    # Ops mutate what GET workflow-context serves (disc name after the auto
+    # refresh above, season, format, links) — drop the cached snapshot or a
+    # refetch within the 10s TTL re-serves pre-ops state and the page shows
+    # the stale disc name until an unrelated later read (seen live: the
+    # Apocalypse Blu-ray rename landed in the DB but the form kept
+    # "Blu-Ray"). Same rule every mutating endpoint follows (#860).
+    try:
+        from api.routers.discs import invalidate_workflow_context_cache
+        invalidate_workflow_context_cache(disc_id=disc_id)
+    except Exception as exc:
+        log.warning(f"Failed to invalidate workflow-context cache for disc {disc_id}: {exc}")
+
     # Disc / release / movie level ops change what the card carousel shows
     # (show, release name, disc number); it listens on the coordinator, not
     # the disc workflow channel (#832).

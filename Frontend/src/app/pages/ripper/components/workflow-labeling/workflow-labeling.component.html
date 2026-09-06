@@ -240,18 +240,11 @@
           Assigning disc number…
         </p>
         <div class="step-content">
-          <app-disc-label
-            [labelForm]="state.context.labelForm"
-            [displayDiscNumber]="state.context.labelForm?.disc_number ?? state.context.discInfo?.disc_number ?? null"
-            [labelSaving]="false"
-            [lastAutosaveOk]="true"
-            (labelChanged)="onLabelChange($event)"
-            (nameChanged)="onNameChange($event)"
-            (fieldBlur)="onNameBlur()">
-          </app-disc-label>
           <!-- Authoritative disc-season field (moved from the breadcrumb):
                disc identity lives with disc identity. Feeds the auto disc
-               name, the card's S-chip, and the default labeling season. -->
+               name, the card's S-chip, and the default labeling season.
+               Sits ABOVE the disc form (#861): it drives the auto name shown
+               there, and below the form it was buried off-screen on mobile. -->
           <div class="disc-season-field" *ngIf="(workflowService.getTvSeasonCount$() | async) as seasonCount">
             <label class="disc-season-label" for="disc-primary-season">Season this disc represents</label>
             <select id="disc-primary-season" class="disc-season-select"
@@ -263,6 +256,15 @@
               <option [value]="0" [selected]="(workflowService.getPrimarySeason$() | async) === 0">Specials</option>
             </select>
           </div>
+          <app-disc-label
+            [labelForm]="state.context.labelForm"
+            [displayDiscNumber]="state.context.labelForm?.disc_number ?? state.context.discInfo?.disc_number ?? null"
+            [labelSaving]="false"
+            [lastAutosaveOk]="true"
+            (labelChanged)="onLabelChange($event)"
+            (nameChanged)="onNameChange($event)"
+            (fieldBlur)="onNameBlur()">
+          </app-disc-label>
         </div>
       </div>
 

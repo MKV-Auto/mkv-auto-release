@@ -633,32 +633,54 @@ def validate_transfer_preconditions(job, db, paths: Optional[JobPaths] = None) -
             actual_count = sum(1 for _ in source_dir.rglob("*.mkv"))
             details["source_files_found"] = actual_count
             
-            # Try to determine expected count
+            # Expected count comes from the JOB's own manifest — never from
+            # Disc(job.disc_num, job.mount_point): that is DRIVE-keyed
+            # live/cached info, i.e. whatever disc sits in the tray NOW.
+            # After a disc swap it described a different disc entirely and
+            # this check failed jobs whose files were all present (#864 —
+            # RE Extinction UHD: 122 ripped, 122 on disk, "expected" 124
+            # from the wrong disc). Precedence: DiscDB-hit selection map
+            # (job-scoped) > ripped_files > the job's own disc_titles rows.
             expected_count = 0
+            missing_names: list = []
             try:
-                from core.disc import Disc
-                disc = Disc(job.disc_num, job.mount_point)
-                if disc.titles:
-                    expected_count = len(disc.titles)
-                elif hasattr(job, "disc") and job.disc and job.disc.disc_info:
-                    titles_map = job.disc.disc_info.get("titles") or job.disc.disc_info.get("titles_map")
-                    if isinstance(titles_map, dict):
-                        expected_count = len(titles_map)
-                elif disc_payload:
-                    titles_map = disc_payload.get("titles") or disc_payload.get("tracks")
-                    if isinstance(titles_map, dict):
-                        expected_count = len(titles_map)
-                # For discdb hits, expect only the selected titles (title_filename_map), not the full disc map
-                if disc_payload.get("discdb_hit") and isinstance(disc_payload.get("title_filename_map"), dict) and disc_payload["title_filename_map"]:
+                ripped = getattr(job, "ripped_files", None)
+                if (
+                    disc_payload.get("discdb_hit")
+                    and isinstance(disc_payload.get("title_filename_map"), dict)
+                    and disc_payload["title_filename_map"]
+                ):
                     expected_count = len(disc_payload["title_filename_map"])
+                elif isinstance(ripped, dict) and ripped:
+                    expected_count = len(ripped)
+                else:
+                    _disc_id = getattr(job.disc, "id", None) if getattr(job, "disc", None) else None
+                    if _disc_id:
+                        from api import models as db_models
+                        expected_count = (
+                            db.query(db_models.DiscTitle)
+                            .filter(db_models.DiscTitle.disc_id == _disc_id)
+                            .count()
+                        )
+                # Receipts (#853 rule 1): name what is actually absent, so a
+                # shortfall claim can be verified instead of trusted.
+                if isinstance(ripped, dict) and ripped:
+                    _present = {p.name for p in source_dir.rglob("*.mkv")}
+                    missing_names = sorted(
+                        str(rel) for rel in ripped.values()
+                        if str(rel).rsplit("/", 1)[-1] not in _present
+                    )[:10]
             except Exception as exc:
                 log.warning(f"Error determining expected file count: {exc}")
-            
+
             details["source_files_expected"] = expected_count
-            
+
             if expected_count > 0:
                 if actual_count < expected_count:
-                    errors.append(f"Found only {actual_count}/{expected_count} MKV files in source directory {source_dir}")
+                    _missing_note = f" (missing: {', '.join(missing_names)})" if missing_names else ""
+                    errors.append(
+                        f"Found only {actual_count}/{expected_count} MKV files in source directory {source_dir}{_missing_note}"
+                    )
                 elif actual_count > expected_count:
                     warnings.append(f"Found {actual_count} MKV files, expected {expected_count} (extra files may be ignored)")
             elif actual_count == 0:

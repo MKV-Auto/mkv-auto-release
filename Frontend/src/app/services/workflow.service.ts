@@ -4311,6 +4311,13 @@ export class WorkflowService implements OnDestroy {
   applyContextIfMatchesSelection(context: WorkflowContext): boolean {
     if (!this.contextMatchesSelection(context)) return false;
     this.applyFetchedContext(context);
+    // #861: a freshly applied server context is a hydration — kick the
+    // episode-catalog prefetch so the Disc-step season dropdown appears
+    // without a page reload. Selecting an EXISTING movie takes this path
+    // (Path A only covers createAndLinkMovie), and the selection itself
+    // strips tmdb_id from the form — the server-built labelForm restores
+    // it, so the prefetch must fire here. Idempotent and dedup'd.
+    this._prefetchTmdbEpisodeCatalog(null);
     return true;
   }
 

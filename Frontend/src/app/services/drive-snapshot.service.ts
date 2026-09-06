@@ -17,7 +17,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject, Observable, Subject, Subscription, of, timer } from 'rxjs';
-import { catchError, switchMap, takeUntil } from 'rxjs/operators';
+import { catchError, exhaustMap, takeUntil, timeout } from 'rxjs/operators';
 
 import { environment } from '../environments/environment';
 
@@ -56,12 +56,22 @@ export class DriveSnapshotService {
   /** Subscribers in active components keep polling alive; idempotent. */
   startPolling(intervalMs = DEFAULT_POLL_MS): void {
     if (this.pollSub) return;
+    // exhaustMap, not switchMap (#862): switchMap CANCELED the in-flight
+    // request on every tick and immediately fired another — against a slow
+    // endpoint that machine-gunned aborted requests (hundreds of nginx 499s
+    // during the 2026-09-06 outage), saturating the browser's per-origin
+    // connection pool and starving every other API call. exhaustMap keeps
+    // at most ONE request in flight and simply skips ticks while it runs;
+    // the explicit timeout ends a hung request so polling resumes.
     this.pollSub = timer(0, intervalMs)
       .pipe(
-        switchMap(() =>
+        exhaustMap(() =>
           this.http
             .get<DriveSnapshotRow[]>(`${API_BASE}/drives/snapshot`)
-            .pipe(catchError(() => of<DriveSnapshotRow[]>([]))),
+            .pipe(
+              timeout(15000),
+              catchError(() => of<DriveSnapshotRow[]>([])),
+            ),
         ),
         takeUntil(this.stop$),
       )

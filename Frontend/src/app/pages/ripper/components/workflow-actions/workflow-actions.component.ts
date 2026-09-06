@@ -1040,8 +1040,10 @@ export class WorkflowActionsComponent implements OnInit, OnDestroy {
         }
 
         // In-flight (prep or copy): button is in spinner state via
-        // buttonSpinner$ and click is a no-op.
-        if (isTransferRunning || postState === 'running') {
+        // buttonSpinner$ and click is a no-op. A stage-queued job (#863,
+        // dispatch_queued_at set) is equally committed — the gatekeeper
+        // dispatches it when a slot frees; a second click must not re-post.
+        if (isTransferRunning || postState === 'running' || (jobStatus as any)?.dispatch_queued_at != null) {
           this._continueInProgress = false;
           return;
         }

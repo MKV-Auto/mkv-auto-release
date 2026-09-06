@@ -122,6 +122,14 @@ def derive_card_state(job: Any, *, transfer_destination: Optional[bool] = None) 
     if job_status == "validating":
         return out("verifying", FAMILY_WORKING, "Verifying",
                    getattr(job, "transfer_progress", None))
+    # --- stage-admission queue (#863) -----------------------------------
+    # Committed to run (auto-progression or a user click) but waiting for a
+    # concurrency slot: an honest "working" card, never "your turn" — the
+    # gatekeeper dispatches it without any further user action. The marker
+    # is cleared on dispatch, so the running/terminal branches above always
+    # win for admitted jobs.
+    if getattr(job, "dispatch_queued_at", None) is not None:
+        return out("stage_queued", FAMILY_WORKING, "Queued")
     if transfer_state == "ready":
         if transfer_destination is False:
             return out("needs_destination", FAMILY_YOUR_TURN, "Pick destination")

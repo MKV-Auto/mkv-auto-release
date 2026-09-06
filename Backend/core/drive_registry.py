@@ -26,7 +26,9 @@ import os
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
+from dataclasses import dataclass, replace
 from typing import Literal, Optional
 
 from core.drive_identity import DriveIdentity, resolve_drive_identity
@@ -65,6 +67,22 @@ _lock = threading.Lock()
 _cached_snapshots: Optional[list[DriveSnapshot]] = None
 _cached_ts: float = 0.0
 
+# ---- probe deadline + not-responding cooldown (#862) ---------------------
+# A wedged drive leaves probe children in unkillable D-state; even
+# subprocess timeouts hang, because TimeoutExpired's cleanup kill()+wait()s
+# a process the kernel will not release. Probes therefore run on a small
+# worker pool with a hard result deadline — on timeout the caller ABANDONS
+# the stuck call (the thread stays blocked until the kernel releases it;
+# bounded by the cooldown below, which stops re-probing that device).
+# During the 2026-09-06 outage the missing deadline let one dead drive
+# pin every uvicorn worker within minutes.
+_PROBE_TIMEOUT_SECONDS = float(os.environ.get("DRIVE_PROBE_TIMEOUT_SECONDS", "3.0"))
+_PROBE_COOLDOWN_SECONDS = float(os.environ.get("DRIVE_PROBE_COOLDOWN_SECONDS", "30.0"))
+_LOCK_WAIT_SECONDS = 2.0
+_probe_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="drive-probe")
+_unresponsive_until: dict[str, float] = {}
+_last_known: dict[str, DriveSnapshot] = {}
+
 
 def snapshot_drives(
     *, force: bool = False, ttl_seconds: float = DEFAULT_TTL_SECONDS
@@ -76,8 +94,22 @@ def snapshot_drives(
     cache (used by startup warmup and udev event handlers).
     """
     global _cached_snapshots, _cached_ts
-    with _lock:
+    # Bounded lock wait (#862): if another caller is stuck mid-probe, serve
+    # the last snapshot (stale beats a pinned thread — during the 2026-09-06
+    # outage every waiter here held a uvicorn worker until the pool died).
+    if not _lock.acquire(timeout=_LOCK_WAIT_SECONDS):
+        logger.warning(
+            "drive_registry: snapshot lock busy for %.1fs — serving stale snapshot",
+            _LOCK_WAIT_SECONDS,
+        )
+        return list(_cached_snapshots) if _cached_snapshots is not None else []
+    try:
         now = time.monotonic()
+        if force:
+            # A forced refresh (startup warmup, udev event) means something
+            # believes the hardware is talking again — retry cooled-down
+            # devices immediately.
+            _unresponsive_until.clear()
         if (
             not force
             and _cached_snapshots is not None
@@ -89,6 +121,8 @@ def snapshot_drives(
         _cached_snapshots = snapshots
         _cached_ts = now
         return list(snapshots)
+    finally:
+        _lock.release()
 
 
 def get_snapshot_for_mount(
@@ -295,37 +329,90 @@ def _volume_label_from_udev(udev: dict[str, str]) -> Optional[str]:
     return label or None
 
 
+def _probe_device(dev: str, now: float) -> DriveSnapshot:
+    """The actual hardware probe for one device. May block on a dead drive —
+    only ever called through the deadline pool in ``_snapshot_device``."""
+    loaded = _media_present(dev)
+    try:
+        identity = _resolve_identity(dev)
+    except Exception as exc:
+        logger.warning(
+            "drive_registry: identity resolution failed for %s: %s", dev, exc
+        )
+        identity = DriveIdentity(
+            by_id_serial=f"unknown:{os.path.basename(dev)}",
+            vendor="",
+            model="",
+            bus="unknown",
+            by_id_name="",
+            hardware_name=None,
+            identity_source="unknown",
+        )
+    udev = _run_udevadm(dev)
+    return DriveSnapshot(
+        mount_point=dev,
+        loaded=loaded,
+        volume_label=_volume_label_from_udev(udev),
+        media_kind=_media_kind_from_udev(udev),
+        identity=identity,
+        udev_state=udev,
+        observed_at=now,
+    )
+
+
+def _not_responding_snapshot(dev: str, now: float) -> DriveSnapshot:
+    """Fallback row for a drive that is not answering: keep the last known
+    identity (drive cards stay tellable-apart) but never claim media —
+    a non-responding drive must not offer Start-copy affordances (#724)."""
+    prev = _last_known.get(dev)
+    if prev is not None:
+        return replace(prev, loaded=False, volume_label=None, observed_at=now)
+    return DriveSnapshot(
+        mount_point=dev,
+        loaded=False,
+        volume_label=None,
+        media_kind=None,
+        identity=DriveIdentity(
+            by_id_serial=f"unknown:{os.path.basename(dev)}",
+            vendor="",
+            model="",
+            bus="unknown",
+            by_id_name="",
+            hardware_name=None,
+            identity_source="unknown",
+        ),
+        udev_state={},
+        observed_at=now,
+    )
+
+
+def _snapshot_device(dev: str, now: float) -> DriveSnapshot:
+    """Probe one device under the hard deadline (#862). A timeout abandons
+    the stuck call, starts the per-device cooldown (no hardware touched
+    until it expires), and serves the not-responding fallback."""
+    if now < _unresponsive_until.get(dev, 0.0):
+        return _not_responding_snapshot(dev, now)
+    future = _probe_pool.submit(_probe_device, dev, now)
+    try:
+        snap = future.result(timeout=_PROBE_TIMEOUT_SECONDS)
+    except FutureTimeout:
+        future.cancel()  # frees the slot when the probe never started
+        _unresponsive_until[dev] = now + _PROBE_COOLDOWN_SECONDS
+        logger.warning(
+            "drive_registry: probe of %s exceeded %.1fs — drive treated as "
+            "not responding for %.0fs (power-cycle the drive if this persists)",
+            dev, _PROBE_TIMEOUT_SECONDS, _PROBE_COOLDOWN_SECONDS,
+        )
+        return _not_responding_snapshot(dev, now)
+    except Exception as exc:
+        logger.warning("drive_registry: probe of %s failed: %s", dev, exc)
+        return _not_responding_snapshot(dev, now)
+    _unresponsive_until.pop(dev, None)
+    _last_known[dev] = snap
+    return snap
+
+
 def _build_snapshots() -> list[DriveSnapshot]:
     devices = _enumerate_devices()
     now = time.monotonic()
-    snapshots: list[DriveSnapshot] = []
-    for dev in devices:
-        loaded = _media_present(dev)
-        try:
-            identity = _resolve_identity(dev)
-        except Exception as exc:
-            logger.warning(
-                "drive_registry: identity resolution failed for %s: %s", dev, exc
-            )
-            identity = DriveIdentity(
-                by_id_serial=f"unknown:{os.path.basename(dev)}",
-                vendor="",
-                model="",
-                bus="unknown",
-                by_id_name="",
-                hardware_name=None,
-                identity_source="unknown",
-            )
-        udev = _run_udevadm(dev)
-        snapshots.append(
-            DriveSnapshot(
-                mount_point=dev,
-                loaded=loaded,
-                volume_label=_volume_label_from_udev(udev),
-                media_kind=_media_kind_from_udev(udev),
-                identity=identity,
-                udev_state=udev,
-                observed_at=now,
-            )
-        )
-    return snapshots
+    return [_snapshot_device(dev, now) for dev in devices]

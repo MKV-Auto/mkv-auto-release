@@ -503,6 +503,13 @@ class Job(Base):
     # "transferring" (move/copy), "verifying" (destination validation).
     # See docs/ADR-001-postprocess-collapse.md.
     transfer_phase = Column(String, nullable=True)
+    # Stage-admission queue marker (#863): set when the job is committed to
+    # run the heavy pipeline (prep or transfer) but no concurrency slot is
+    # free. The stage gatekeeper admits queued jobs FIFO by this timestamp
+    # and clears it on dispatch. NULL = not queued. Stage states stay
+    # untouched while queued ('ready' already means "prerequisites met,
+    # awaiting trigger").
+    dispatch_queued_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     @hybrid_property
     def derived_post_state(self) -> Optional[str]:

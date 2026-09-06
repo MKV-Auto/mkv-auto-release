@@ -123,6 +123,8 @@ celery_app.conf.update(
         "workers.tasks.preview_and_detect": {"queue": "preview"},
         "workers.tasks.preview_raw_titles": {"queue": "preview"},
         "workers.tasks.detect_raw_titles": {"queue": "preview"},
+        "promote_queued_stages": {"queue": "celery"},
+        "workers.tasks.promote_queued_stages": {"queue": "celery"},
         "cleanup_zombies": {"queue": "celery"},
         "cleanup_job_mkv": {"queue": "celery"},
         "reconcile_job_mkv_cleanup": {"queue": "celery"},
@@ -2299,6 +2301,9 @@ def _post_postprocess_complete_callback(
             pass
     finally:
         db.close()
+    # #863: prep slot freed (success or failure) — admit the next queued job.
+    from core.stage_gatekeeper import schedule_promotion
+    schedule_promotion("postprocess complete/failed")
 
 
 # ────────────────────────────────────────────────────────────────
@@ -4608,6 +4613,18 @@ def _maybe_auto_dispatch_remote_transfer(job_id: str, task_self) -> None:
                 src_root, job_id,
             )
             return
+        # Admission gate (#863): bounded concurrent transfers. No free slot →
+        # stamp the FIFO queue marker and leave transfer_state='ready';
+        # promote_queued_stages re-runs this helper when a slot frees.
+        from core import stage_gatekeeper
+
+        if not stage_gatekeeper.transfer_slot_available(db):
+            stage_gatekeeper.mark_queued(db, job)
+            log.info(
+                "Job %s: transfer queued — no free transfer slot (cap=%d)",
+                job_id, stage_gatekeeper.max_concurrent_transfers(),
+            )
+            return
         # Claim the job BEFORE enqueueing. Leaving transfer_state='ready'
         # here is what allowed POST /jobs/{id}/transfer to enqueue a second
         # transfer_remote for the same job and race us over the same
@@ -4620,6 +4637,8 @@ def _maybe_auto_dispatch_remote_transfer(job_id: str, task_self) -> None:
                 job_id,
             )
             return
+        job.dispatch_queued_at = None
+        db.commit()
         task_result = transfer_remote.delay(job_id, str(src_root), str(config.id))
         task_id = getattr(task_result, "id", "unknown") if task_result else "unknown"
         log.info(
@@ -4709,6 +4728,24 @@ def _maybe_auto_dispatch_local_transfer(job_id: str, task_self) -> None:
                 src_root, job_id,
             )
             return
+
+        # Admission gate (#863): same slot check as the remote helper — a
+        # busy transfer slot queues the job FIFO instead of running another
+        # inline copy alongside it.
+        from core import stage_gatekeeper
+
+        if not stage_gatekeeper.transfer_slot_available(db):
+            stage_gatekeeper.mark_queued(db, job)
+            log.info(
+                "Job %s: local transfer queued — no free transfer slot (cap=%d)",
+                job_id, stage_gatekeeper.max_concurrent_transfers(),
+            )
+            return
+        job.dispatch_queued_at = None
+        db.commit()
+        # Re-prime the instance: commit expires attributes, and the progress
+        # callbacks built below read `job` after this session closes.
+        db.refresh(job)
 
         from api.routers.jobs import (
             _build_job_metadata,
@@ -5333,7 +5370,12 @@ def _run_prep_phase(self, job_id: str):
                     post_log(f"preflight_validation: {error_msg}", "error")
                     self.add_log(job, db, f"resume_postprocess: {error_msg}")
                     log.error("resume_postprocess: job_id=%s FAILED at pre-flight validation: %s", job_id, error_details, extra={"job_id": job_id, "error_type": "preflight_validation", "error_details": error_details})
-                    _post_postprocess_complete_callback(job_id, success=False, error_reason=error_details)
+                    # #853/#864: missing/invalid inputs — retry cannot succeed
+                    # until the precondition is fixed; the card says so.
+                    _post_postprocess_complete_callback(
+                        job_id, success=False, error_reason=error_details,
+                        failure_kind="precondition",
+                    )
                     return
                 if validation_result.warnings:
                     warnings_str = "; ".join(validation_result.warnings)
@@ -6027,6 +6069,60 @@ def _run_prep_phase(self, job_id: str):
 
 
 # ────────────────────────────────────────────────────────────────
+# Stage admission promotion (#863)
+# ────────────────────────────────────────────────────────────────
+
+@celery_app.task(bind=True, base=JobTask, name='promote_queued_stages')
+def promote_queued_stages(self):
+    """Admit the next queued job(s) into freed heavy-stage slots (#863).
+
+    Fired (fire-and-forget) by the postprocess/transfer completion and
+    failure callbacks, and swept periodically by cleanup_zombies so a lost
+    callback can never strand the queue. Idempotent: counts are derived
+    from job rows, candidates are FIFO by dispatch_queued_at, and each
+    admission re-checks the slot before dispatching.
+    """
+    from core import stage_gatekeeper as gk
+
+    # Transfers first: freeing a transfer slot is what unblocks the most
+    # downstream work (a queued-ready job finishes sooner than a fresh prep).
+    with db_session() as db:
+        while gk.transfer_slot_available(db):
+            job = gk.next_queued_transfer_job(db)
+            if not job:
+                break
+            jid = str(job.id)
+            job.dispatch_queued_at = None
+            db.commit()
+            log.info("promote_queued_stages: promoting job %s into transfer slot", jid)
+            _maybe_auto_dispatch_remote_transfer(jid, self)
+            _maybe_auto_dispatch_local_transfer(jid, self)
+
+    with db_session() as db:
+        while gk.postprocess_slot_available(db):
+            job = gk.next_queued_pipeline_job(db)
+            if not job:
+                break
+            log.info("promote_queued_stages: promoting job %s into prep slot", job.id)
+            try:
+                if gk.request_pipeline_start(db, job, "promoted from stage queue") != "dispatched":
+                    break  # slot vanished under us; a later promotion retries
+            except Exception as exc:
+                # Head-of-line protection: a job whose state can no longer
+                # accept postprocess_started must not wedge the whole queue.
+                log.warning(
+                    "promote_queued_stages: dropping job %s from stage queue (%s)",
+                    job.id, exc,
+                )
+                try:
+                    db.rollback()
+                    job.dispatch_queued_at = None
+                    db.commit()
+                except Exception:
+                    break
+
+
+# ────────────────────────────────────────────────────────────────
 # Periodic maintenance tasks
 # ────────────────────────────────────────────────────────────────
 
@@ -6047,7 +6143,15 @@ def cleanup_zombies():
         log.info(f"Periodic zombie cleanup: reaped {count} zombie process(es)", extra={"zombie_count": count})
     else:
         log.debug("Periodic zombie cleanup: no zombies found")
-    
+
+    # #863 straggler net: if a completion callback was ever lost, this
+    # periodic sweep re-runs stage promotion so queued jobs cannot strand.
+    try:
+        from core.stage_gatekeeper import schedule_promotion
+        schedule_promotion("periodic sweep")
+    except Exception:
+        pass
+
     return {"reaped_count": count}
 
 
@@ -6331,6 +6435,9 @@ def _post_transfer_complete_callback(
             pass
     finally:
         db.close()
+    # #863: transfer slot freed (success or failure) — admit the next queued job.
+    from core.stage_gatekeeper import schedule_promotion
+    schedule_promotion("transfer complete/failed")
 
 
 @celery_app.task(bind=True, base=JobTask, name='transfer_remote', acks_late=True)

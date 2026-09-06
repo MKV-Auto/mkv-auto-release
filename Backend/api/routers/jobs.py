@@ -1249,6 +1249,7 @@ def _build_job_status(job, job_created: bool | None = None) -> JobStatus:
         post_state=job.derived_post_state,  # #365 — derived, not column
         transfer_state=getattr(job, "transfer_state", None),
         transfer_phase=getattr(job, "transfer_phase", None),
+        dispatch_queued_at=getattr(job, "dispatch_queued_at", None),
         **_card_contract_kwargs(job),
         finalize_release_state=getattr(job, "finalize_release_state", None),
         titlesCompleted=getattr(job, "titles_completed", None),
@@ -3544,10 +3545,9 @@ def rip_complete_callback(
                 return {"ok": True, "segment_reorder_dispatched": True}
             if branch == "hit":
                 # Phase 2 collapse (#365): same retargeting as the
-                # rip-verification-complete handler.
-                from workers.tasks import start_transfer as start_transfer_task
-                start_transfer_task.delay(job_id)
-                StageState.postprocess_started(db, job, reason="rip_complete (heal) enqueued start_transfer")
+                # rip-verification-complete handler. Admission-gated (#863).
+                from core.stage_gatekeeper import request_pipeline_start
+                request_pipeline_start(db, job, "rip_complete (heal) enqueued start_transfer")
         return {"ok": True}
     if body.error_type == "drive_busy" or (
         body.error_reason and "Drive busy" in body.error_reason
@@ -3716,9 +3716,9 @@ def rip_verification_complete_callback(
             # delegates to the existing prep body. resume_postprocess still
             # exists; it becomes a forwarding shim in commit 3 for any in-flight
             # jobs that were queued under the old task name pre-deploy.
-            from workers.tasks import start_transfer as start_transfer_task
-            start_transfer_task.delay(job_id)
-            StageState.postprocess_started(db, job, reason="rip_verification_complete enqueued start_transfer")
+            # Admission-gated (#863): dispatches now or queues FIFO.
+            from core.stage_gatekeeper import request_pipeline_start
+            request_pipeline_start(db, job, "rip_verification_complete enqueued start_transfer")
         elif branch == "miss" and body.preview_detect_keys:
             preview_raw_titles.delay(
                 job_id,
@@ -3764,9 +3764,8 @@ def rip_verification_complete_callback(
         _maybe_advance_canonical_complete(job, job_id, db, branch)
         if branch == "hit":
             # Phase 2 collapse (#365): mirror the success-path retargeting.
-            from workers.tasks import start_transfer as start_transfer_task
-            start_transfer_task.delay(job_id)
-            StageState.postprocess_started(db, job, reason="rip_verification_complete (heal) enqueued start_transfer")
+            from core.stage_gatekeeper import request_pipeline_start
+            request_pipeline_start(db, job, "rip_verification_complete (heal) enqueued start_transfer")
         elif branch == "miss" and body.preview_detect_keys:
             preview_raw_titles.delay(
                 job_id,
@@ -4504,10 +4503,16 @@ def start_transfer_endpoint(
     if transfer_state in ("running", "pending"):
         raise HTTPException(409, detail=f"Transfer already in progress (transfer_state={transfer_state!r})")
 
-    from workers.tasks import start_transfer as start_transfer_task
-    task = start_transfer_task.delay(job_id)
-    log.info("start_transfer_endpoint: enqueued start_transfer for job %s (task_id=%s)", job_id, task.id)
-    return {"status": "queued", "task_id": task.id}
+    # Admission-gated (#863): dispatches immediately when a prep slot is
+    # free; otherwise the job joins the FIFO stage queue and is dispatched
+    # when a slot frees. Either way the response contract holds ("queued"
+    # has always meant "accepted for processing" here).
+    from core.stage_gatekeeper import request_pipeline_start
+    admission = request_pipeline_start(
+        db, job, "transfer/start endpoint", apply_started=False
+    )
+    log.info("start_transfer_endpoint: job %s admission=%s", job_id, admission)
+    return {"status": "queued", "admission": admission}
 
 
 @router.post("/{job_id}/transfer", response_model=JobStatus)
@@ -4690,6 +4695,18 @@ def transfer_job(
             )
         except Exception as e:
             log.warning("Failed to emit transfer_started notification: %s", e)
+        # Admission gate (#863): bounded concurrent transfers. A manual
+        # click with no free slot queues the job FIFO (transfer_state stays
+        # 'ready', card shows Queued) instead of piling another mover on.
+        from core import stage_gatekeeper
+
+        if not stage_gatekeeper.transfer_slot_available(db):
+            stage_gatekeeper.mark_queued(db, job)
+            log.info(
+                "Job %s: manual transfer queued — no free transfer slot (cap=%d)",
+                job.id, stage_gatekeeper.max_concurrent_transfers(),
+            )
+            return get_status(str(job.id), db)
         # Refuse if a transfer is already claimed for this job. Without this
         # the post-process auto-dispatch could already have a transfer_remote
         # in flight and we would enqueue a second one, putting two smbclient
@@ -4704,6 +4721,7 @@ def transfer_job(
                     f"(transfer_state={getattr(job, 'transfer_state', None)})."
                 ),
             )
+        job.dispatch_queued_at = None
         apply_job_state(
             db,
             job,
@@ -5434,16 +5452,17 @@ def resume_job(job_id: str, db: Session = Depends(get_db)):
         except StateViolation as exc:
             raise HTTPException(409, detail=f"State violation: {exc}") from exc
 
+    # Phase 2 collapse (#365): the unified start_transfer worker is the
+    # canonical entry point. Admission-gated (#863): a busy prep slot queues
+    # the recovery FIFO instead of piling on.
     try:
-        StageState.postprocess_started(db, job, reason="resume postprocess requested", error_reason=None)
+        from core.stage_gatekeeper import request_pipeline_start
+        admission = request_pipeline_start(
+            db, job, "resume postprocess requested", error_reason=None
+        )
     except StateViolation as exc:
         raise HTTPException(409, detail=str(exc)) from exc
-    # Phase 2 collapse (#365): the unified start_transfer worker is the
-    # canonical entry point. resume_postprocess still works as a forwarding
-    # shim, but new sites target start_transfer directly.
-    from workers.tasks import start_transfer as start_transfer_task
-    start_transfer_task.delay(str(job.id))
-    log.info("Job %s: Enqueued start_transfer task for recovery", job.id)
+    log.info("Job %s: start_transfer recovery admission=%s", job.id, admission)
     return get_status(job_id, db)
 
 
@@ -5488,29 +5507,24 @@ def start_postprocess(job_id: str, db: Session = Depends(get_db)):
     # Note: Pre-flight validation is now done inside resume_postprocess task AFTER devmode prep
     # This ensures validation uses the correct mkv_size values (mock sizes in devmode, real sizes otherwise)
     
+    # Enqueue via the unified start_transfer worker (Phase 2 collapse, #365),
+    # admission-gated (#863): a free prep slot applies postprocess_started
+    # (#365 § 6.4 — workflow_step="transfer" since the standalone step was
+    # collapsed) and dispatches; a busy one queues the job FIFO with all
+    # stage state untouched. The endpoint name stays for backward compat.
     try:
-        # #365 Phase 2 § 6.4 — workflow_step="transfer" instead of
-        # "postprocess" since the standalone step was collapsed.
-        StageState.postprocess_started(
+        from core.stage_gatekeeper import request_pipeline_start
+        admission = request_pipeline_start(
             db,
             job,
-            reason="manual post-process start requested",
+            "manual post-process start requested",
             workflow_step="transfer",
             error_reason=None,
         )
-        log.info(f"Job {job_id}: start_postprocess: postprocess_started, Starting post-process manually")
+        log.info(f"Job {job_id}: start_postprocess admission={admission}")
     except StateViolation as exc:
         log.warning("Job %s: start_postprocess: postprocess_started StateViolation: %s", job_id, exc)
         raise HTTPException(409, detail=str(exc)) from exc
-
-    # Enqueue the post-process task via the unified start_transfer worker
-    # (Phase 2 collapse, #365). start_transfer sets transfer_phase=preparing
-    # and currently delegates to resume_postprocess so the prep body is
-    # unchanged. The endpoint name stays the same for backward compat.
-    try:
-        from workers.tasks import start_transfer as start_transfer_task
-        task_result = start_transfer_task.delay(str(job.id))
-        log.info(f"Job {job_id}: Enqueued start_transfer task (task_id={task_result.id if task_result else 'unknown'})")
     except Exception as enqueue_exc:
         log.error(f"Job {job_id}: Failed to enqueue resume_postprocess: {enqueue_exc}", exc_info=True)
         # Rollback state change if enqueue fails
@@ -8591,10 +8605,9 @@ def submit_segment_order(
             db.commit()
             if branch == "hit":
                 # Phase 2 collapse (#365): Path A canonical-completion path
-                # uses the unified start_transfer worker too.
-                from workers.tasks import start_transfer as start_transfer_task
-                start_transfer_task.delay(job_id)
-                StageState.postprocess_started(db, job, reason="exploratory was canonical (start_transfer)")
+                # uses the unified start_transfer worker too. Gated (#863).
+                from core.stage_gatekeeper import request_pipeline_start
+                request_pipeline_start(db, job, "exploratory was canonical (start_transfer)")
             log.info(
                 "submit_segment_order: exploratory was canonical AND no extras to rip; "
                 "skipped canonical rip dispatch for job=%s", job_id,

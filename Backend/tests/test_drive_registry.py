@@ -395,3 +395,87 @@ class TestGetSnapshotForMount:
         _patch_baseline(monkeypatch, devices=["/dev/sr0"])
 
         assert get_snapshot_for_mount("/dev/sr99") is None
+
+
+# ---- #862: probe deadline + not-responding cooldown ----------------------
+
+@pytest.fixture
+def _reset_wedge_state(monkeypatch):
+    """Isolate the per-device cooldown/last-known maps and shrink the deadline."""
+    monkeypatch.setattr(drive_registry, "_unresponsive_until", {})
+    monkeypatch.setattr(drive_registry, "_last_known", {})
+    monkeypatch.setattr(drive_registry, "_PROBE_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(drive_registry, "_PROBE_COOLDOWN_SECONDS", 30.0)
+
+
+def test_wedged_probe_returns_within_deadline(monkeypatch, _reset_wedge_state):
+    """A D-state-style stuck probe must never block the caller — the 2026-09-06
+    outage pinned every uvicorn worker behind exactly this call."""
+    monkeypatch.setattr(drive_registry, "_enumerate_devices", lambda: ["/dev/sr0"])
+
+    def _stuck(dev):
+        time.sleep(5)  # stands in for an unkillable sg_turs
+        return True
+
+    monkeypatch.setattr(drive_registry, "_media_present", _stuck)
+    monkeypatch.setattr(drive_registry, "_resolve_identity", lambda d: _id())
+    monkeypatch.setattr(drive_registry, "_run_udevadm", lambda d: {})
+
+    start = time.monotonic()
+    snaps = snapshot_drives(force=True)
+    elapsed = time.monotonic() - start
+    assert elapsed < 2.0, f"snapshot blocked for {elapsed:.1f}s"
+    assert len(snaps) == 1
+    # Not-responding fallback: present but never claiming media.
+    assert snaps[0].mount_point == "/dev/sr0"
+    assert snaps[0].loaded is False
+
+
+def test_cooldown_skips_hardware_until_expiry(monkeypatch, _reset_wedge_state):
+    monkeypatch.setattr(drive_registry, "_enumerate_devices", lambda: ["/dev/sr0"])
+    calls = {"n": 0}
+
+    def _stuck(dev):
+        calls["n"] += 1
+        time.sleep(5)
+        return True
+
+    monkeypatch.setattr(drive_registry, "_media_present", _stuck)
+    monkeypatch.setattr(drive_registry, "_resolve_identity", lambda d: _id())
+    monkeypatch.setattr(drive_registry, "_run_udevadm", lambda d: {})
+
+    snapshot_drives(force=True)
+    assert calls["n"] == 1
+    # Within the cooldown the hardware is never touched again...
+    invalidate()
+    drive_registry._unresponsive_until["/dev/sr0"] = time.monotonic() + 30
+    snaps = snapshot_drives()
+    assert calls["n"] == 1
+    assert snaps[0].loaded is False
+    # ...but a udev-driven force retries immediately (the event means the
+    # drive talked), and a healthy probe repopulates last-known state.
+    monkeypatch.setattr(drive_registry, "_media_present", lambda d: True)
+    snaps = snapshot_drives(force=True)
+    assert snaps[0].loaded is True
+    assert drive_registry._unresponsive_until == {}
+
+
+def test_not_responding_keeps_last_known_identity(monkeypatch, _reset_wedge_state):
+    monkeypatch.setattr(drive_registry, "_enumerate_devices", lambda: ["/dev/sr0"])
+    monkeypatch.setattr(drive_registry, "_media_present", lambda d: True)
+    monkeypatch.setattr(drive_registry, "_resolve_identity", lambda d: _id("PIONEER123"))
+    monkeypatch.setattr(drive_registry, "_run_udevadm", lambda d: {"ID_FS_LABEL": "MOVIE"})
+    snaps = snapshot_drives(force=True)
+    assert snaps[0].identity.by_id_serial == "PIONEER123"
+
+    def _stuck(dev):
+        time.sleep(5)
+        return True
+
+    monkeypatch.setattr(drive_registry, "_media_present", _stuck)
+    invalidate()
+    snaps = snapshot_drives(force=True)
+    # Identity survives (cards stay tellable-apart); media claim does not.
+    assert snaps[0].identity.by_id_serial == "PIONEER123"
+    assert snaps[0].loaded is False
+    assert snaps[0].volume_label is None

@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.14] - 2026-09-06
+
+### Fixed
+
+- **A dead optical drive can no longer freeze the whole app.** When the drive stopped responding (2026-09-06: a USB link failure left it hung mid-command), the drive probe blocked forever, the page's once-a-second drive poll piled hundreds of aborted requests behind it, and within minutes every API worker was pinned — the UI went completely unresponsive. Probes now run under a hard deadline; a drive that doesn't answer is shown as not responding (keeping its identity, never offering copy actions) and is left alone for a cooldown instead of being hammered, the rest of the app keeps working on the last known drive state, and the page keeps at most one drive poll in flight instead of machine-gunning aborted ones.
+- **"Found only N/M MKV files" now counts the right disc.** The post-processing file check compared a job's ripped files against whatever disc is in the drive *right now* — after a disc swap it failed jobs whose files were all present (a UHD rip with all 122 files was failed against another disc's count of 124). It now counts against the job's own rip manifest, names exactly which files are missing when some really are, and classifies the failure so the card offers the honest action.
+
+### Added
+
+- **Heavy work now queues instead of stampeding.** Post-processing and transfers are admitted a fixed number at a time (one each by default, tunable via `MAX_CONCURRENT_POSTPROCESS` / `MAX_CONCURRENT_TRANSFERS`; 0 disables a limit) — queueing twenty discs no longer runs every file-mover at once and drowns the disk (the 2026-09-06 incident: load 19, 82% iowait). Waiting jobs show an honest *Queued* card and start automatically, oldest first, as slots free up; nothing about the disc workflow changes otherwise.
+
+### Fixed
+
+- **Picking the release or boxset now names the disc immediately.** The selection endpoints linked the disc but skipped the auto-name refresh, so the disc kept its scan-time name ("DVD") — surviving even a page reload — until some later edit happened to trigger a rename. The link itself now renders the convention name and pushes it (and the new number/season) to the open page live.
+- **The season dropdown appears as soon as a series is selected.** Picking an existing show never started the season-list fetch (only creating a brand-new one did), so the "Season this disc represents" dropdown stayed hidden until a full page refresh. It now appears right after the selection saves.
+
+### Changed
+
+- **The season selector moved to the top of the Disc step.** It drives the auto disc name shown just below it, and in its old spot under the whole form it was effectively invisible on phones.
+
 ## [1.6.13] - 2026-09-05
 
 ### Fixed

@@ -64,6 +64,10 @@ class JobStatus(BaseModel):
     # collapse; the frontend's transferPhaseLabel falls back to the
     # transferState-based inference in that case.
     transfer_phase: Optional[str] = None
+    # Stage-admission queue marker (#863): set while the job is committed to
+    # run the heavy pipeline but waits for a concurrency slot. The action
+    # bar disables its CTA on this instead of offering a second click.
+    dispatch_queued_at: Optional[datetime] = None
     # Backend-derived card contract (#839): the card renders these verbatim.
     card_state: Optional[str] = None
     card_family: Optional[str] = None  # your_turn | working | done | fix

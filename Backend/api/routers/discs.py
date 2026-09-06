@@ -3828,6 +3828,17 @@ def create_boxset_for_disc(
     disc_number_map = normalize_disc_numbers_for_release(db, target_release)
     disc.disc_number = disc_number_map.get(disc.id, disc.disc_number)
 
+    # The link may complete the disc's identity (movie via the release) —
+    # refresh an auto-generated name/slug to the convention form (#845), the
+    # same way the other write sites do. Without this the disc kept its
+    # scan-time name ("DVD") until some later label event (#860, seen live
+    # on prod disc 18). No-op on user-typed names.
+    try:
+        from core.disc_naming import refresh_auto_disc_identity
+        refresh_auto_disc_identity(disc)
+    except Exception as _naming_exc:
+        log.warning(f"auto disc-name refresh failed for disc {disc_id}: {_naming_exc}")
+
     _log_rb(
         "disc linked + disc_number",
         disc_id=disc_id,
@@ -3835,10 +3846,17 @@ def create_boxset_for_disc(
         disc_number=disc.disc_number,
         label_draft_keys=sorted((disc.label_draft or {}).keys()) if isinstance(disc.label_draft, dict) else None,
     )
-    
+
     db.commit()
     # Invalidate cache — same reason as create_release_for_disc below.
     invalidate_workflow_context_cache(disc_id=disc_id)
+    # Card carousel (#832/#860): the link changed release/name/number — reach
+    # the open page without a refresh, like the other label write sites.
+    try:
+        from api.routers.websockets import schedule_disc_metadata_updated
+        schedule_disc_metadata_updated(disc_id)
+    except Exception:
+        pass
     db.refresh(boxset)
     db.refresh(target_release)
     db.refresh(disc)
@@ -4142,6 +4160,15 @@ def create_release_for_disc(
     disc_number_map = normalize_disc_numbers_for_release(db, target_release)
     disc.disc_number = disc_number_map.get(disc.id, disc.disc_number)
 
+    # Same identity-completing refresh as create_boxset_for_disc above (#860):
+    # linking is what gives the disc a movie, so the convention name must
+    # render here, not at the next unrelated label event.
+    try:
+        from core.disc_naming import refresh_auto_disc_identity
+        refresh_auto_disc_identity(disc)
+    except Exception as _naming_exc:
+        log.warning(f"auto disc-name refresh failed for disc {disc_id}: {_naming_exc}")
+
     _log_rb(
         "disc linked + disc_number",
         disc_id=disc_id,
@@ -4149,7 +4176,7 @@ def create_release_for_disc(
         disc_number=disc.disc_number,
         label_draft_keys=sorted((disc.label_draft or {}).keys()) if isinstance(disc.label_draft, dict) else None,
     )
-    
+
     db.commit()
     # Invalidate the workflow-context response cache so the WS-triggered
     # debounced refetch (fired via _emit_to_disc_workflow below) doesn't hit
@@ -4160,6 +4187,12 @@ def create_release_for_disc(
     # at :77), so the race window is any user action within 10s of the last
     # workflow-context read.
     invalidate_workflow_context_cache(disc_id=disc_id)
+    # Card carousel (#832/#860): same live-update as create_boxset_for_disc.
+    try:
+        from api.routers.websockets import schedule_disc_metadata_updated
+        schedule_disc_metadata_updated(disc_id)
+    except Exception:
+        pass
     db.refresh(target_release)
     db.refresh(disc)
 

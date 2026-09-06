@@ -87,8 +87,10 @@ def mock_start_transfer(monkeypatch):
 def test_transfer_start_enqueues_start_transfer_and_returns_task_id(
     client, test_db, mock_start_transfer
 ):
-    """Preconditions met → start_transfer is enqueued with the job id and
-    the endpoint returns the queued task id."""
+    """Preconditions met → start_transfer is enqueued with the job id.
+    (#863 changed the response contract: the endpoint reports the admission
+    outcome instead of a raw Celery task id — dispatch goes through the
+    stage gatekeeper, which owns the enqueue.)"""
     session = test_db()
     try:
         job_id, _ = _seed_job(session)
@@ -99,9 +101,10 @@ def test_transfer_start_enqueues_start_transfer_and_returns_task_id(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "queued"
-    assert body["task_id"]
+    assert body["admission"] == "dispatched"
     # Single task enqueued for the right job id.
-    assert mock_start_transfer == [{"job_id": job_id, "task_id": body["task_id"]}]
+    assert len(mock_start_transfer) == 1
+    assert mock_start_transfer[0]["job_id"] == job_id
 
 
 def test_transfer_start_accepts_label_state_completed(client, test_db, mock_start_transfer):
