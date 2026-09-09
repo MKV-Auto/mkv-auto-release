@@ -439,21 +439,24 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
     }
     // Only set when the release spans multiple seasons (#846) — tells the
     // four discs of a "Season 1-5" box apart at a glance. The within-season
-    // position joins it ("S5 Disc 4") so the chip matches the number the
-    // disc NAME counts by, while the release-wide disc_number keeps the
-    // boxset position at the end ("Disc 14").
+    // position joins it ("S5 Disc 1") so the chip matches the number the
+    // disc NAME counts by. When the ordinal is shown, the release-wide
+    // boxset number is deliberately NOT (user decision, 2026-09-06): the
+    // season ordinal is the number that matters, and showing it alone keeps
+    // every season's card identical in shape — the boxset position stays a
+    // sort key only. A bare "S5" chip (no ordinal from the backend) keeps
+    // the release-wide number, which is then the only number available.
+    const seasonOrdinalShown =
+      disc.disc_season != null && disc.disc_season_ordinal != null;
     if (disc.disc_season != null) {
-      parts.push(disc.disc_season_ordinal != null
+      parts.push(seasonOrdinalShown
         ? `S${disc.disc_season} Disc ${disc.disc_season_ordinal}`
         : `S${disc.disc_season}`);
     }
     if (disc.disc_format) {
       parts.push(disc.disc_format);
     }
-    // Skip the boxset position when it's the same number the season chip
-    // already shows (season 1 discs, where the counts coincide).
-    if (disc.disc_number != null &&
-        !(disc.disc_season != null && disc.disc_season_ordinal === disc.disc_number)) {
+    if (disc.disc_number != null && !seasonOrdinalShown) {
       parts.push(`Disc ${disc.disc_number}`);
     }
     return parts.length > 0 ? parts.join(' · ') : '—';

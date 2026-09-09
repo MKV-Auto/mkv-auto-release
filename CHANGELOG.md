@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.15] - 2026-09-09
+
+### Added
+
+- **Failed rips now say whether it's the disc or the drive — with evidence.** When a rip fails, the app analyzes the failure pattern (hundreds of errors at one fixed spot on the disc, or errors scattered everywhere) and cross-checks history (the same disc failing in a different drive condemns the disc; one drive failing several different discs condemns the drive). A condemned disc gets *"a retry cannot succeed — clean or exchange it"* with the exact evidence; a faulty drive raises an alert with power/cable guidance, since it affects every future rip. When the evidence is ambiguous, the message stays as it was rather than guessing.
+- **A dead disc left in the tray goes quiet.** Status checks against an unreadable disc used to grind it every 30 seconds indefinitely; the checks now back off (30s → 2m → 10m) and after three strikes you get a one-time notification suggesting you eject it.
+
+### Fixed
+
+- **A hung app can no longer take the whole machine down with it.** The container's health check had no time limit of its own: when the app stopped responding (an unresponsive optical drive), each 30-second check hung forever instead of failing, piling up roughly two stuck processes a minute — after 20 hours that was ~1,750 of them, and the machine was so loaded the container could not even be restarted. Every health probe now gives up in seconds, so an unhealthy app is reported as unhealthy and cleans up after itself.
+- **A drive that's busy ripping no longer flaps to "not responding".** The health probe used to queue behind the rip's own disc reads, time out, and briefly mark the working drive as not responding. A drive MakeMKV is actively using is now never probed at all — the running rip is the health signal — and the probe deadline was corrected to exceed its internal steps.
+- **Re-inserting an already-labeled disc now restores its proper name.** The scan that runs on insert was the one remaining path that never re-rendered the auto disc name, so a disc whose rename had been missed under an older version (e.g. one still called "UHD") stayed that way through every insert-scan-rip cycle. The scan now renders the name from the disc's linked identity; names you typed yourself are never touched.
+
+### Changed
+
+- **Box-set cards show one disc number: the season's.** A multi-season disc's card now reads "S5 Disc 1 · DVD" for every season — the same number the disc's name counts by. The box-wide position (which made season 1 cards look different from the rest, since its two numbers coincide) still orders the discs but is no longer displayed.
+
 ## [1.6.14] - 2026-09-06
 
 ### Fixed

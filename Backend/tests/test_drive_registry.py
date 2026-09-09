@@ -479,3 +479,69 @@ def test_not_responding_keeps_last_known_identity(monkeypatch, _reset_wedge_stat
     assert snaps[0].identity.by_id_serial == "PIONEER123"
     assert snaps[0].loaded is False
     assert snaps[0].volume_label is None
+
+
+def test_active_makemkv_use_skips_probe_and_reports_loaded(monkeypatch, _reset_wedge_state):
+    """A drive MakeMKV is working must never be probed (the rip queues our
+    TEST UNIT READY behind its reads → false 'not responding' flaps,
+    2026-09-07) — it reports in-use with last-known identity instead."""
+    monkeypatch.setattr(drive_registry, "_enumerate_devices", lambda: ["/dev/sr1"])
+    probed = {"n": 0}
+
+    def _probe(dev):
+        probed["n"] += 1
+        return False
+
+    monkeypatch.setattr(drive_registry, "_media_present", _probe)
+    monkeypatch.setattr(drive_registry, "_resolve_identity", lambda d: _id("ASUS1"))
+    monkeypatch.setattr(drive_registry, "_run_udevadm", lambda d: {})
+
+    # Seed last-known identity via one healthy probe.
+    snaps = snapshot_drives(force=True)
+    assert probed["n"] == 1 and snaps[0].loaded is False
+
+    # MakeMKV starts using the device: no probe, loaded=True, cooldown cleared.
+    monkeypatch.setattr(drive_registry, "_device_in_active_use", lambda d: True)
+    drive_registry._unresponsive_until["/dev/sr1"] = 10**12  # stale cooldown
+    invalidate()
+    snaps = snapshot_drives(force=True)
+    assert probed["n"] == 1  # hardware untouched
+    assert snaps[0].loaded is True
+    assert snaps[0].identity.by_id_serial == "ASUS1"
+    assert drive_registry._unresponsive_until == {}
+
+
+def test_repeated_timeouts_escalate_cooldown_and_alert_once(monkeypatch, _reset_wedge_state):
+    """#731 idle-grinding: an unreadable disc left in the tray must not be
+    re-ground every 30s forever — cooldowns escalate and the 'eject it'
+    alert fires exactly once, cleared by any healthy probe."""
+    monkeypatch.setattr(drive_registry, "_enumerate_devices", lambda: ["/dev/sr1"])
+    monkeypatch.setattr(drive_registry, "_device_in_active_use", lambda d: False)
+    alerts = []
+    monkeypatch.setattr(drive_registry, "_emit_grind_alert", lambda d: alerts.append(d))
+
+    def _stuck(dev):
+        time.sleep(0.9)
+        return True
+
+    monkeypatch.setattr(drive_registry, "_media_present", _stuck)
+    monkeypatch.setattr(drive_registry, "_resolve_identity", lambda d: _id())
+    monkeypatch.setattr(drive_registry, "_run_udevadm", lambda d: {})
+
+    for _ in range(4):
+        invalidate()
+        drive_registry._unresponsive_until.clear()  # simulate cooldown expiry
+        snapshot_drives()
+    # Streak grew; alert fired exactly once (on the third strike).
+    assert drive_registry._timeout_streak["/dev/sr1"] == 4
+    assert alerts == ["/dev/sr1"]
+
+    # A healthy probe clears everything (drain the abandoned pool workers
+    # first — a real recovery is never this fast).
+    time.sleep(1.0)
+    monkeypatch.setattr(drive_registry, "_media_present", lambda d: True)
+    invalidate()
+    drive_registry._unresponsive_until.clear()
+    snapshot_drives()
+    assert drive_registry._timeout_streak == {}
+    assert "/dev/sr1" not in drive_registry._grind_alerted

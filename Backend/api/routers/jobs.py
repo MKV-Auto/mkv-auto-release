@@ -3571,12 +3571,38 @@ def rip_complete_callback(
     from core.utils import is_registration_error
     if error_type in (None, "disc_read") and is_registration_error(body.error_reason or ""):
         error_type = "registration"
+    error_reason = body.error_reason or "Rip failed"
+    failure_kind = "config" if error_type == "registration" else None
+    # #731: classify disc-defect vs drive-fault from the job's own MakeMKV
+    # output pattern + cross-history (registration still wins above — the
+    # fix there is a key, not hardware). The verdict carries receipts and a
+    # remedy; indeterminate changes nothing.
+    if error_type != "registration":
+        from core.rip_failure_analysis import analyze_rip_failure
+        verdict = analyze_rip_failure(job, db)
+        if verdict.classification != "indeterminate":
+            error_reason = verdict.augment(error_reason)
+            failure_kind = verdict.failure_kind
+            if verdict.classification == "drive_fault":
+                # A faulty drive affects every future rip — alert now, in the
+                # #723/#724 spirit, not just on this job's card.
+                try:
+                    from core.notifications import emit_notification_sync
+                    emit_notification_sync(
+                        f"Drive {getattr(job, 'mount_point', '?')} looks faulty: "
+                        f"{'; '.join(verdict.receipts)}. {verdict.remedy}",
+                        "error",
+                        "error_drive_fault",
+                        job_id=str(job.id),
+                    )
+                except Exception as notify_exc:
+                    log.warning("rip_complete_callback: drive-fault alert failed: %s", notify_exc)
     StageState.rip_failed(
         db, job,
-        error_reason=body.error_reason or "Rip failed",
+        error_reason=error_reason,
         reason="rip_complete callback (failure)",
         error_type=error_type,
-        failure_kind="config" if error_type == "registration" else None,
+        failure_kind=failure_kind,
     )
     return {"ok": True}
 

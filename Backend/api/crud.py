@@ -720,6 +720,22 @@ def persist_disc_scan_with_discdb(db: Session, content_hash: str, disc_info: dic
     # (lives only on the in-memory disc_info dict); it does NOT persist on
     # disc.disc_info because _extract_disc_scan_info filters it out.
     _seed_label_draft_from_tmdb(db, disc_record, disc_info)
+    # Re-inserting an ALREADY-LABELED disc must re-render its auto name: the
+    # scan persist was the last write path without the #845 refresh, so a
+    # disc linked under an older build (or whose rename was missed) stayed
+    # at its scan-time name ("UHD") through every insert→scan→rip cycle —
+    # only a label event would ever heal it (seen live: RE Apocalypse UHD,
+    # linked on 1.6.13, re-inserted on 1.6.14, still "UHD"). No-op on
+    # user-typed names and on discs without identity.
+    try:
+        from core.disc_naming import refresh_auto_disc_identity
+        refresh_auto_disc_identity(disc_record)
+        db.commit()
+    except Exception as _naming_exc:
+        logger.warning(
+            "scan persist: auto disc-name refresh failed for disc %s: %s",
+            disc_record.id, _naming_exc,
+        )
     return disc_record
 
 

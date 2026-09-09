@@ -76,12 +76,23 @@ _cached_ts: float = 0.0
 # bounded by the cooldown below, which stops re-probing that device).
 # During the 2026-09-06 outage the missing deadline let one dead drive
 # pin every uvicorn worker within minutes.
-_PROBE_TIMEOUT_SECONDS = float(os.environ.get("DRIVE_PROBE_TIMEOUT_SECONDS", "3.0"))
+# Must exceed the SUM of the internal sub-timeouts (sg_turs 1.5s + udevadm
+# 2.0s): 3.0s was smaller, so a device whose sub-probes each ran to their
+# own limit busted the deadline systematically (41 false "not responding"
+# flags during the first ASUS rip, 2026-09-07).
+_PROBE_TIMEOUT_SECONDS = float(os.environ.get("DRIVE_PROBE_TIMEOUT_SECONDS", "5.0"))
 _PROBE_COOLDOWN_SECONDS = float(os.environ.get("DRIVE_PROBE_COOLDOWN_SECONDS", "30.0"))
 _LOCK_WAIT_SECONDS = 2.0
 _probe_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="drive-probe")
 _unresponsive_until: dict[str, float] = {}
 _last_known: dict[str, DriveSnapshot] = {}
+# Consecutive probe timeouts per device: escalates the cooldown (an
+# unreadable disc left idle in the tray otherwise gets ground on every
+# 30s forever — 2026-09-07) and gates the one-shot "eject it" alert.
+_timeout_streak: dict[str, int] = {}
+_grind_alerted: set[str] = set()
+_COOLDOWN_ESCALATION = (1, 4, 20)  # ×base: 30s → 2m → 10m (then stays)
+_GRIND_ALERT_STREAK = 3
 
 
 def snapshot_drives(
@@ -108,8 +119,10 @@ def snapshot_drives(
         if force:
             # A forced refresh (startup warmup, udev event) means something
             # believes the hardware is talking again — retry cooled-down
-            # devices immediately.
+            # devices immediately and restart their escalation clocks.
             _unresponsive_until.clear()
+            _timeout_streak.clear()
+            _grind_alerted.clear()
         if (
             not force
             and _cached_snapshots is not None
@@ -386,10 +399,52 @@ def _not_responding_snapshot(dev: str, now: float) -> DriveSnapshot:
     )
 
 
+def _device_in_active_use(dev: str) -> bool:
+    """True when makemkvcon is currently working this device (rip or scan).
+
+    While MakeMKV streams the disc, a TEST UNIT READY queues behind its big
+    sequential reads and regularly exceeds any sane deadline — the drive is
+    the OPPOSITE of unresponsive. Probing a drive we know is in use is
+    pointless (the running rip IS the health signal) and made the drive
+    card flap "not responding" mid-rip (2026-09-07, first ASUS rip).
+    Detected via /proc cmdlines — no DB, no subprocess.
+    """
+    try:
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                    cmd = fh.read()
+            except OSError:
+                continue
+            if b"makemkvcon" in cmd and dev.encode() in cmd:
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def _in_use_snapshot(dev: str, now: float) -> DriveSnapshot:
+    """Snapshot for a device MakeMKV is actively using: last-known identity,
+    media present (something is being ripped from it), no hardware touched."""
+    prev = _last_known.get(dev)
+    if prev is not None:
+        return replace(prev, loaded=True, observed_at=now)
+    snap = _not_responding_snapshot(dev, now)
+    return replace(snap, loaded=True)
+
+
 def _snapshot_device(dev: str, now: float) -> DriveSnapshot:
     """Probe one device under the hard deadline (#862). A timeout abandons
     the stuck call, starts the per-device cooldown (no hardware touched
-    until it expires), and serves the not-responding fallback."""
+    until it expires), and serves the not-responding fallback. A device
+    MakeMKV is actively working is never probed at all."""
+    if _device_in_active_use(dev):
+        _unresponsive_until.pop(dev, None)
+        _timeout_streak.pop(dev, None)
+        _grind_alerted.discard(dev)
+        return _in_use_snapshot(dev, now)
     if now < _unresponsive_until.get(dev, 0.0):
         return _not_responding_snapshot(dev, now)
     future = _probe_pool.submit(_probe_device, dev, now)
@@ -397,19 +452,53 @@ def _snapshot_device(dev: str, now: float) -> DriveSnapshot:
         snap = future.result(timeout=_PROBE_TIMEOUT_SECONDS)
     except FutureTimeout:
         future.cancel()  # frees the slot when the probe never started
-        _unresponsive_until[dev] = now + _PROBE_COOLDOWN_SECONDS
+        streak = _timeout_streak.get(dev, 0) + 1
+        _timeout_streak[dev] = streak
+        factor = _COOLDOWN_ESCALATION[min(streak, len(_COOLDOWN_ESCALATION)) - 1]
+        cooldown = _PROBE_COOLDOWN_SECONDS * factor
+        _unresponsive_until[dev] = now + cooldown
         logger.warning(
-            "drive_registry: probe of %s exceeded %.1fs — drive treated as "
-            "not responding for %.0fs (power-cycle the drive if this persists)",
-            dev, _PROBE_TIMEOUT_SECONDS, _PROBE_COOLDOWN_SECONDS,
+            "drive_registry: probe of %s exceeded %.1fs (streak %d) — drive "
+            "treated as not responding for %.0fs (power-cycle the drive if "
+            "this persists)",
+            dev, _PROBE_TIMEOUT_SECONDS, streak, cooldown,
         )
+        if streak == _GRIND_ALERT_STREAK and dev not in _grind_alerted:
+            _grind_alerted.add(dev)
+            _emit_grind_alert(dev)
         return _not_responding_snapshot(dev, now)
     except Exception as exc:
         logger.warning("drive_registry: probe of %s failed: %s", dev, exc)
         return _not_responding_snapshot(dev, now)
     _unresponsive_until.pop(dev, None)
+    _timeout_streak.pop(dev, None)
+    _grind_alerted.discard(dev)
     _last_known[dev] = snap
     return snap
+
+
+def _emit_grind_alert(dev: str) -> None:
+    """One-shot alert after repeated probe timeouts (#731): either a disc the
+    drive cannot read is sitting idle in the tray (each status check grinds
+    it), or the drive itself has stopped answering. Cleared by any healthy
+    probe. Never raises into the snapshot path."""
+    try:
+        from core.notifications import emit_notification_sync
+
+        was_loaded = bool(getattr(_last_known.get(dev), "loaded", False))
+        detail = (
+            "the disc in it may be unreadable — try ejecting it"
+            if was_loaded
+            else "try power-cycling the drive"
+        )
+        emit_notification_sync(
+            f"Drive {dev} keeps failing status checks; {detail}.",
+            "error",
+            "error_drive_unresponsive",
+            id_key=f"drive_grind:{dev}",
+        )
+    except Exception as exc:
+        logger.warning("drive_registry: grind alert for %s failed: %s", dev, exc)
 
 
 def _build_snapshots() -> list[DriveSnapshot]:

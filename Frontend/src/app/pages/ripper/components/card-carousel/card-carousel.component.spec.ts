@@ -87,22 +87,24 @@ describe('CardCarouselComponent', () => {
       } as DiscMetadata)).toBe('(2014) · Complete Season Two · DVD · Disc 1');
     });
 
-    it('pairs the within-season position with the season chip, keeping the boxset number (#846)', () => {
-      // S5's 4th disc is the box's 14th: both numbers show.
+    it('shows only the within-season position when it is known (#846, user decision)', () => {
+      // The season ordinal is THE number — the boxset-wide position stays a
+      // sort key, never shown alongside it, so every season's card has the
+      // same shape (S1 used to differ from S5, which read as a bug).
       expect(component.getDiscMeta({
         ...base, movie_name: 'Star Wars: The Clone Wars',
         release_name: "Star Wars: The Clone Wars - Season 1-5 Collector's Edition",
         production_year: 2008, disc_format: 'DVD',
         disc_number: 14, disc_season: 5, disc_season_ordinal: 4,
-      } as DiscMetadata)).toBe("(2008) · Season 1-5 Collector's Edition · S5 Disc 4 · DVD · Disc 14");
-      // Season 1 discs: the counts coincide, so the redundant boxset copy is dropped.
+      } as DiscMetadata)).toBe("(2008) · Season 1-5 Collector's Edition · S5 Disc 4 · DVD");
       expect(component.getDiscMeta({
         ...base, movie_name: 'Star Wars: The Clone Wars',
         release_name: "Star Wars: The Clone Wars - Season 1-5 Collector's Edition",
         production_year: 2008, disc_format: 'DVD',
         disc_number: 3, disc_season: 1, disc_season_ordinal: 3,
       } as DiscMetadata)).toBe("(2008) · Season 1-5 Collector's Edition · S1 Disc 3 · DVD");
-      // No ordinal from the backend (unnumbered siblings): chip stays bare, as before.
+      // No ordinal from the backend (unnumbered siblings): bare chip, and the
+      // release-wide number stays — it is the only number available.
       expect(component.getDiscMeta({
         ...base, movie_name: 'Star Wars: The Clone Wars',
         release_name: "Star Wars: The Clone Wars - Season 1-5 Collector's Edition",

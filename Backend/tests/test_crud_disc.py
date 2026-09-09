@@ -628,3 +628,56 @@ def test_get_discdb_data_from_db_invalidates_when_disc_unlinked(test_db, monkeyp
         assert miss is None
     finally:
         session.close()
+
+
+def test_rescan_of_labeled_disc_refreshes_auto_name(test_db):
+    """Scan persist was the last write path without the #845 name refresh:
+    a disc linked under an older build stayed at its scan-time name ("UHD")
+    through every insert->scan->rip cycle (live: RE Apocalypse UHD). A
+    re-insert must re-render the auto name; user-typed names stay."""
+    import uuid as _uuid
+    from api import models
+
+    session = test_db()
+    try:
+        movie = models.Movie(id=str(_uuid.uuid4()), name="Resident Evil: Apocalypse", tmdb_type="movie")
+        release = models.Release(
+            id=str(_uuid.uuid4()), slug="re-lec", type="movie",
+            name="Resident Evil: Limited Edition Collection", movie_id=movie.id,
+            # Link-ready fields: without these the scan flow detaches the
+            # release (release_link_ready_for_disc) and no name can render.
+            release_year=2020, upc="036000291452",
+            cover_front_url="https://example.test/cover.jpg",
+        )
+        disc = models.Disc(
+            id=str(_uuid.uuid4()),
+            content_hash="hash-rescan-uhd",
+            release_id=release.id,
+            disc_number=8,
+            format="UHD",
+            disc_name="UHD",
+            disc_slug="uhd",
+            info_title="Resident Evil: Apocalypse",
+        )
+        session.add_all([movie, release, disc])
+        session.commit()
+
+        rescanned = crud.persist_disc_scan_with_discdb(session, "hash-rescan-uhd", {
+            "disc_hash": "hash-rescan-uhd",
+            "info_title": "Resident Evil: Apocalypse",
+            "format": "UHD",
+        })
+        assert rescanned.disc_name == "Resident Evil: Apocalypse - UHD"
+        assert rescanned.disc_slug != "uhd"
+
+        # User-typed names survive a rescan untouched.
+        rescanned.disc_name = "My UHD Copy"
+        session.commit()
+        rescanned = crud.persist_disc_scan_with_discdb(session, "hash-rescan-uhd", {
+            "disc_hash": "hash-rescan-uhd",
+            "info_title": "Resident Evil: Apocalypse",
+            "format": "UHD",
+        })
+        assert rescanned.disc_name == "My UHD Copy"
+    finally:
+        session.close()
