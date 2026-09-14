@@ -88,3 +88,64 @@ def test_build_preview_regeneration_state_respects_existing_manifests(tmp_path, 
     assert tracks[tid_missing]["status"] == "queued"
     assert regen == [tid_missing]
     assert overall in ("running", "queued")
+
+
+def _job_with_pending_track(jobs_root, jid, tid, source):
+    JobPaths(jobs_root, jid).ensure_layout()
+    return SimpleNamespace(
+        id=jid,
+        post_paths={tid: source},
+        ripped_files={},
+        disc_payload={"previews": {"tracks": {tid: {"status": "queued"}}}},
+        disc=None,
+    )
+
+
+def test_build_preview_regeneration_state_fails_tracks_whose_source_is_gone(tmp_path, monkeypatch):
+    """Raw output cleaned up after transfer: nothing to encode from, so the
+    track is terminal-failed instead of re-queued forever (2026-09-12 prod:
+    thousands of ffmpeg "No such file" runs on finished jobs)."""
+    jobs_root = tmp_path / "jobs"
+    monkeypatch.setenv("MKVAUTO_JOBS_DIR", str(jobs_root))
+    tid = "33333333-3333-3333-3333-333333333333"
+    job = _job_with_pending_track(jobs_root, "job-src-gone", tid, "Movies/gone.mkv")
+
+    tracks, regen, overall = build_preview_regeneration_state(job, MagicMock())
+
+    assert regen == []
+    assert tracks[tid]["status"] == "failed"
+    assert tracks[tid]["retryable"] is False
+    assert "gone.mkv" in tracks[tid]["error"]
+    assert overall == "failed"
+
+
+def test_build_preview_regeneration_state_requeues_when_source_exists(tmp_path, monkeypatch):
+    jobs_root = tmp_path / "jobs"
+    monkeypatch.setenv("MKVAUTO_JOBS_DIR", str(jobs_root))
+    tid = "44444444-4444-4444-4444-444444444444"
+    job = _job_with_pending_track(jobs_root, "job-src-present", tid, "Movies/here.mkv")
+    src = JobPaths(jobs_root, "job-src-present").raw / "Movies" / "here.mkv"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(b"\x1a\x45\xdf\xa3")
+
+    tracks, regen, overall = build_preview_regeneration_state(job, MagicMock())
+
+    assert regen == [tid]
+    assert tracks[tid]["status"] == "queued"
+    assert overall == "running"
+
+
+def test_build_preview_regeneration_state_fails_all_when_raw_dir_is_gone(tmp_path, monkeypatch):
+    jobs_root = tmp_path / "jobs"
+    monkeypatch.setenv("MKVAUTO_JOBS_DIR", str(jobs_root))
+    tid = "55555555-5555-5555-5555-555555555555"
+    job = _job_with_pending_track(jobs_root, "job-raw-gone", tid, None)
+    raw = JobPaths(jobs_root, "job-raw-gone").raw
+    raw.rmdir()
+
+    tracks, regen, overall = build_preview_regeneration_state(job, MagicMock())
+
+    assert regen == []
+    assert tracks[tid]["status"] == "failed"
+    assert "raw directory missing" in tracks[tid]["error"]
+    assert overall == "failed"

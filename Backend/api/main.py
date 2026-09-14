@@ -245,6 +245,33 @@ def _handle_udev_event(action: str, device: str, disc_num: Optional[str] = None)
                 logger.debug(f"Physical disc detection failed for {device}: {e}")
                 detection_details["detection_error"] = str(e)
             
+            # A failed probe is NOT an eject while makemkvcon owns the device:
+            # its sequential reads starve our open()/blkid, so a change event
+            # mid-rip (USB reset, media re-poll) classifies as EJECT and
+            # _fail_jobs_for_disc revokes the rip that was streaming fine
+            # (2026-09-09 prod, Retribution at 4%). The worker's stall
+            # watchdog owns a rip's health; a real tray-open fails makemkvcon
+            # on its own.
+            if not disc_physically_present:
+                try:
+                    from core.drive_registry import _device_in_active_use
+
+                    if _device_in_active_use(device):
+                        logger.warning(
+                            "Physical detection at %s failed while makemkvcon holds the device "
+                            "(%s) — ignoring change event; the running rip owns the drive",
+                            device,
+                            detection_details,
+                        )
+                        return {
+                            "status": "ok",
+                            "message": "Change ignored: device in active use by makemkvcon",
+                            "device": device,
+                            "skipped_active_use": True,
+                        }
+                except Exception as exc:
+                    logger.debug("active-use check failed for %s (non-fatal): %s", device, exc)
+
             # Determine action based on physical presence, not cache state
             if disc_physically_present:
                 action = "insert"

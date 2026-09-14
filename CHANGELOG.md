@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.16] - 2026-09-14
+
+### Fixed
+
+- **A finished job can no longer be flipped to "failed" by a preview task that lost a lock race.** Background preview generation shares a lock with the rip; when a rip was in progress the preview task gave up after a second and — wrongly — marked its *job* failed with "Lock held; another job is running", even for a job whose rip and transfer were both complete. Side tasks now simply retry a little later; only a rip that cannot get the drive fails.
+- **Preview auto-recovery no longer loops forever on finished jobs.** The health sweep's fixes to a job's preview state were never actually saved, so the same jobs were "recovered" every few minutes indefinitely, the five-attempt safety cap never engaged, and jobs whose ripped files had already been cleaned up after transfer were sent back to ffmpeg thousands of times (steady background load and a log full of "No such file"). Recovery state now persists, the cap applies to every automatic retry, and a track whose source file is gone is marked failed instead of re-queued.
+- **A disc probe failing mid-rip no longer ejects the rip.** When the drive reported a change while MakeMKV was streaming from it, the app's "is a disc present?" probes queued behind the rip's own reads, failed, and the change was treated as an eject — killing a rip that was progressing fine. A failed probe while MakeMKV holds the drive is now ignored; the rip itself is the health signal, and a real tray-open still fails it promptly. Rips ended this way (terminated, orphaned, ejected) are also now classified as transient so the card offers a retry.
+
 ## [1.6.15] - 2026-09-09
 
 ### Added

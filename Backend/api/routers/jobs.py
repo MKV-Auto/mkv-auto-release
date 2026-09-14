@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session, joinedload, selectinload, object_session
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+from sqlalchemy.orm.attributes import flag_modified
 import os, shutil
 
 from api import crud, database
@@ -1746,9 +1747,24 @@ def _cleanup_stale_jobs(
                 else:
                     try:
                         db.refresh(job)
-                        disc_payload = job.disc_payload or {}
+                        # Copy before mutating: disc_payload is a plain JSON
+                        # column (no MutableDict), so writing into the same
+                        # dict and re-assigning it is invisible to SQLAlchemy —
+                        # the commit was a no-op and every recovery below ran
+                        # again on the next sweep, forever (2026-09-12 prod:
+                        # 25 jobs re-flagged every 6.5 min, thousands of ffmpeg
+                        # "No such file" runs on jobs whose raw output was
+                        # long gone).
+                        disc_payload = dict(job.disc_payload or {})
                         previews_block = disc_payload.get("previews") if isinstance(disc_payload.get("previews"), dict) else {}
                         attempts = int(previews_block.get("auto_recovery_attempts") or 0)
+                        existing_tracks = previews_block.get("tracks") if isinstance(previews_block.get("tracks"), dict) else {}
+
+                        def _persist_previews(block: Dict[str, Any]) -> None:
+                            disc_payload["previews"] = block
+                            job.disc_payload = disc_payload
+                            flag_modified(job, "disc_payload")
+                            db.commit()
 
                         is_valid = True
                         val_errors: list[str] = []
@@ -1760,122 +1776,78 @@ def _cleanup_stale_jobs(
                             log.warning("Job %s: Preview validation error: %s", job.id, val_exc)
                             is_valid = False
                             val_errors = [str(val_exc)]
-
                         if not is_valid:
                             log.warning("Job %s: Preview validation failed before recovery: %s", job.id, val_errors)
-                            if attempts >= PREVIEWS_AUTO_RECOVERY_MAX_ATTEMPTS:
-                                msg = "; ".join(val_errors[:3]) if val_errors else "Preview validation failed"
-                                tracks = previews_block.get("tracks") if isinstance(previews_block.get("tracks"), dict) else {}
-                                disc_payload["previews"] = {
-                                    "status": "failed",
-                                    "tracks": tracks,
-                                    "updated_at": datetime.datetime.utcnow().isoformat(),
-                                    "auto_recovery_attempts": attempts,
-                                    "auto_recovery_last_error": msg,
-                                }
-                                job.disc_payload = disc_payload
-                                db.commit()
-                                log.warning(
-                                    "Job %s: Auto preview recovery stopped after %d failed validation(s)",
-                                    job.id,
-                                    attempts,
-                                )
-                            else:
-                                post_paths = getattr(job, "post_paths", None) or disc_payload.get("post_paths") or {}
-                                ripped_files = getattr(job, "ripped_files", None) or disc_payload.get("ripped_files") or {}
-                                file_paths = post_paths if post_paths else ripped_files
-                                synthetic_override: Dict[str, Any] | None = None
-                                if not file_paths:
-                                    existing_tracks = previews_block.get("tracks", {}) if isinstance(previews_block.get("tracks"), dict) else {}
-                                    if existing_tracks:
-                                        file_paths = {str(k): None for k in existing_tracks.keys()}
-                                        synthetic_override = file_paths
-                                        log.info(
-                                            "Job %s: Using existing preview tracks for recovery (no file_paths on job)",
-                                            job.id,
-                                        )
-                                if not file_paths:
-                                    log.warning(
-                                        "Job %s: Cannot recover previews - no file paths or existing tracks",
-                                        job.id,
-                                    )
-                                else:
-                                    if synthetic_override is not None:
-                                        tracks_state, tracks_to_regen, overall_status = build_preview_regeneration_state(
-                                            job, db, file_paths_override=synthetic_override
-                                        )
-                                    else:
-                                        tracks_state, tracks_to_regen, overall_status = build_preview_regeneration_state(job, db)
-                                    now_iso = datetime.datetime.utcnow().isoformat()
-                                    new_attempts = attempts + 1
-                                    if tracks_to_regen:
-                                        overall_status = "running"
-                                    disc_payload["previews"] = {
-                                        "status": overall_status,
-                                        "tracks": tracks_state,
-                                        "updated_at": now_iso,
-                                        "auto_recovery_attempts": new_attempts,
-                                    }
-                                    job.disc_payload = disc_payload
-                                    db.commit()
-                                    if tracks_to_regen:
-                                        task_result = generate_previews.delay(str(job.id), tracks_to_regen)
-                                        log.info(
-                                            "Job %s: Re-enqueued generate_previews for %d track(s) (task_id=%s, auto_recovery_attempt=%s)",
-                                            job.id,
-                                            len(tracks_to_regen),
-                                            task_result.id if task_result else "unknown",
-                                            new_attempts,
-                                        )
-                                    else:
-                                        log.info("Job %s: Preview recovery found nothing to regenerate", job.id)
+
+                        if attempts >= PREVIEWS_AUTO_RECOVERY_MAX_ATTEMPTS:
+                            # The cap counts every automatic re-enqueue, valid
+                            # state or not: a worker that keeps failing on a
+                            # valid-looking job must still converge.
+                            msg = "; ".join(val_errors[:3]) if val_errors else (
+                                f"auto-recovery gave up after {attempts} attempt(s)"
+                            )
+                            _persist_previews({
+                                "status": "failed",
+                                "tracks": existing_tracks,
+                                "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                "auto_recovery_attempts": attempts,
+                                "auto_recovery_last_error": msg,
+                            })
+                            log.warning(
+                                "Job %s: Auto preview recovery stopped after %d attempt(s): %s",
+                                job.id,
+                                attempts,
+                                msg,
+                            )
                         else:
                             post_paths = getattr(job, "post_paths", None) or disc_payload.get("post_paths") or {}
                             ripped_files = getattr(job, "ripped_files", None) or disc_payload.get("ripped_files") or {}
                             file_paths = post_paths if post_paths else ripped_files
-                            synthetic_override = None
-                            if not file_paths:
-                                existing_tracks = previews_block.get("tracks", {}) if isinstance(previews_block.get("tracks"), dict) else {}
-                                if existing_tracks:
-                                    synthetic_override = {str(k): None for k in existing_tracks.keys()}
-                                    log.info(
-                                        "Job %s: Using existing preview tracks for recovery (no file_paths on job)",
-                                        job.id,
-                                    )
+                            synthetic_override: Dict[str, Any] | None = None
+                            if not file_paths and existing_tracks:
+                                synthetic_override = {str(k): None for k in existing_tracks.keys()}
+                                log.info(
+                                    "Job %s: Using existing preview tracks for recovery (no file_paths on job)",
+                                    job.id,
+                                )
                             if not file_paths and not synthetic_override:
                                 log.warning(
                                     "Job %s: Cannot recover previews - no file paths or existing tracks",
                                     job.id,
                                 )
                             else:
-                                if synthetic_override is not None:
-                                    tracks_state, tracks_to_regen, overall_status = build_preview_regeneration_state(
-                                        job, db, file_paths_override=synthetic_override
-                                    )
-                                else:
-                                    tracks_state, tracks_to_regen, overall_status = build_preview_regeneration_state(job, db)
-                                now_iso = datetime.datetime.utcnow().isoformat()
+                                tracks_state, tracks_to_regen, overall_status = build_preview_regeneration_state(
+                                    job, db, file_paths_override=synthetic_override
+                                )
+                                # Only a real re-enqueue is an attempt; settling
+                                # the status from what is on disk is free.
+                                new_attempts = attempts + 1 if tracks_to_regen else attempts
                                 if tracks_to_regen:
                                     overall_status = "running"
-                                disc_payload["previews"] = {
+                                block: Dict[str, Any] = {
                                     "status": overall_status,
                                     "tracks": tracks_state,
-                                    "updated_at": now_iso,
-                                    "auto_recovery_attempts": 0,
+                                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                    "auto_recovery_attempts": new_attempts,
                                 }
-                                disc_payload["previews"].pop("auto_recovery_last_error", None)
-                                job.disc_payload = disc_payload
-                                db.commit()
+                                if not is_valid and val_errors:
+                                    block["auto_recovery_last_error"] = "; ".join(val_errors[:3])
+                                _persist_previews(block)
                                 if tracks_to_regen:
                                     task_result = generate_previews.delay(str(job.id), tracks_to_regen)
                                     log.info(
-                                        "Job %s: Re-enqueued generate_previews for %d track(s) (task_id=%s) after health check",
+                                        "Job %s: Re-enqueued generate_previews for %d track(s) (task_id=%s, auto_recovery_attempt=%s)",
                                         job.id,
                                         len(tracks_to_regen),
                                         task_result.id if task_result else "unknown",
+                                        new_attempts,
                                     )
                                 else:
-                                    log.info("Job %s: Preview recovery found nothing to regenerate", job.id)
+                                    log.info(
+                                        "Job %s: Preview recovery found nothing to regenerate; status settled to %s",
+                                        job.id,
+                                        overall_status,
+                                    )
                     except Exception as preview_exc:
                         log.error(
                             "Job %s: Failed to recover stuck preview generation: %s",
@@ -1904,6 +1876,7 @@ def _cleanup_stale_jobs(
                             db, job,
                             error_reason=orphan_error_msg,
                             reason="orphaned Celery task (service restart)" if orphan_error_msg == error_msg else "superseded by new rip",
+                            failure_kind="transient",
                         )
                     apply_job_state(
                         db, job,
@@ -1931,7 +1904,9 @@ def _cleanup_stale_jobs(
             else:
                 try:
                     if getattr(job, "rip_state", None) not in ("completed", "skipped"):
-                        StageState.rip_failed(db, job, error_reason=error_msg, reason="stale job cleanup")
+                        StageState.rip_failed(
+                            db, job, error_reason=error_msg, reason="stale job cleanup", failure_kind="transient"
+                        )
                     else:
                         apply_job_state(
                             db, job,
@@ -2032,7 +2007,7 @@ def _fail_jobs_for_disc(
                     log.warning("Failed to revoke Celery task %s for job %s: %s", celery_task_id, job.id, revoke_exc)
             error_msg = f"Job failed: {reason}"
             if getattr(job, "rip_state", None) not in ("completed", "skipped"):
-                StageState.rip_failed(db, job, error_reason=error_msg, reason=reason)
+                StageState.rip_failed(db, job, error_reason=error_msg, reason=reason, failure_kind="transient")
             else:
                 apply_job_state(
                     db, job,

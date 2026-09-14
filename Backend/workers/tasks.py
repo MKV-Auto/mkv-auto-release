@@ -68,6 +68,9 @@ BACKEND = _redis_url
 LOCK_PATH = get_lock_path()         # Win example: r'C:\tmp\disc_ripper.lock'
 SCAN_LOCK_PATH = LOCK_PATH + ".scan"
 LOCK_TIMEOUT = 1.0                          # seconds
+# Non-rip tasks that lose the lock race are retried instead of failing their job.
+LOCK_CONTENTION_RETRY_SECONDS = 30
+LOCK_CONTENTION_MAX_RETRIES = 20
 PREVIEW_LOCK_PATH = LOCK_PATH + ".preview"
 PREVIEW_SEMAPHORE_DIR = Path(get_lock_path()).parent / "ffmpeg_preview_slots"
 celery_app = Celery('tasks', broker=BROKER, backend=BACKEND)
@@ -840,6 +843,20 @@ def one_at_a_time(fn):
                 except Timeout:
                     raise self.retry(countdown=5, exc=RuntimeError('Drive scan in progress'))
         except Timeout:
+            # Only the rip owns the "lock held" failure: a rip that cannot get
+            # the drive genuinely cannot start. Every other task under this
+            # lock (previews, scans, moves) is a side job on a job whose rip
+            # may already be complete — contention means "try again shortly",
+            # never "fail the job". 2026-09-10 prod: the stale sweep re-enqueued
+            # generate_previews for a job whose rip AND transfer were done, the
+            # lock was busy, and the job flipped to failed "Lock held".
+            if fn.__name__ != "rip_disc":
+                log.info("%s: lock held, retrying later (job_id=%s)", fn.__name__, job_id)
+                raise self.retry(
+                    countdown=LOCK_CONTENTION_RETRY_SECONDS,
+                    max_retries=LOCK_CONTENTION_MAX_RETRIES,
+                    exc=RuntimeError("Lock held; another job is running"),
+                )
             # Lock is held; mark the job failed so the UI can recover.
             if job_id:
                 try:

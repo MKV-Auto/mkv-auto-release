@@ -33,9 +33,14 @@ if ! curl -sf --max-time "$PROBE_TIMEOUT" http://localhost:80/ > /dev/null 2>&1;
     exit 1
 fi
 
-# Check backend API health endpoint
-if ! curl -sf --max-time "$PROBE_TIMEOUT" http://localhost:80/api/system/health > /dev/null 2>&1; then
-    echo "Backend API not healthy"
+# Check the backend is ready to serve. Deliberately /api/readyz, NOT
+# /api/system/health: readyz is the real readiness probe (DB reachable, WAL
+# recovery fenced) and answers in ~0.02s, while system/health is an
+# operator DIAGNOSTIC that shells out to makemkvcon and broadcasts to every
+# Celery worker — 3-5s per call, and running that every 30s pokes the
+# optical drive for no reason. Liveness wants cheap and deterministic.
+if ! curl -sf --max-time "$PROBE_TIMEOUT" http://localhost:80/api/readyz > /dev/null 2>&1; then
+    echo "Backend API not ready"
     exit 1
 fi
 

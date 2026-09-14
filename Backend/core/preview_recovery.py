@@ -4,6 +4,7 @@ Shared logic for preview regeneration: scan disk vs manifests, auto-recovery cap
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 from sqlalchemy.orm import Session
@@ -53,6 +54,7 @@ def build_preview_regeneration_state(
     """
     from workers.tasks import (
         _build_title_id_maps,
+        _overall_generate_previews_status,
         _resolve_preview_rel_path,
         _resolve_preview_title_id,
         _safe_track_folder,
@@ -78,8 +80,27 @@ def build_preview_regeneration_state(
 
     paths = JobPaths.from_job(job)
     preview_root = paths.previews
+    raw_root = paths.raw
     tracks_to_regenerate: List[str] = []
     tracks_state: Dict[str, Any] = {}
+
+    def _source_missing(source: Any) -> str | None:
+        """Reason a track can never be regenerated, or None when it still can.
+
+        Previews encode from the raw rip output. Once that is cleaned up
+        (Finish, transfer cleanup) there is nothing to encode from, and
+        re-enqueuing would only burn ffmpeg cycles on "No such file".
+        """
+        if not raw_root.exists():
+            return "raw directory missing (rip output cleaned up)"
+        if not source:
+            return None
+        candidate = Path(str(source))
+        if not candidate.is_absolute():
+            candidate = raw_root / candidate
+        if not candidate.exists():
+            return f"source file missing: {source}"
+        return None
 
     preview_paths: Dict[str, Any] = {}
     for raw_key, rel_path in file_paths.items():
@@ -115,25 +136,28 @@ def build_preview_regeneration_state(
                 "error": None,
                 "source": source,
             }
-        else:
+            continue
+
+        unrecoverable = _source_missing(source)
+        if unrecoverable:
             tracks_state[track_key] = {
-                "status": "queued",
+                "status": "failed",
                 "manifest": manifest_rel,
-                "error": None,
+                "error": unrecoverable,
                 "source": source,
+                "retryable": False,
             }
-            tracks_to_regenerate.append(track_key)
+            continue
 
-    if not tracks_state:
-        overall_status = "queued"
-    elif all(v.get("status") == "completed" for v in tracks_state.values()):
-        overall_status = "completed"
-    elif any(v.get("status") == "completed" for v in tracks_state.values()):
-        overall_status = "running"
-    else:
-        overall_status = "queued"
+        tracks_state[track_key] = {
+            "status": "queued",
+            "manifest": manifest_rel,
+            "error": None,
+            "source": source,
+        }
+        tracks_to_regenerate.append(track_key)
 
-    return tracks_state, tracks_to_regenerate, overall_status
+    return tracks_state, tracks_to_regenerate, _overall_generate_previews_status(tracks_state)
 
 
 def user_reset_preview_auto_recovery_metadata(previews: Dict[str, Any]) -> None:

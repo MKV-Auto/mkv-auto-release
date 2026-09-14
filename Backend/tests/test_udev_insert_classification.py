@@ -2,7 +2,7 @@
 Tests for udev change vs physical reinsert: weak media noise, busy gate, scan single-flight.
 """
 import stat
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -156,3 +156,60 @@ def test_handle_disc_eject_marks_slot_absent():
 
     handle_disc_eject("2")
     assert get_slot_state("2") == "absent"
+
+
+@pytest.fixture
+def optical_change_probe_fails(monkeypatch):
+    """Every physical-presence probe fails: open() raises, blkid/blockdev say no media."""
+    monkeypatch.setattr("os.path.exists", lambda _p, **_kw: True)
+
+    class St:
+        st_mode = stat.S_IFBLK
+
+    def _open_fails(*_a, **_k):
+        raise OSError(123, "No medium found")
+
+    monkeypatch.setattr("os.stat", lambda _p, **_kw: St())
+    monkeypatch.setattr("os.open", _open_fails)
+    monkeypatch.setattr("subprocess.run", lambda *_a, **_k: Mock(returncode=2, stdout=""))
+
+
+def test_change_with_failed_probe_is_ignored_while_makemkvcon_holds_the_device(
+    optical_change_probe_fails, monkeypatch
+):
+    """A rip's sequential reads starve our probes; that is not an eject.
+    2026-09-09 prod: a mid-rip change event classified as EJECT and revoked
+    a rip that was streaming fine at 4%."""
+    mark_slot_stable("1")
+    monkeypatch.setattr("api.main._app_instance", None)
+    fail_jobs = Mock(return_value=[])
+
+    with patch("core.drive_registry._device_in_active_use", return_value=True), patch(
+        "api.routers.jobs._fail_jobs_for_disc", fail_jobs
+    ), patch("core._drive_operations.handle_disc_eject_for_device") as eject:
+        result = _handle_udev_event("change", "/dev/sr1", disc_num="1")
+
+    assert result.get("skipped_active_use") is True
+    assert not fail_jobs.called
+    assert not eject.called
+
+
+def test_change_with_failed_probe_is_still_an_eject_when_drive_is_idle(
+    optical_change_probe_fails, monkeypatch
+):
+    mark_slot_stable("1")
+    monkeypatch.setattr("api.main._app_instance", None)
+    fail_jobs = Mock(return_value=[])
+
+    with patch("core.drive_registry._device_in_active_use", return_value=False), patch(
+        "api.routers.jobs._fail_jobs_for_disc", fail_jobs
+    ), patch(
+        "core._drive_operations.handle_disc_eject_for_device",
+        return_value={"status": "ok", "message": "Eject processed"},
+    ), patch("core.media_diagnostics.medium_present_but_unreadable", return_value=False), patch(
+        "api.database.SessionLocal", return_value=MagicMock()
+    ):
+        result = _handle_udev_event("change", "/dev/sr1", disc_num="1")
+
+    assert result.get("skipped_active_use") is None
+    fail_jobs.assert_called_once()
