@@ -203,6 +203,15 @@
   padding-left: 1rem;
   pointer-events: auto;
 
+  // Trailing gutter to match padding-left. padding-right alone is not
+  // reliably part of a flex scroller's scrollable area, so at full scroll the
+  // last card ended flush against the clipping edge — on phones its right
+  // border was cut off, and failed cards sort last. A spacer item always is.
+  &::after {
+    content: '';
+    flex: 0 0 calc(1rem - 8px); // + the 8px gap before it = 1rem, matching the left
+  }
+
   // Template-style thin scrollbar (Phase 2)
   &::-webkit-scrollbar {
     height: 6px;

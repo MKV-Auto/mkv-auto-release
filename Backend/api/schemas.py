@@ -823,6 +823,11 @@ class StorageInfo(BaseModel):
     total: int
     used: int
     free: int
+    # #885: the figures are for exactly ``path``. ``error`` means it could not
+    # be measured (figures are 0); ``warning`` means they are the container's
+    # own disk rather than a mounted drive.
+    error: Optional[str] = None
+    warning: Optional[str] = None
 
 class StorageSummary(BaseModel):
     data_root: StorageInfo

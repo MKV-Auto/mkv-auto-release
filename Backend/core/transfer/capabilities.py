@@ -101,10 +101,12 @@ def _probe_local(config) -> TransferCapabilities:
     if not transfer_dir:
         return _pessimistic("transfer_dir not set")
     root = Path(transfer_dir)
-    try:
-        root.mkdir(parents=True, exist_ok=True)
-    except Exception as exc:
-        return _pessimistic(f"transfer_dir mkdir failed: {exc}")
+    # #885: probe only a destination that already exists on a mounted drive.
+    from core.storage_location import destination_problem
+
+    problem = destination_problem(root)
+    if problem:
+        return _pessimistic(problem)
 
     probe_name = f"{PROBE_PREFIX}{uuid.uuid4().hex}.txt"
     probe_path = root / probe_name

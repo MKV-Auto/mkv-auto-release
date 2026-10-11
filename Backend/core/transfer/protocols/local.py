@@ -36,10 +36,15 @@ def transfer_local(
     Returns:
         Dictionary with transfer results
     """
-    # Resolve destination path and ensure it exists (create if missing)
-    transfer_dir = Path(config.transfer_dir) if config.transfer_dir else Path.cwd()
-    transfer_dir = transfer_dir.resolve()
-    transfer_dir.mkdir(parents=True, exist_ok=True)
+    # #885: the destination root must already exist on a mounted drive. It
+    # is never created here — creating it put transfers in the container's
+    # writable layer, lost on the next update, after the rip was cleaned up.
+    from core.storage_location import destination_problem
+
+    problem = destination_problem(config.transfer_dir)
+    if problem:
+        raise RuntimeError(problem)
+    transfer_dir = Path(config.transfer_dir).expanduser().resolve()
     dest_path = transfer_dir / src_path.name
 
     # Ensure destination parent for this transfer exists

@@ -545,3 +545,77 @@ def test_repeated_timeouts_escalate_cooldown_and_alert_once(monkeypatch, _reset_
     snapshot_drives()
     assert drive_registry._timeout_streak == {}
     assert "/dev/sr1" not in drive_registry._grind_alerted
+
+
+# ---- #874: identity for an unresponsive drive right after boot -----------
+
+def _stuck_probe(dev):
+    time.sleep(5)  # stands in for a drive grinding an unreadable disc
+    return True
+
+
+def test_not_responding_after_boot_resolves_by_id_identity(
+    monkeypatch, _reset_wedge_state
+):
+    """Fresh boot (no last-known snapshot) + probe timeout: the card still
+    names the drive from by-id, which never touches the hardware."""
+    monkeypatch.setattr(drive_registry, "_enumerate_devices", lambda: ["/dev/sr0"])
+    monkeypatch.setattr(drive_registry, "_device_in_active_use", lambda d: False)
+    monkeypatch.setattr(drive_registry, "_media_present", _stuck_probe)
+    monkeypatch.setattr(
+        drive_registry, "_resolve_identity", lambda d: _id("1958040110900395")
+    )
+    monkeypatch.setattr(drive_registry, "_run_udevadm", lambda d: {})
+
+    snaps = snapshot_drives(force=True)
+    ident = snaps[0].identity
+    assert ident.by_id_serial == "1958040110900395"
+    assert ident.identity_source == "by-id"
+    assert ident.multi_drive_safe is True
+    # Still never claims media (#724).
+    assert snaps[0].loaded is False
+    assert snaps[0].volume_label is None
+    assert snaps[0].media_kind is None
+
+
+def test_not_responding_after_boot_falls_back_to_unknown(
+    monkeypatch, _reset_wedge_state
+):
+    monkeypatch.setattr(drive_registry, "_enumerate_devices", lambda: ["/dev/sr0"])
+    monkeypatch.setattr(drive_registry, "_device_in_active_use", lambda d: False)
+    monkeypatch.setattr(drive_registry, "_media_present", _stuck_probe)
+
+    def _boom(dev):
+        raise OSError("by-id unavailable")
+
+    monkeypatch.setattr(drive_registry, "_resolve_identity", _boom)
+    monkeypatch.setattr(drive_registry, "_run_udevadm", lambda d: {})
+
+    snaps = snapshot_drives(force=True)
+    ident = snaps[0].identity
+    assert ident.by_id_serial == "unknown:sr0"
+    assert ident.identity_source == "unknown"
+    assert ident.multi_drive_safe is False
+    assert snaps[0].loaded is False
+
+
+def test_in_use_after_boot_resolves_by_id_identity(monkeypatch, _reset_wedge_state):
+    """MakeMKV already working the drive at boot: no probe, loaded=True, and
+    the identity comes from by-id rather than unknown:<dev>."""
+    monkeypatch.setattr(drive_registry, "_enumerate_devices", lambda: ["/dev/sr1"])
+    monkeypatch.setattr(drive_registry, "_device_in_active_use", lambda d: True)
+    probed = {"n": 0}
+
+    def _probe(dev):
+        probed["n"] += 1
+        return True
+
+    monkeypatch.setattr(drive_registry, "_media_present", _probe)
+    monkeypatch.setattr(drive_registry, "_resolve_identity", lambda d: _id("ASUS1"))
+    monkeypatch.setattr(drive_registry, "_run_udevadm", lambda d: {})
+
+    snaps = snapshot_drives(force=True)
+    assert probed["n"] == 0  # hardware untouched
+    assert snaps[0].loaded is True
+    assert snaps[0].identity.by_id_serial == "ASUS1"
+    assert snaps[0].identity.multi_drive_safe is True

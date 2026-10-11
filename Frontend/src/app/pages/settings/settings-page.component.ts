@@ -129,6 +129,9 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
           <div class="settings-storage-block">
             <label>Data Root</label>
             <div class="settings-storage-path">{{ storageSummary.data_root.path }}</div>
+            <div *ngIf="storageSummary.data_root.error" class="settings-storage-error">{{ storageSummary.data_root.error }}</div>
+            <div *ngIf="storageSummary.data_root.warning" class="settings-storage-warning">{{ storageSummary.data_root.warning }}</div>
+            <ng-container *ngIf="!storageSummary.data_root.error">
             <div class="settings-storage-values">
               <span class="settings-storage-free">{{ formatBytes(storageSummary.data_root.free) }}</span>
               <span class="settings-storage-total">/ {{ formatBytes(storageSummary.data_root.total) }}</span>
@@ -137,10 +140,14 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
               <div class="settings-storage-bar-fill" [style.width.%]="storageSummary.data_root.total ? (100 - (storageSummary.data_root.free / storageSummary.data_root.total * 100)) : 0" [style.background]="getStorageBarColor(storageSummary.data_root.free, storageSummary.data_root.total)"></div>
             </div>
             <div class="settings-storage-pct">{{ storageSummary.data_root.total ? (storageSummary.data_root.free / storageSummary.data_root.total * 100 | number:'1.1-1') : 0 }}% free</div>
+            </ng-container>
           </div>
           <div class="settings-storage-block">
             <label>Transfer Root</label>
             <div class="settings-storage-path">{{ storageSummary.transfer_root.path }}</div>
+            <div *ngIf="storageSummary.transfer_root.error" class="settings-storage-error">{{ storageSummary.transfer_root.error }}</div>
+            <div *ngIf="storageSummary.transfer_root.warning" class="settings-storage-warning">{{ storageSummary.transfer_root.warning }}</div>
+            <ng-container *ngIf="!storageSummary.transfer_root.error">
             <div class="settings-storage-values">
               <span class="settings-storage-free">{{ formatBytes(storageSummary.transfer_root.free) }}</span>
               <span class="settings-storage-total">/ {{ formatBytes(storageSummary.transfer_root.total) }}</span>
@@ -149,6 +156,7 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
               <div class="settings-storage-bar-fill" [style.width.%]="storageSummary.transfer_root.total ? (100 - (storageSummary.transfer_root.free / storageSummary.transfer_root.total * 100)) : 0" [style.background]="getStorageBarColor(storageSummary.transfer_root.free, storageSummary.transfer_root.total)"></div>
             </div>
             <div class="settings-storage-pct">{{ storageSummary.transfer_root.total ? (storageSummary.transfer_root.free / storageSummary.transfer_root.total * 100 | number:'1.1-1') : 0 }}% free</div>
+            </ng-container>
           </div>
         </div>
         <div *ngIf="!storageSummary && !storageError && !storageLoading" class="settings-storage-pct">Click Refresh to load storage information</div>

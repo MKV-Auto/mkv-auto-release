@@ -1861,6 +1861,16 @@ button.boxset-step-toggle.boxset-step-toggle-boxset-active {
   color: #f87171;
 }
 
+.settings-storage-warning {
+  padding: 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  font-size: 0.8125rem;
+  color: #fbbf24;
+}
+
 .settings-storage-grid {
   display: grid;
   grid-template-columns: 1fr;

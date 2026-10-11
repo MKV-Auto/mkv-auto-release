@@ -390,6 +390,7 @@ button.disc-card.loading,
 
 /* ---- Footer — single row: mount | Scanning... + pill (ui-lab: flex items-center justify-between gap-2) ---- */
 .disc-card-footer {
+  position: relative; // anchors .disc-card-progress over the top border
   margin-top: 0.375rem;
   padding-top: 0.375rem;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
@@ -632,15 +633,22 @@ button.disc-card.family-working:hover:not(:disabled):not([aria-disabled="true"])
 }
 
 /* Thin stage progress bar between meta and footer (working/fix families). */
+/* Overlays the footer's 1px top border rather than taking a row of its own.
+   It used to sit between meta and footer (3px + 4px margin), and the card is
+   a fixed 2:1 box: on engines that hold aspect-ratio strictly (WebKit), that
+   extra 7px pushed failed/working cards' footer into the bottom padding,
+   up against the border, while every other card fit. Absolutely positioned,
+   it adds no height in any card state. */
 .disc-card-progress {
-  position: relative;
-  width: 100%;
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
   height: 3px;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
-  margin-top: 4px;
-  flex-shrink: 0;
+  pointer-events: none;
 }
 .disc-card-progress i {
   position: absolute;

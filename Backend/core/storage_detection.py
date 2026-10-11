@@ -60,17 +60,18 @@ def get_local_storage_info(config: models.TransferConfig) -> Tuple[Optional[Dict
     
     try:
         dest_path = Path(transfer_dir).expanduser().resolve()
-        
-        # Find existing parent if path doesn't exist
-        target = dest_path
-        while not target.exists() and target != target.parent:
-            target = target.parent
-        if not target.exists():
-            target = Path("/")
-        
-        usage = shutil.disk_usage(target)
+
+        # #885: measure the configured path itself. Walking up to the nearest
+        # existing parent reported the container's own disk (often "/") as
+        # the drive, so a transfer "fit" a drive it was never going to reach.
+        from core.storage_location import destination_problem
+
+        problem = destination_problem(dest_path)
+        if problem:
+            return None, problem
+        usage = shutil.disk_usage(dest_path)
         return {
-            "path": str(target),
+            "path": str(dest_path),
             "total": usage.total,
             "used": usage.used,
             "free": usage.free,

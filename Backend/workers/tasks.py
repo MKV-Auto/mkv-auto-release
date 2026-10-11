@@ -152,7 +152,7 @@ RIP_PROGRESS_COPY_END = 85
 
 # Configure logging
 from core.logging_utils import get_logger, _get_log_level_from_env
-from core.log_file_config import LOG_ROTATE_BACKUP_COUNT, LOG_ROTATE_MAX_BYTES
+from core.log_file_config import LOG_ROTATE_BACKUP_COUNT, LOG_ROTATE_MAX_BYTES, SharedRotatingFileHandler
 from logging.handlers import RotatingFileHandler as _RotatingFileHandler
 log = get_logger(__name__)
 
@@ -168,7 +168,9 @@ def _configure_worker_file_logging() -> None:
             return
         level = _get_log_level_from_env()
         formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-        handler = _RotatingFileHandler(
+        # Every Celery process (and uvicorn, which imports this module) appends here:
+        # the shared handler follows rotations made by any of them (#884).
+        handler = SharedRotatingFileHandler(
             logs_dir / "celery_worker.log", maxBytes=LOG_ROTATE_MAX_BYTES, backupCount=LOG_ROTATE_BACKUP_COUNT
         )
         handler.setLevel(level)
@@ -576,6 +578,15 @@ def _mkv_file_sizes(workdir: Path) -> dict[str, int]:
     from workers.rip_raw_ready import mkv_sizes_by_relpath
 
     return mkv_sizes_by_relpath(workdir)
+
+
+# MakeMKV's "title added" line during a rip: MSG 3307 for an ordinary title,
+# MSG 3308 for each angle of a multi-angle playlist ("File 00800.mpls (angle 1)
+# was added as title #3"). Missing 3308 left a multi-angle main feature out of
+# title_filename_map (Revenge of the Sith, 2026-10-08).
+RIP_TITLE_ADDED_RE = re.compile(
+    r'^MSG:330[78],\d+,\d+,"File (\d{5}\.(?:mpls|m2ts))(?: \(angle \d+\))? was added as title #(\d+)"'
+)
 
 
 def _normalize_ripped_files_to_title_ids(
@@ -2357,7 +2368,7 @@ def rip_disc(
     prgv_re = re.compile(r'^PRGV:(\d+),(\d+),(\d+)')
     tqdm_re = re.compile(r'^\s*(\d{1,3})%\|')
     title_re = re.compile(r'^Title\s+#(\d+)', re.IGNORECASE)
-    added_re = re.compile(r'^MSG:3307,\d+,\d+,"File (\d{5}\.(?:mpls|m2ts)) was added as title #(\d+)"')
+    added_re = RIP_TITLE_ADDED_RE
     skipped_re = re.compile(r'^MSG:(3309|3025),\d+,\d+,"(?:Title|File) #?(\d{5}\.(?:mpls|m2ts)) .*skipped"')
     tcount_re = re.compile(r'^TCOUNT:(\d+)')
     saving_titles_re = re.compile(r'Saving\s+(\d+)\s+titles', re.IGNORECASE)
@@ -2669,8 +2680,14 @@ def rip_disc(
                             if idx < len(mkv_files):
                                 mapped[t_key] = mkv_files[idx]
                     title_output_map = mapped
+                    already_recorded = getattr(job, "ripped_files", None) or {}
                     for k, v in mapped.items():
                         ripped_paths.setdefault(k, v)
+                        # #882: only new mappings go to the committer; re-adding
+                        # every file each call crossed its commit threshold
+                        # every time (a DB commit per progress update).
+                        if already_recorded.get(k) == v or ripped_files_committer.pending_updates.get(k) == v:
+                            continue
                         # Update ripped_files incrementally if file exists
                         if rip_workdir and (rip_workdir / v).exists():
                             ripped_files_committer.add(k, v)
@@ -2785,6 +2802,13 @@ def rip_disc(
                     # queue previews for newly completed titles
                     try:
                         newly_completed = [k for k in completed_titles if k not in preview_tracks_enqueued]
+                        if not newly_completed:
+                            # #882: nothing new to preview. Everything below
+                            # (title-id maps, a glob of the raw dir, a file
+                            # check per title, a ripped_files commit) used to
+                            # run on EVERY progress update — ~1.6–8.6 s each
+                            # on a 140-title disc.
+                            return
                         # If we have final_paths from gather_final_outputs, prefer those filenames.
                         final_paths = (job.disc_payload or {}).get("final_paths") or {}
                         title_outputs = (job.disc_payload or {}).get("title_output_map") or {}
@@ -5418,6 +5442,20 @@ def _run_prep_phase(self, job_id: str):
             # the env-var + active-TransferConfig logic that will flip it
             # to a destination path lands in the next migration step.
             trans_root = _resolve_rename_dest_root(job, paths, db)
+            # #885: a local library root is never created here. Creating a
+            # missing /library put finished files in the container's writable
+            # layer (lost on the next update) and let the rip be cleaned up.
+            if Path(trans_root) != Path(paths.transient):
+                from core.storage_location import destination_problem
+                dest_problem = destination_problem(trans_root)
+                if dest_problem:
+                    post_log(f"rename_destination: {dest_problem}", "error")
+                    self.add_log(job, db, f"resume_postprocess: {dest_problem}")
+                    _post_postprocess_complete_callback(
+                        job_id, success=False, error_reason=dest_problem,
+                        failure_kind="precondition",
+                    )
+                    return
             trans_root.mkdir(parents=True, exist_ok=True)
             self.add_log(job, db, f"resume_postprocess: Rename destination: {trans_root}")
             

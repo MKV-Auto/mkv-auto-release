@@ -444,24 +444,31 @@ def _health_check_sync() -> tuple:
         "total_gb": round(storage_info.total / (1024**3), 2),
         "free_gb": round(storage_info.free / (1024**3), 2),
         "used_percent": round((storage_info.used / storage_info.total * 100), 1) if storage_info.total > 0 else 0,
+        "error": storage_info.error,
+        "warning": storage_info.warning,
     }
     return (makemkv_health_data, worker_health_data, storage_health_data)
 
 
 def _usage_for(path: Path) -> StorageInfo:
-    requested = path
-    target = requested
-    while not target.exists() and target != target.parent:
-        target = target.parent
-    if not target.exists():
-        target = Path("/")
+    """Space for exactly ``path`` (#885).
 
+    Never walks up to a parent: that reported the container's own disk (or
+    ``/``) as if it were the user's drive whenever the path was wrong.
+    """
+    from core.storage_location import usage_problem
+
+    target = path.expanduser()
+    error, warning = usage_problem(target)
+    if error:
+        return StorageInfo(path=str(target), total=0, used=0, free=0, error=error)
     usage = shutil.disk_usage(target)
     return StorageInfo(
         path=str(target),
         total=usage.total,
         used=usage.used,
         free=usage.free,
+        warning=warning,
     )
 
 def _ensure_dir(path: Path) -> Path:
@@ -475,7 +482,7 @@ def _ensure_dir(path: Path) -> Path:
 async def storage_info(path: str | None = None) -> StorageInfo:
     """
     Return disk usage for the given path (defaults to MKVAUTO_DATA).
-    If the path does not exist, fallback to the nearest existing parent.
+    A path that does not exist reports an error, never a parent's space.
     """
     requested = Path(path).expanduser() if path else get_mkvauto_data()
     return _usage_for(requested)
@@ -500,9 +507,13 @@ async def storage_summary(db: Session = Depends(get_db)) -> StorageSummary:
                 transfer_path = Path(active_config.transfer_dir).expanduser().resolve()
                 log.debug(f"Using active local transfer config destination: {transfer_path}")
             else:
-                # Local config but no transfer_dir set, fall back to data root
-                log.debug("Active local config has no transfer_dir set, using data root")
-                transfer_path = get_mkvauto_data()
+                # #885: say so — showing the data volume here looked like the
+                # destination had that much room.
+                from api.schemas import StorageInfo
+                transfer_root_info = StorageInfo(
+                    path="", total=0, used=0, free=0,
+                    error="No transfer folder is set. Choose one in Settings > Transfers.",
+                )
         else:
             # For remote transfers (rsync, smb, nfs), use storage detection
             log.debug(f"Active config is remote ({active_config.mode}), checking remote storage")
@@ -554,13 +565,22 @@ async def storage_summary(db: Session = Depends(get_db)) -> StorageSummary:
     else:
         # No active config, fallback to legacy env var or data root
         log.debug("No active transfer config found, using fallback")
-        transfer_path = Path(os.getenv("MAKEMKV_TRANSFER_DIR", get_mkvauto_data()))
-    
-    # If we didn't get remote storage info, use local path
+        legacy = os.getenv("MAKEMKV_TRANSFER_DIR")
+        if legacy:
+            transfer_path = Path(legacy)
+        else:
+            from api.schemas import StorageInfo
+            transfer_root_info = StorageInfo(
+                path="", total=0, used=0, free=0,
+                error="No transfer destination is configured.",
+            )
+
+    # If we didn't get remote storage info, measure the local path itself —
+    # never creating it (#885: that put a missing destination inside the
+    # container and then reported the container's disk as its space).
     if transfer_root_info is None:
-        transfer_root = _ensure_dir(transfer_path) if transfer_path else data_root
-        log.debug(f"Transfer usage path: {transfer_root}")
-        transfer_root_info = _usage_for(transfer_root)
+        log.debug(f"Transfer usage path: {transfer_path}")
+        transfer_root_info = _usage_for(transfer_path)
     
     return StorageSummary(
         data_root=_usage_for(data_root),

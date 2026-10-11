@@ -14,6 +14,24 @@ from workers.rip_raw_ready import mkv_sizes_by_relpath, probe_ripped_mkvs_ready,
 log = logging.getLogger(__name__)
 
 
+def _add_rip_time_matches(filename_to_title_id: dict[str, str], job: Any) -> dict[str, str]:
+    """Add the rip's own output-file -> title matches (``job.ripped_files``).
+
+    The rip matched each MKV to its title while MakeMKV was writing it. Without
+    this, a file whose ``_tNN`` number differs from the disc scan's title index
+    can't be matched here: multi-angle playlists are numbered differently by the
+    rip (Revenge of the Sith: main feature ``_t03`` vs scan index 10), so
+    verification counted 10/11 and waited out its 10-minute timer on a complete
+    rip (2026-10-08 RC test). Existing entries win.
+    """
+    ripped = getattr(job, "ripped_files", None) or {}
+    if isinstance(ripped, dict):
+        for tid, rel in ripped.items():
+            if tid and rel:
+                filename_to_title_id.setdefault(os.path.basename(str(rel)), str(tid))
+    return filename_to_title_id
+
+
 def run_rip_verification_for_job(job_task: Any, job_id: str) -> None:
     from api import models as db_models
 
@@ -159,6 +177,7 @@ def _run_miss_label_verification(
     for tid, fn in title_filename_map.items():
         if fn and tid:
             filename_to_title_id[str(fn)] = str(tid)
+    _add_rip_time_matches(filename_to_title_id, job)
 
     try:
         ripped_src0, _ = job_task.gather_final_outputs(
@@ -419,6 +438,7 @@ def _run_hit_verification(
         for tid, fn in title_filename_map.items():
             if fn and tid:
                 filename_to_title_id.setdefault(str(fn), str(tid))
+    _add_rip_time_matches(filename_to_title_id, job)
 
     try:
         ripped_files_source, _ = job_task.gather_final_outputs(

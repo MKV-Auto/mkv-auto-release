@@ -117,6 +117,10 @@ export interface StorageInfo {
   total: number;
   used: number;
   free: number;
+  /** #885: the path couldn't be measured (figures are 0). */
+  error?: string | null;
+  /** #885: measured, but it's the container's own disk, not a mounted drive. */
+  warning?: string | null;
 }
 export interface StorageSummary {
   data_root: StorageInfo;

@@ -1,6 +1,7 @@
 import re, os, struct, hashlib, json, requests, stat, tempfile, socket, shutil, logging, time, fcntl, glob, signal
 import subprocess
 import threading
+import queue
 import datetime
 from typing import Optional, Callable
 from tqdm import tqdm
@@ -700,6 +701,20 @@ def diagnose_makemkv_no_drives(output: str) -> Optional[str]:
     )
 
 
+def get_rip_progress_callback_interval_seconds() -> float:
+    """
+    Minimum seconds between progress (PRGV) callbacks during a MakeMKV run (#882).
+    From env MKVAUTO_RIP_PROGRESS_INTERVAL_SECONDS, default 1.0; values below 0.05
+    are raised to 0.05. Non-progress lines are never throttled.
+    """
+    raw = os.environ.get("MKVAUTO_RIP_PROGRESS_INTERVAL_SECONDS", "1.0")
+    try:
+        v = float(str(raw).strip())
+    except ValueError:
+        return 1.0
+    return max(0.05, v)
+
+
 def get_rip_output_stall_seconds() -> int:
     """
     Max seconds without a line of process output before the rip is aborted (worker-owned stall).
@@ -1020,49 +1035,119 @@ def run_makemkv(
             daemon=True,
         ).start()
 
+    # #882: drain makemkvcon's stdout on its own thread. The consumer below
+    # runs ``line_cb``, which does DB commits and file scans; when it read the
+    # pipe itself, a slow callback let the 64 KB pipe fill and froze MakeMKV
+    # mid-rip (2026-10-06 RE: Apocalypse UHD — ~1.6–8.6 s per progress line,
+    # hours of stalls, and a 5 h backlog drained AFTER MakeMKV had exited).
+    # The reader also owns the stall watchdog's heartbeat, so the watchdog
+    # measures MakeMKV's real output, not how fast we process it.
+    line_queue: "queue.Queue[str | None]" = queue.Queue()
+
+    def _drain_stdout() -> None:
+        try:
+            for raw_line in proc.stdout:
+                _bump_last_stdout_line()
+                line_queue.put(raw_line)
+        except Exception as exc:
+            logger.warning("makemkvcon PID %s: stdout reader stopped: %s", makemkv_pid, exc)
+        finally:
+            line_queue.put(None)  # EOF
+
+    reader = threading.Thread(target=_drain_stdout, name="makemkv-stdout-reader", daemon=True)
+    reader.start()
+
     full_output        = []
     pbar               = None
     disc_error_detected = False
 
     version_seen = None
 
-    try:
-        line_count = 0
-        for line in proc.stdout:
-            stripped = line.strip()
-            _bump_last_stdout_line()
-            full_output.append(line)
-            line_count += 1
+    def _deliver(stripped_line: str) -> None:
+        if line_cb:
             try:
-                ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                log_handle.write(f"[{ts}] {stripped}\n")
+                line_cb(stripped_line)
             except Exception:
                 pass
 
-            if line_cb:
+    # Progress (PRGV) lines are coalesced: within a burst only the newest one
+    # reaches ``line_cb``, at most once per interval. Every other line is
+    # delivered, in order, and a pending PRGV is always flushed BEFORE the
+    # next non-PRGV line so the callback's title-boundary logic (PRGC
+    # "Analyzing seamless segments", PRGV counter resets) sees the same
+    # sequence it always did, minus redundant intermediate progress values.
+    progress_interval = get_rip_progress_callback_interval_seconds()
+    pending_prgv: str | None = None
+    last_prgv_delivery = 0.0
+
+    def _flush_pending_prgv() -> None:
+        nonlocal pending_prgv, last_prgv_delivery
+        if pending_prgv is not None:
+            line_to_send, pending_prgv = pending_prgv, None
+            _deliver(line_to_send)
+            last_prgv_delivery = time.monotonic()
+
+    try:
+        eof = False
+        while not eof:
+            # Wait for output; with a progress value pending, wake up in time
+            # to deliver it even if MakeMKV goes quiet.
+            try:
+                if pending_prgv is not None:
+                    wait = max(0.0, progress_interval - (time.monotonic() - last_prgv_delivery))
+                    first = line_queue.get(timeout=wait)
+                else:
+                    first = line_queue.get()
+            except queue.Empty:
+                _flush_pending_prgv()
+                continue
+
+            batch = [first]
+            while True:
                 try:
-                    line_cb(stripped)
-                except Exception as cb_exc:
+                    batch.append(line_queue.get_nowait())
+                except queue.Empty:
+                    break
+
+            for line in batch:
+                if line is None:
+                    eof = True
+                    break
+                stripped = line.strip()
+                full_output.append(line)
+                try:
+                    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    log_handle.write(f"[{ts}] {stripped}\n")
+                except Exception:
                     pass
 
-            # progress handling
-            m = PRGV_RE.match(stripped)
-            if m:
-                _, done, total = map(int, m.groups())
-                if pbar is None:
-                    pbar = tqdm(total=total, unit="units", dynamic_ncols=True)
-                pbar.update(done - pbar.n)
+                # detect the specific SCSI read error
+                if DISC_ERR_RE.match(stripped):
+                    disc_error_detected = True
 
-            # detect the specific SCSI read error
-            if DISC_ERR_RE.match(stripped):
-                disc_error_detected = True
+                # capture version banner if present so we can surface it on errors
+                if "makemkv v" in stripped.lower():
+                    version_seen = stripped
 
-            # capture version banner if present so we can surface it on errors
-            if "makemkv v" in stripped.lower():
-                version_seen = stripped
+                # progress handling
+                m = PRGV_RE.match(stripped)
+                if m:
+                    _, done, total = map(int, m.groups())
+                    if pbar is None:
+                        pbar = tqdm(total=total, unit="units", dynamic_ncols=True)
+                    pbar.update(done - pbar.n)
+                    pending_prgv = stripped
+                    continue
+
+                _flush_pending_prgv()
+                _deliver(stripped)
+
+            if eof or time.monotonic() - last_prgv_delivery >= progress_interval:
+                _flush_pending_prgv()
     finally:
         stop_watchdog.set()
         rc = proc.wait()
+        reader.join(timeout=5)
         if pbar:
             pbar.close()
         try:
@@ -2959,13 +3044,39 @@ def calculate_required_rip_space_bytes(
     titles: dict | None,
     disc_size_bytes: int | None,
     buffer_multiplier: float = 1.3,
+    *,
+    rip_all: bool = True,
 ) -> int | None:
-    total_disc_size = 0
-    if titles:
-        total_disc_size = calculate_disc_size_from_titles(titles)
+    """Bytes a rip is expected to need, including previews and a safety buffer.
 
-    if total_disc_size <= 0 and disc_size_bytes:
-        total_disc_size = disc_size_bytes
+    ``rip_all`` must describe the rip that will actually run, because the two
+    modes write very different amounts:
+
+    * ``rip_all=True`` (``Disc.rip`` default: ``makemkvcon mkv DEV all OUT``)
+      writes EVERY enumerated title. A disc that lists the same feature twice
+      — as a playlist and as a raw stream, or as multiple angles — therefore
+      writes MORE than the physical disc holds, so the physical size is a
+      floor, never the answer. 2026-09-19 prod: a 46 GB Blu-ray whose titles
+      summed to 81 GB wrote 80 GB (the feature twice, 39.6 GB + 39.0 GB).
+      The pre-flight had no per-title sizes, fell back to the 46 GB physical
+      size, passed against ~78 GB free, and filled the volume — which took
+      Postgres and Redis down with it (#875).
+    * ``rip_all=False`` (selective ``rip_set`` loop) writes only the titles
+      passed in, which can legitimately be a fraction of the disc.
+
+    Returns None when neither per-title sizes nor a physical size are known;
+    callers treat that as "cannot estimate" rather than "fits".
+    """
+    titles_total = calculate_disc_size_from_titles(titles) if titles else 0
+    physical_total = disc_size_bytes or 0
+
+    if rip_all:
+        # Whichever is larger is the honest estimate: missing/partial title
+        # sizes must not estimate below the disc itself, and duplicate titles
+        # must not be capped at it.
+        total_disc_size = max(titles_total, physical_total)
+    else:
+        total_disc_size = titles_total or physical_total
 
     if total_disc_size <= 0:
         return None

@@ -22,7 +22,7 @@ from core.loop_local import LoopLocalLock
 from core.utils import get_mkvauto_tmp, get_mkvauto_root
 from core.job_state import apply_job_state
 from core.logging_utils import get_logger, _get_log_level_from_env
-from core.log_file_config import LOG_ROTATE_BACKUP_COUNT, LOG_ROTATE_MAX_BYTES
+from core.log_file_config import LOG_ROTATE_BACKUP_COUNT, LOG_ROTATE_MAX_BYTES, SharedRotatingFileHandler
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
@@ -49,16 +49,21 @@ def _configure_logging():
     # Get log level from environment
     log_level = _get_log_level_from_env()
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    
+
+    # Both files are shared: Celery processes import this module at runtime
+    # (core.notifications / core.job_state reach for ``_app_instance``), which runs
+    # this setup there too. SharedRotatingFileHandler makes every process follow a
+    # rotation done by any of them, instead of writing on into ``.1`` (#884).
+
     # HTTP/uvicorn log file (HTTP access and error logs)
-    uvicorn_handler = RotatingFileHandler(
+    uvicorn_handler = SharedRotatingFileHandler(
         logs_dir / "uvicorn.log", maxBytes=LOG_ROTATE_MAX_BYTES, backupCount=LOG_ROTATE_BACKUP_COUNT
     )
     uvicorn_handler.setFormatter(formatter)
     uvicorn_handler.setLevel(log_level)
     
     # Backend API log file (API routes, core modules, and transfer operations)
-    api_handler = RotatingFileHandler(
+    api_handler = SharedRotatingFileHandler(
         logs_dir / "api.log", maxBytes=LOG_ROTATE_MAX_BYTES, backupCount=LOG_ROTATE_BACKUP_COUNT
     )
     api_handler.setFormatter(formatter)
@@ -154,6 +159,15 @@ def _handle_udev_event(action: str, device: str, disc_num: Optional[str] = None)
         _registry_invalidate()
     except Exception as exc:
         logger.debug("drive_registry invalidate failed (non-fatal): %s", exc)
+
+    # #881: a replugged drive comes back with the kernel's 30 s command
+    # timeout; raise it again before anything reads the new disc.
+    try:
+        from core.optical_timeout import ensure_drive_timeout
+
+        ensure_drive_timeout(device)
+    except Exception as exc:
+        logger.debug("optical timeout check failed (non-fatal): %s", exc)
 
     try:
         from core._drive_operations import handle_disc_eject, handle_disc_insert, handle_disc_eject_for_device
@@ -745,7 +759,16 @@ async def lifespan(app: FastAPI):
             )
 
     # Startup tasks
+    # #881: raise every optical drive's command timeout before any rip or
+    # scan can touch it (per device; resets on replug/reboot).
+    try:
+        from core.optical_timeout import ensure_all_drive_timeouts
+
+        ensure_all_drive_timeouts()
+    except Exception as exc:
+        get_logger(__name__, "lifespan").warning("Optical drive timeout setup failed: %s", exc)
     _recover_inflight_jobs()
+    _startup_check_storage_locations()
     _startup_cleanup_terminal_jobs()
     _startup_reconcile_dvd_segment_groups()
     
@@ -1493,6 +1516,36 @@ def _startup_reconcile_dvd_segment_groups() -> None:
             logger.debug("DVD segment-group reconcile: nothing to heal")
     finally:
         db.close()
+
+
+def _startup_check_storage_locations() -> None:
+    """#885: say at boot when rips or the local transfer destination are not
+    on a mounted drive, or the destination does not exist in the container.
+
+    Warning only — nothing is created or changed. Transfers to such a
+    destination are refused with the same message when they run.
+    """
+    logger = get_logger(__name__, "_startup_check_storage_locations")
+    try:
+        from core.storage_location import destination_problem, usage_problem
+        from core.utils import get_mkvauto_data
+
+        _err, warning = usage_problem(get_mkvauto_data())
+        if warning:
+            logger.warning("Rip storage: %s", warning)
+
+        db = database.SessionLocal()
+        try:
+            from core.transfer.service import get_active_config
+            cfg = get_active_config(db)
+            if cfg is not None and (getattr(cfg, "mode", "") or "").lower() == "local":
+                problem = destination_problem(getattr(cfg, "transfer_dir", None))
+                if problem:
+                    logger.warning("Transfer destination: %s", problem)
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.debug("storage location check failed (non-fatal): %s", exc)
 
 
 def _startup_cleanup_terminal_jobs() -> None:

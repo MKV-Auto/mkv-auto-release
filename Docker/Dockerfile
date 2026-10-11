@@ -101,7 +101,7 @@ COPY Frontend/ /app/frontend/
 WORKDIR /app/backend
 RUN python3.11 -m venv /app/venv && \
     /app/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    /app/venv/bin/pip install --no-cache-dir -r requirements.txt
+    /app/venv/bin/pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # Copy Docker configuration files (paths relative to build context; context is repo root when using compose or scripts/build-docker)
 WORKDIR /app

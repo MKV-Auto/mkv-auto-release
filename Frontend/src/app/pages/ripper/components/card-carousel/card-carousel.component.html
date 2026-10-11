@@ -152,11 +152,14 @@
           <h3 class="disc-card-name" [attr.title]="getDiscTitle(card.data)">{{ getDiscTitle(card.data) }}</h3>
           <div class="disc-card-meta" [attr.title]="getDiscMeta(card.data)">{{ getDiscMeta(card.data) }}</div>
         </div>
-        <div class="disc-card-progress" *ngIf="cardProgress(card.data) !== null" aria-hidden="true">
-          <i [style.width.%]="cardProgress(card.data)"
-             [class.progress-fix]="cardFamily(card.data) === 'fix'"></i>
-        </div>
         <div class="disc-card-footer">
+          <!-- The progress bar IS the footer divider: it overlays the footer's
+               top border instead of taking its own row, so working/fix cards
+               have exactly the same content height as every other card. -->
+          <div class="disc-card-progress" *ngIf="cardProgress(card.data) !== null" aria-hidden="true">
+            <i [style.width.%]="cardProgress(card.data)"
+               [class.progress-fix]="cardFamily(card.data) === 'fix'"></i>
+          </div>
           <ui-pill [tone]="cardPillTone(card.data)">
             {{ cardPill(card.data) }}<span class="disc-card-pill-arrow" *ngIf="cardPillActionable(card.data)">&nbsp;→</span>
           </ui-pill>

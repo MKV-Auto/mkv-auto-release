@@ -72,8 +72,8 @@ except Exception as _drive_state_exc:  # pragma: no cover - only when drive_mana
         return None
 from core.utils import (
     get_mkvauto_data, build_release_slug, get_export_root, is_dev_mode,
-    calculate_required_rip_space_bytes, check_disk_space_for_rip,
-    resolve_jobs_root
+    calculate_required_rip_space_bytes, calculate_disc_size_from_titles,
+    check_disk_space_for_rip, resolve_jobs_root
 )
 from core import discdb_finalize
 from core.job_state import (
@@ -2790,7 +2790,46 @@ def start_rip(req: JobCreate, db: Session = Depends(get_db)):
         elif disc_record and disc_record.disc_size_bytes:
             disc_size_bytes = disc_record.disc_size_bytes
 
-        required_bytes = calculate_required_rip_space_bytes(titles, disc_size_bytes, buffer_multiplier=1.3)
+        # The cached scan payload's titles carry {file, flag, obfuscated} and
+        # NO size, so summing them yields 0 and the estimate would fall back to
+        # the physical disc size — which is far too small for a disc that lists
+        # the same feature twice (#875). The sizes are already in disc_titles;
+        # use them whenever the payload cannot answer.
+        if disc_record and calculate_disc_size_from_titles(titles or {}) <= 0:
+            try:
+                sized_rows = (
+                    db.query(db_models.DiscTitle)
+                    .filter(
+                        db_models.DiscTitle.disc_id == disc_record.id,
+                        db_models.DiscTitle.size.isnot(None),
+                        db_models.DiscTitle.size > 0,
+                    )
+                    .all()
+                )
+                if sized_rows:
+                    titles = {
+                        str(row.index if row.index is not None else row.id): {"size": int(row.size)}
+                        for row in sized_rows
+                    }
+                    log.info(
+                        "POST /jobs/rip rid=%s space estimate using %d DiscTitle size(s) from DB "
+                        "(sum=%.1f GB) instead of physical disc size (%.1f GB)",
+                        rip_request_id,
+                        len(sized_rows),
+                        calculate_disc_size_from_titles(titles) / (1024 ** 3),
+                        (disc_size_bytes or 0) / (1024 ** 3),
+                    )
+            except Exception as exc:
+                log.warning(
+                    "POST /jobs/rip rid=%s could not read DiscTitle sizes for space check: %s",
+                    rip_request_id, exc,
+                )
+
+        # rip_all=True: the worker's default copy mode is `makemkvcon mkv DEV
+        # all OUT`, which writes every enumerated title — see Disc.rip.
+        required_bytes = calculate_required_rip_space_bytes(
+            titles, disc_size_bytes, buffer_multiplier=1.3, rip_all=True
+        )
         if required_bytes:
             # Resolve output directory
             output_dir = req.output_dir

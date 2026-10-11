@@ -151,6 +151,33 @@ describe('CardCarouselComponent', () => {
       expect(component.cardPillActionable(d)).toBeTrue();
       expect(component.cardProgress(d)).toBe(71);
     });
+    it('draws the progress bar as the footer divider, never as its own row', () => {
+      // The card is a fixed 2:1 box. As a row between meta and footer the bar
+      // added 7px, and on engines that hold aspect-ratio strictly (WebKit) it
+      // pushed failed/working cards' footer into the bottom padding against
+      // the border, while every other card fit. Inside the footer it adds none.
+      const failed = {
+        ...base, disc_id: 'd-failed', job_id: 'j-failed', card_state: 'failed_rip',
+        card_family: 'fix', card_pill: 'See error', card_progress: 38, job_status: 'failed',
+      } as DiscMetadata;
+      const labeling = {
+        ...base, disc_id: 'd-label', job_id: 'j-label', card_state: 'awaiting_label',
+        card_family: 'your_turn', card_pill: 'Label titles',
+      } as DiscMetadata;
+      mockWorkflow.discs$ = of([failed, labeling]);
+      const f = TestBed.createComponent(CardCarouselComponent);
+      f.detectChanges();
+      const root: HTMLElement = f.nativeElement;
+
+      const cards = Array.from(root.querySelectorAll('.disc-card'));
+      expect(cards.length).toBe(2);
+      const bars = root.querySelectorAll('.disc-card-progress');
+      expect(bars.length).toBe(1);
+      expect(bars[0].parentElement?.classList).toContain('disc-card-footer');
+      for (const card of cards) {
+        expect(card.querySelector(':scope > .disc-card-progress')).toBeNull();
+      }
+    });
     it('falls back to legacy wording when card_state is absent', () => {
       expect(component.cardEyebrow({ ...base } as DiscMetadata)).toBe('Unfinished disc');
       expect(component.cardPill({ ...base } as DiscMetadata)).toBe('Unfinished');

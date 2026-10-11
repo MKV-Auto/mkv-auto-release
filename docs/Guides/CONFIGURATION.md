@@ -44,6 +44,20 @@ TZ=America/New_York
 MAKEMKV_ROOT_HELPER_SOCK=/tmp/makemkv_auto.sock
 ```
 
+#### Optical drives
+
+```bash
+# How long the kernel waits on a single drive command before aborting it and
+# resetting the drive. Linux defaults to 30 s, which a drive working through a
+# slow area of a disc can exceed — and a reset mid-read can leave the drive
+# unresponsive until it is power-cycled. MKV-Auto raises each drive to this
+# value at startup and whenever a drive is (re)connected. It never lowers a
+# value that is already higher. Requires the container to run privileged
+# (the default compose file does); otherwise it logs a warning and changes
+# nothing. 0 turns it off.
+MKVAUTO_OPTICAL_COMMAND_TIMEOUT_SECONDS=180
+```
+
 ### Unattended setup (application settings)
 
 The variables above configure the *runtime*. These configure the *application* —

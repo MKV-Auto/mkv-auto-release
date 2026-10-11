@@ -314,6 +314,28 @@ volumes:
 Moved to **[CONFIGURATION.md](CONFIGURATION.md)** — environment variables,
 the `/data` volume layout, backup and migration, port mapping and HTTPS.
 
+### Your media library (local transfers)
+
+If MKV-Auto copies finished rips to a folder on the same machine, that folder
+must be mapped into the container, and the path you enter in
+**Settings > Transfers** is the **container-side** path:
+
+```yaml
+    volumes:
+      - mkv-data:/data
+      - /mnt/user/media:/library      # host path : container path
+```
+
+Here you would enter `/library`, not `/mnt/user/media`. The same applies to a
+second or external drive: map it, then use the path it is mapped to.
+
+MKV-Auto checks this before it writes anything. A transfer folder that
+doesn't exist inside the container, or that exists but isn't on a mapped
+drive (so it lives in the container's own filesystem and would be wiped by the
+next update), is refused with a message saying which, and Settings shows the
+same warning next to its free-space figure. Your rip is kept until the folder
+is fixed.
+
 ## Security
 
 ### Privileged Mode

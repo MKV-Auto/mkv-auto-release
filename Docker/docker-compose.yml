@@ -14,6 +14,11 @@ services:
     volumes:
       # Persistent data
       - mkv-data:/data
+      # Your media library, if finished rips are copied to a folder on this
+      # machine ("Local" transfer). Enter the container-side path (/library) in
+      # Settings > Transfers. Without a mapping the folder would be inside the
+      # container and wiped on update, so MKV-Auto refuses to write there.
+      # - /path/to/your/media:/library
     devices:
       # Optical drive access (adjust device path as needed).
       - /dev/sr0

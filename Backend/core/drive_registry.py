@@ -31,6 +31,7 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, replace
 from typing import Literal, Optional
 
+from core.optical_timeout import ensure_all_drive_timeouts
 from core.drive_identity import DriveIdentity, resolve_drive_identity
 
 logger = logging.getLogger(__name__)
@@ -376,16 +377,23 @@ def _probe_device(dev: str, now: float) -> DriveSnapshot:
 def _not_responding_snapshot(dev: str, now: float) -> DriveSnapshot:
     """Fallback row for a drive that is not answering: keep the last known
     identity (drive cards stay tellable-apart) but never claim media —
-    a non-responding drive must not offer Start-copy affordances (#724)."""
+    a non-responding drive must not offer Start-copy affordances (#724).
+
+    With no last-known snapshot (fresh boot) the identity is resolved from
+    by-id — filesystem only, never touches the drive, so safe even when it
+    is hung (#874). ``unknown:<dev>`` only if that resolution fails."""
     prev = _last_known.get(dev)
     if prev is not None:
         return replace(prev, loaded=False, volume_label=None, observed_at=now)
-    return DriveSnapshot(
-        mount_point=dev,
-        loaded=False,
-        volume_label=None,
-        media_kind=None,
-        identity=DriveIdentity(
+    try:
+        identity = _resolve_identity(dev)
+    except Exception as exc:
+        logger.debug(
+            "drive_registry: identity resolution failed for %s: %s", dev, exc
+        )
+        identity = None
+    if identity is None:
+        identity = DriveIdentity(
             by_id_serial=f"unknown:{os.path.basename(dev)}",
             vendor="",
             model="",
@@ -393,7 +401,13 @@ def _not_responding_snapshot(dev: str, now: float) -> DriveSnapshot:
             by_id_name="",
             hardware_name=None,
             identity_source="unknown",
-        ),
+        )
+    return DriveSnapshot(
+        mount_point=dev,
+        loaded=False,
+        volume_label=None,
+        media_kind=None,
+        identity=identity,
         udev_state={},
         observed_at=now,
     )
@@ -426,8 +440,9 @@ def _device_in_active_use(dev: str) -> bool:
 
 
 def _in_use_snapshot(dev: str, now: float) -> DriveSnapshot:
-    """Snapshot for a device MakeMKV is actively using: last-known identity,
-    media present (something is being ripped from it), no hardware touched."""
+    """Snapshot for a device MakeMKV is actively using: last-known identity
+    (or by-id when there is none yet, #874), media present (something is
+    being ripped from it), no hardware touched."""
     prev = _last_known.get(dev)
     if prev is not None:
         return replace(prev, loaded=True, observed_at=now)
@@ -502,6 +517,9 @@ def _emit_grind_alert(dev: str) -> None:
 
 
 def _build_snapshots() -> list[DriveSnapshot]:
+    # #881: the command timeout resets when a drive is replugged; re-apply it
+    # on every refresh (a few tiny sysfs reads; writes only when it is low).
+    ensure_all_drive_timeouts()
     devices = _enumerate_devices()
     now = time.monotonic()
     return [_snapshot_device(dev, now) for dev in devices]

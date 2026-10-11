@@ -439,3 +439,50 @@ describe('SettingsPageComponent (#610 TMDB key echo)', () => {
     expect(component.tmdbApiKeySet).toBe(false);
   });
 });
+
+describe('SettingsPageComponent (#885 storage figures say what they measured)', () => {
+  async function render(summary: any): Promise<HTMLElement> {
+    const spy = makeSystemServiceSpy();
+    spy.getStorageSummary.and.returnValue(of(summary));
+    TestBed.resetTestingModule();
+    await TestBed.configureTestingModule({
+      imports: [SettingsPageComponent],
+      providers: [
+        { provide: SystemService, useValue: spy },
+        { provide: ToastService, useValue: jasmine.createSpyObj('ToastService', ['show']) },
+        { provide: WorkflowService, useValue: { syncCoordinator: () => {} } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(SettingsPageComponent);
+    fixture.componentInstance.activeTab = 'tmdb';
+    fixture.detectChanges();
+    return fixture.nativeElement as HTMLElement;
+  }
+
+  it('shows the reason instead of a 0 B figure when the destination does not exist', async () => {
+    const el = await render({
+      data_root: { free: 1000, total: 2000, path: '/data' },
+      transfer_root: {
+        free: 0, total: 0, used: 0, path: '/mnt/user/media',
+        error: "/mnt/user/media doesn't exist inside the container.",
+      },
+    });
+    const blocks = el.querySelectorAll('.settings-storage-block');
+    expect(blocks[1].textContent).toContain("doesn't exist inside the container");
+    expect(blocks[1].querySelector('.settings-storage-values')).toBeNull();
+    expect(blocks[0].querySelector('.settings-storage-values')).not.toBeNull();
+  });
+
+  it('warns when the figure is the container\'s own disk', async () => {
+    const el = await render({
+      data_root: { free: 1000, total: 2000, path: '/data' },
+      transfer_root: {
+        free: 500, total: 1000, used: 500, path: '/library',
+        warning: "/library isn't on a mounted drive",
+      },
+    });
+    const block = el.querySelectorAll('.settings-storage-block')[1];
+    expect(block.querySelector('.settings-storage-warning')?.textContent).toContain("isn't on a mounted drive");
+    expect(block.querySelector('.settings-storage-values')).not.toBeNull();
+  });
+});

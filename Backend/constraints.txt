@@ -1,0 +1,76 @@
+# Exact dependency versions the released image installs (pip constraints:
+# `pip install -r requirements.txt -c constraints.txt`). requirements.txt says
+# WHAT we depend on; this file says WHICH versions ship.
+#
+# Why: requirements.txt is unpinned, so every image build silently picked up
+# whatever was newest. On 2026-10-08 that pulled SQLAlchemy 2.1, whose default
+# driver for a plain postgresql:// URL is psycopg 3 (not installed) — every
+# process in the image died at import, and filelock/multidict jumped a major
+# version too. Upgrade deliberately: bump a pin here, run the suite and an RC.
+#
+# Baseline: the set installed in the v1.6.16 image (Python 3.11), running on
+# prod since 2026-09-14.
+alembic==1.20.0
+amqp==5.3.1
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+async-timeout==5.0.1
+backoff==2.2.1
+beautifulsoup4==4.15.0
+billiard==4.2.4
+celery==5.6.3
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.5.0
+click-didyoumean==0.3.1
+click-plugins==1.1.1.2
+click-repl==0.3.0
+cryptography==50.0.1
+fastapi==0.141.1
+filelock==3.32.6
+gql==4.0.0
+graphql-core==3.2.12
+greenlet==3.5.6
+h11==0.16.0
+httptools==0.8.0
+idna==3.19
+kombu==5.6.2
+Mako==1.4.1
+MarkupSafe==3.0.3
+multidict==6.8.0
+packaging==26.3
+pathvalidate==3.3.1
+prompt_toolkit==3.0.53
+propcache==0.5.2
+psycopg2-binary==2.9.13
+pycparser==3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+pyspnego==0.12.2
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+python-multipart==0.0.32
+PyYAML==6.0.3
+redis==6.4.0
+requests==2.34.2
+requests-toolbelt==1.0.0
+six==1.17.0
+smbprotocol==1.17.0
+soupsieve==2.9.2
+SQLAlchemy==2.0.53
+starlette==1.6.0
+tqdm==4.70.1
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2026.4
+tzlocal==5.4.4
+urllib3==2.7.0
+uvicorn==0.53.0
+uvloop==0.22.1
+vine==5.1.0
+watchfiles==1.2.0
+wcwidth==0.8.3
+websockets==17.1
+yarl==1.24.5

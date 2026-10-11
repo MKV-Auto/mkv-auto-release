@@ -312,6 +312,30 @@ class OutputCollisionError(RuntimeError):
     """
 
 
+def persist_raw_progress_log(output_folder: str, log: str) -> None:
+    """Write MakeMKV's raw output to ``makemkv_progress.log``, keeping the live
+    timestamped log ``run_makemkv`` wrote there.
+
+    Readers after the rip parse ``makemkv_progress.log`` as plain MakeMKV
+    output, so it stays raw. The live log carries a per-line timestamp — the
+    only record of WHEN MakeMKV stalled or slowed — so it is appended to
+    ``makemkv_progress.timestamped.log`` instead of being overwritten (#882;
+    the 2026-10-06 incident lost its hour-by-hour data this way). Appending
+    keeps the history of a re-run in the same job folder.
+    """
+    progress_path = os.path.join(output_folder, "makemkv_progress.log")
+    timestamped_path = os.path.join(output_folder, "makemkv_progress.timestamped.log")
+    try:
+        if os.path.exists(progress_path):
+            with open(progress_path, "r", encoding="utf-8", errors="ignore") as src, \
+                    open(timestamped_path, "a", encoding="utf-8") as dst:
+                shutil.copyfileobj(src, dst)
+    except OSError as exc:
+        logger.warning("Could not preserve timestamped MakeMKV log: %s", exc)
+    with open(progress_path, "w") as f:
+        f.write(log)
+
+
 class Disc:
     """
     Encapsulates disc ripping and renaming logic.
@@ -632,9 +656,7 @@ class Disc:
             with open(os.path.join(output_folder, "disc_db_query.json"), "w") as f:
                 json.dump(self.raw_db_query, f, indent=2)
 
-            # Persist raw makemkv output (progress)
-            with open(os.path.join(output_folder, "makemkv_progress.log"), "w") as f:
-                f.write(log)
+            persist_raw_progress_log(output_folder, log)
 
             # Write File Errors if any
             if self.errors:

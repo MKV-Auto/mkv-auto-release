@@ -70,11 +70,12 @@ def validate_local_transfer(config, source_size: int) -> Tuple[bool, str]:
     
     dest_path = Path(transfer_dir)
     
-    # Check if path exists or can be created
-    try:
-        dest_path.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        return False, f"Cannot create destination path: {str(e)}"
+    # #885: must already exist, on a mounted drive — never created here.
+    from core.storage_location import destination_problem
+
+    problem = destination_problem(dest_path)
+    if problem:
+        return False, problem
     
     # Check write permissions
     if not os.access(dest_path, os.W_OK):
@@ -288,14 +289,12 @@ def validate_space(config, dest_path: str, required_bytes: int) -> Tuple[bool, s
 
 
 def validate_path(config, dest_path: str) -> Tuple[bool, str]:
-    """Check/create destination path."""
+    """Check the destination path exists on a mounted drive (#885: never create it)."""
     if config.mode == "local":
-        path = Path(dest_path)
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-            return True, ""
-        except Exception as e:
-            return False, f"Cannot create path: {str(e)}"
+        from core.storage_location import destination_problem
+
+        problem = destination_problem(dest_path)
+        return (False, problem) if problem else (True, "")
     else:
         # Remote path creation will be tested during connection validation
         return True, ""
