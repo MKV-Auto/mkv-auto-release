@@ -61,6 +61,21 @@ def _nearest_mount(path: Path, mounts: list[tuple[str, str]]) -> Optional[tuple[
     return best
 
 
+_NETWORK_FSTYPES = {"nfs", "nfs4", "cifs", "smb3", "smbfs", "fuse.sshfs", "9p"}
+
+
+def is_network_path(path: str | Path) -> bool:
+    """True when ``path`` sits on a network filesystem (NFS/SMB/...).
+    False when unknown (no mountinfo)."""
+    p = Path(path)
+    try:
+        p = p.resolve()
+    except OSError:
+        pass
+    nearest = _nearest_mount(p, _mounts())
+    return bool(nearest and nearest[1] in _NETWORK_FSTYPES)
+
+
 def in_container() -> bool:
     if os.path.exists(DOCKERENV):
         return True

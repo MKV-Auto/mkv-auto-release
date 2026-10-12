@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-12
+
+### Added
+
+- **Convert Dolby Vision 7 movies so Plex can play them.** UHD Blu-rays use Dolby Vision profile 7, which most Plex and Jellyfin clients, browsers and streaming devices can't play. A new setting converts those files to profile 8.1, which plays everywhere. It's lossless: only the enhancement layer, which streaming devices don't use, is dropped. It can convert new rips before they're transferred, and scan your library folders to catalog every video's format and queue the Dolby Vision 7 files one at a time. Each converted file is checked before it replaces the original. It's off by default; see Settings > Dolby Vision.
+- **Dolby Vision conversions of files on a network share are about twice as fast.** When there's room on the local disk, the conversion happens there and only the finished file goes back to the share, instead of every step running across the network. When there isn't room, it converts on the share as before.
+
+### Changed
+
+- **Title durations show the exact running time.** Titles were shown rounded, and in different styles on different screens: "1h 33m" in one place, "93.8 min" in another. Two cuts a few seconds apart looked identical. Every screen now shows the full timecode MakeMKV reports, such as 1:33:47, 0:42:10 or 0:00:45, with digits that line up down the list.
+- **Tiny filler titles are ignored for you.** Titles 10 seconds or shorter and 1 MB or smaller, such as studio logos, menu stubs and empty playlists, are now labeled "ignore" automatically with a "Filler" badge. On RE: Apocalypse that's 97 titles nobody has to click through. Across the library, every title that small had been ignored by hand, and none kept. Anything you or TheDiscDB labeled is left alone, and you can give a filler title a type to keep it. It still gets ripped.
+
+### Fixed
+
+- **Pasting a TMDB link while labeling works again.** TMDB started blocking the app's page reader, so looking up a movie or show by its themoviedb.org link failed with "scrape failed or empty title". Lookups now go through the TMDB API using your configured key, the same way title suggestions already did. Setups without an API key still fall back to reading the page.
+- **Status updates no longer overwrite what you're typing.** While you labeled a disc, a background update, such as a preview finishing or the rip changing stage, could reload the form and replace your typing with the saved values. The reload is now held while you type and runs a few seconds after you stop, so it is delayed, never dropped. Progress bars still update live, and switching back to the tab refreshes the card once.
+- **Two jobs can no longer fill the disk by both counting on the same free space.** Rips and Dolby Vision conversions now reserve the space they'll write before they start. A second rip on another drive, or a conversion, is refused or waits until the space is really there, instead of both passing their check and running the disk out. 10 GB always stays free for the database.
+- **Discs that hold the main feature twice get the right amount of space.** When the app's cached scan of a disc was missing a title, usually a multi-angle main feature, the rip was sized from the physical disc. A Blu-ray that writes its feature twice could then need far more than it was checked for. The check now uses the full title sizes saved for the disc whenever they add up to more.
+- **Multi-angle discs no longer pause for 10 minutes after the rip.** MakeMKV numbers a multi-angle main feature differently from the disc scan, so the check after a rip couldn't find it and waited 10 minutes before moving on. It now recognises the file from the rip's own record and continues straight away.
+
 ## [1.6.17] - 2026-10-11
 
 ### Fixed

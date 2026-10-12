@@ -144,6 +144,56 @@ describe('SystemService', () => {
     });
   });
 
+  describe('Dolby Vision 7 conversion (#894)', () => {
+    it('GETs /system/dv7/config', (done) => {
+      service.getDv7Config().subscribe(cfg => {
+        expect(cfg.enabled).toBe(false);
+        done();
+      });
+      httpMock.expectOne(`${apiUrl}/system/dv7/config`).flush({
+        enabled: false, convert_new_rips: false, library_paths: [], folders: [],
+      });
+    });
+
+    it('PUTs only the changed fields to /system/dv7/config', () => {
+      service.saveDv7Config({ enabled: true }).subscribe();
+      const req = httpMock.expectOne(`${apiUrl}/system/dv7/config`);
+      expect(req.request.method).toBe('PUT');
+      expect(req.request.body).toEqual({ enabled: true });
+      req.flush({ enabled: true, convert_new_rips: false, library_paths: [], folders: [] });
+    });
+
+    it('POSTs /system/dv7/scan', () => {
+      service.startDv7Scan().subscribe();
+      const req = httpMock.expectOne(`${apiUrl}/system/dv7/scan`);
+      expect(req.request.method).toBe('POST');
+      req.flush({ queued: true });
+    });
+
+    it('GETs /system/dv7/library', () => {
+      service.getDv7LibrarySummary().subscribe(s => expect(s.by_status).toEqual({ converted: 2 }));
+      const req = httpMock.expectOne(`${apiUrl}/system/dv7/library`);
+      expect(req.request.method).toBe('GET');
+      req.flush({ total: 2, dv7: 0, by_status: { converted: 2 } });
+    });
+
+    it('passes the file-list filters as query params', () => {
+      service.getDv7LibraryFiles({ dv7_only: true, limit: 200 }).subscribe();
+      const req = httpMock.expectOne(r => r.url === `${apiUrl}/system/dv7/library/files`);
+      expect(req.request.params.get('dv7_only')).toBe('true');
+      expect(req.request.params.get('limit')).toBe('200');
+      expect(req.request.params.has('status')).toBe(false);
+      req.flush([]);
+    });
+
+    it('POSTs a retry for one file', () => {
+      service.retryDv7File('abc').subscribe();
+      const req = httpMock.expectOne(`${apiUrl}/system/dv7/library/files/abc/retry`);
+      expect(req.request.method).toBe('POST');
+      req.flush({ queued: true });
+    });
+  });
+
   describe('getAppVersion (#718)', () => {
     it('GETs /system/version and unwraps the version string', (done) => {
       service.getAppVersion().subscribe((v) => {

@@ -2,7 +2,12 @@ import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testin
 import { provideHttpClient } from '@angular/common/http';
 import { of, throwError } from 'rxjs';
 import { SettingsPageComponent } from './settings-page.component';
-import { SystemService, defaultNotificationPreferences } from '../../services/system.service';
+import {
+  SystemService,
+  defaultNotificationPreferences,
+  Dv7LibraryFile,
+  Dv7LibrarySummary,
+} from '../../services/system.service';
 import { ToastService } from '../../services/toast.service';
 import { WorkflowService } from '../../services/workflow.service';
 
@@ -23,7 +28,14 @@ function makeSystemServiceSpy(): jasmine.SpyObj<SystemService> {
     'getEnvManagedSettings',
     'startDiscDbExport', 'getDiscDbExportStatus', 'getActiveDiscDbExport',
     'cancelDiscDbExport', 'downloadDiscDbExport',
+    'getDv7Config', 'saveDv7Config', 'startDv7Scan',
+    'getDv7LibrarySummary', 'getDv7LibraryFiles', 'retryDv7File',
   ]);
+  spy.getDv7Config.and.returnValue(of({
+    enabled: false, convert_new_rips: false, library_paths: [], folders: [],
+  }));
+  spy.getDv7LibrarySummary.and.returnValue(of({ total: 0, dv7: 0, by_status: {} }));
+  spy.getDv7LibraryFiles.and.returnValue(of([]));
   spy.getActiveDiscDbExport.and.returnValue(of({ status: 'idle' } as any));
   spy.getEnvManagedSettings.and.returnValue(of({ managed: [], supported: [] } as any));
   spy.getPreviewConfig.and.returnValue(of({
@@ -485,4 +497,356 @@ describe('SettingsPageComponent (#885 storage figures say what they measured)', 
     expect(block.querySelector('.settings-storage-warning')?.textContent).toContain("isn't on a mounted drive");
     expect(block.querySelector('.settings-storage-values')).not.toBeNull();
   });
+});
+
+describe('SettingsPageComponent (#894 Dolby Vision conversion)', () => {
+  let fixture: ComponentFixture<SettingsPageComponent>;
+  let component: SettingsPageComponent | undefined;
+  let spy: jasmine.SpyObj<SystemService>;
+  let toast: jasmine.SpyObj<ToastService>;
+
+  const OFF = { enabled: false, convert_new_rips: false, library_paths: [], folders: [] };
+  const ON = {
+    enabled: true, convert_new_rips: false, library_paths: ['/media'],
+    folders: [{ path: '/media', ok: true, problem: null }],
+  };
+  const file = (over: Partial<Dv7LibraryFile> = {}): Dv7LibraryFile => ({
+    id: 'f1', path: '/media/Movies/Dune (2021)/Dune.mkv', library_root: '/media',
+    size: 60 * 1024 ** 3, video_codec: 'hevc', width: 3840, height: 2160, dv_profile: 7,
+    duration: 9300, status: 'catalogued', progress: null, error: null,
+    scanned_at: null, converted_at: null,
+    ...over,
+  });
+  const summary = (by_status: Dv7LibrarySummary['by_status'] = {}): Dv7LibrarySummary => ({
+    total: 40, dv7: 3, by_status,
+  });
+
+  beforeEach(async () => {
+    spy = makeSystemServiceSpy();
+    toast = jasmine.createSpyObj('ToastService', ['show']);
+    component = undefined;
+    await TestBed.configureTestingModule({
+      imports: [SettingsPageComponent],
+      providers: [
+        { provide: SystemService, useValue: spy },
+        { provide: ToastService, useValue: toast },
+        { provide: WorkflowService, useValue: { syncCoordinator: () => {} } },
+      ],
+    }).compileComponents();
+  });
+
+  afterEach(() => component?.ngOnDestroy());
+
+  /** Opens the Dolby Vision tab. Run inside fakeAsync whenever polling may start. */
+  function open(): SettingsPageComponent {
+    fixture = TestBed.createComponent(SettingsPageComponent);
+    component = fixture.componentInstance;
+    component.activeTab = 'dv7';
+    fixture.detectChanges();
+    return component;
+  }
+
+  const q = (sel: string): HTMLElement | null => fixture.nativeElement.querySelector(sel);
+  const text = (): string => fixture.nativeElement.textContent;
+  const scanButton = (): HTMLButtonElement => q('[data-testid="dv7-scan"] button') as HTMLButtonElement;
+
+  it('has its own sidebar entry', () => {
+    const c = open();
+    expect(c.nav.some(n => n.id === 'dv7' && n.label === 'Dolby Vision')).toBe(true);
+  });
+
+  it('renders with everything off by default', () => {
+    open();
+    expect(spy.getDv7Config).toHaveBeenCalled();
+    expect(q('[data-testid="dv7-enabled"]')!.getAttribute('aria-pressed')).toBe('false');
+    expect(q('[data-testid="dv7-new-rips"]')!.getAttribute('aria-pressed')).toBe('false');
+    expect(text()).toContain('Convert Dolby Vision profile 7 to 8.1');
+    expect(text()).toContain('lossless');
+    expect(text()).toContain('twice its size');
+    expect(q('[data-testid="dv7-folders"]')).toBeNull();
+    expect(scanButton().disabled).toBe(true);
+  });
+
+  it('does not fetch Dolby Vision data until the tab is opened', () => {
+    fixture = TestBed.createComponent(SettingsPageComponent);
+    component = fixture.componentInstance;
+    component.activeTab = 'tmdb';
+    fixture.detectChanges();
+    expect(spy.getDv7Config).not.toHaveBeenCalled();
+
+    component.selectTab('dv7');
+    expect(spy.getDv7Config).toHaveBeenCalledTimes(1);
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('the master toggle saves via PUT', () => {
+    spy.saveDv7Config.and.returnValue(of({ ...OFF, enabled: true }));
+    open();
+
+    q('[data-testid="dv7-enabled"]')!.click();
+    fixture.detectChanges();
+
+    expect(spy.saveDv7Config).toHaveBeenCalledWith({ enabled: true });
+    expect(q('[data-testid="dv7-enabled"]')!.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('the new-rips toggle is disabled while the master is off', () => {
+    const c = open();
+    const sub = q('[data-testid="dv7-new-rips"]') as HTMLButtonElement;
+    expect(sub.disabled).toBe(true);
+    c.setDv7ConvertNewRips(true);
+    expect(spy.saveDv7Config).not.toHaveBeenCalled();
+  });
+
+  it('the new-rips toggle reads as off while the master is off, whatever is stored', () => {
+    // The server stores convert_new_rips=true by default; with the master off
+    // nothing converts, so the toggle must not look on.
+    spy.getDv7Config.and.returnValue(of({ ...OFF, convert_new_rips: true }));
+    open();
+    expect(q('[data-testid="dv7-new-rips"]')!.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('the new-rips toggle saves once the master is on', () => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.saveDv7Config.and.returnValue(of({ ...ON, convert_new_rips: true }));
+    open();
+    const sub = q('[data-testid="dv7-new-rips"]') as HTMLButtonElement;
+    expect(sub.disabled).toBe(false);
+
+    sub.click();
+    expect(spy.saveDv7Config).toHaveBeenCalledWith({ convert_new_rips: true });
+  });
+
+  it('adding a bad folder shows the server\'s reason and keeps the input', () => {
+    const detail = "/nope doesn't exist inside the container. Map it as a volume first.";
+    spy.saveDv7Config.and.returnValue(throwError(() => ({ status: 400, error: { detail } })));
+    const c = open();
+
+    c.dv7NewFolder = '/nope';
+    fixture.detectChanges();
+    (q('[data-testid="dv7-folder-add"]') as HTMLElement).click();
+    fixture.detectChanges();
+
+    expect(spy.saveDv7Config).toHaveBeenCalledWith({ library_paths: ['/nope'] });
+    expect(q('[data-testid="dv7-folder-error"]')!.textContent).toContain(detail);
+    expect(c.dv7NewFolder).toBe('/nope');
+  });
+
+  it('adds a good folder and clears the input', fakeAsync(() => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.saveDv7Config.and.returnValue(of({
+      ...ON, library_paths: ['/media', '/tv'],
+      folders: [...ON.folders, { path: '/tv', ok: true, problem: null }],
+    }));
+    const c = open();
+
+    c.dv7NewFolder = '  /tv ';
+    c.addDv7Folder();
+    fixture.detectChanges();
+
+    expect(spy.saveDv7Config).toHaveBeenCalledWith({ library_paths: ['/media', '/tv'] });
+    expect(c.dv7NewFolder).toBe('');
+    expect(q('[data-testid="dv7-folders"]')!.textContent).toContain('/tv');
+    c.ngOnDestroy();
+  }));
+
+  it('removes a folder', () => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.saveDv7Config.and.returnValue(of({ ...ON, library_paths: [], folders: [] }));
+    open();
+
+    (q('[aria-label="Remove /media"]') as HTMLButtonElement).click();
+    expect(spy.saveDv7Config).toHaveBeenCalledWith({ library_paths: [] });
+  });
+
+  it('shows the problem under a folder the container cannot use', () => {
+    spy.getDv7Config.and.returnValue(of({
+      ...ON, folders: [{ path: '/media', ok: false, problem: '/media is not a mapped mount.' }],
+    }));
+    open();
+    const row = q('.settings-dv7-item.is-bad');
+    expect(row).not.toBeNull();
+    expect(row!.textContent).toContain('/media is not a mapped mount.');
+  });
+
+  it('Scan now is disabled when off and calls the endpoint when on', fakeAsync(() => {
+    open().ngOnDestroy();
+    expect(scanButton().disabled).toBe(true);
+
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.startDv7Scan.and.returnValue(of({ queued: true }));
+    const c = open();
+    expect(scanButton().disabled).toBe(false);
+
+    scanButton().click();
+    expect(spy.startDv7Scan).toHaveBeenCalledTimes(1);
+    expect(toast.show).toHaveBeenCalledWith(jasmine.any(String), 'success');
+    c.ngOnDestroy();
+  }));
+
+  it('Scan now is disabled with no folders even when on', () => {
+    spy.getDv7Config.and.returnValue(of({ ...OFF, enabled: true }));
+    open();
+    expect(scanButton().disabled).toBe(true);
+  });
+
+  it('shows the server\'s reason when a scan is refused', () => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.startDv7Scan.and.returnValue(
+      throwError(() => ({ status: 409, error: { detail: 'Add a library folder first.' } })),
+    );
+    const c = open();
+    c.scanDv7Library();
+    fixture.detectChanges();
+    expect(q('[data-testid="dv7-error"]')!.textContent).toContain('Add a library folder first.');
+  });
+
+  it('shows the summary counts, treating missing statuses as 0', () => {
+    spy.getDv7LibrarySummary.and.returnValue(of(summary({ converted: 2, failed: 1 })));
+    open();
+    const cells = Array.from(fixture.nativeElement.querySelectorAll('.settings-dv7-summary > div'))
+      .map((cell: any) => [
+        cell.querySelector('.settings-import-summary__value').textContent.trim(),
+        cell.querySelector('.settings-import-summary__label').textContent.trim(),
+      ].join(' '));
+    expect(cells).toEqual([
+      '40 Catalogued', '3 DV7 found', '0 Queued', '0 Converting',
+      '2 Converted', '1 Failed', '0 Skipped',
+    ]);
+    expect(spy.getDv7LibraryFiles).toHaveBeenCalledWith({ dv7_only: true, limit: 200 });
+  });
+
+  it('lists files with status, progress, errors and Retry', fakeAsync(() => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.getDv7LibrarySummary.and.returnValue(of(summary({ converting: 1, failed: 1, skipped: 1 })));
+    spy.getDv7LibraryFiles.and.returnValue(of([
+      file({ id: 'a', status: 'converting', progress: 0.42 }),
+      file({ id: 'b', path: '/media/B.mkv', status: 'failed', error: 'Verification failed: frame count differs.' }),
+      file({ id: 'c', path: '/media/C.mkv', status: 'skipped', error: 'Not enough free space.' }),
+      file({ id: 'd', path: '/media/D.mkv', status: 'converted', dv_profile: 8 }),
+    ]));
+    spy.retryDv7File.and.returnValue(of({ queued: true }));
+    const c = open();
+
+    const rows = fixture.nativeElement.querySelectorAll('.settings-dv7-file');
+    expect(rows.length).toBe(4);
+    // Folder-relative path, size and resolution.
+    expect(rows[0].textContent).toContain('Movies/Dune (2021)/Dune.mkv');
+    expect(rows[0].textContent).not.toContain('/media/Movies');
+    expect(rows[0].textContent).toContain('60 GB');
+    expect(rows[0].textContent).toContain('3840×2160');
+    // Progress bar only while converting.
+    const fill = rows[0].querySelector('.settings-export-progress__fill') as HTMLElement;
+    expect(fill.style.width).toBe('42%');
+    expect(rows[3].querySelector('.settings-export-progress')).toBeNull();
+    // Pills carry the status and its tone.
+    expect(rows[0].querySelector('.ui-pill').getAttribute('data-tone')).toBe('indigo');
+    expect(rows[1].querySelector('.ui-pill').getAttribute('data-tone')).toBe('red');
+    expect(rows[2].querySelector('.ui-pill').getAttribute('data-tone')).toBe('amber');
+    expect(rows[3].querySelector('.ui-pill').textContent).toContain('Converted');
+    // Errors and Retry on failed / skipped only.
+    expect(rows[1].textContent).toContain('frame count differs');
+    expect(rows[2].textContent).toContain('Not enough free space');
+    expect(rows[0].querySelector('[data-testid="dv7-retry"]')).toBeNull();
+    expect(rows[2].querySelector('[data-testid="dv7-retry"]')).not.toBeNull();
+    expect(rows[3].querySelector('[data-testid="dv7-retry"]')).toBeNull();
+
+    (rows[1].querySelector('[data-testid="dv7-retry"] button') as HTMLButtonElement).click();
+    expect(spy.retryDv7File).toHaveBeenCalledWith('b');
+    expect(toast.show).toHaveBeenCalledWith(jasmine.any(String), 'success');
+    c.ngOnDestroy();
+  }));
+
+  it('shows why a queued file is waiting for disk space, without a Retry (#895)', fakeAsync(() => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.getDv7LibrarySummary.and.returnValue(of(summary({ queued: 1 })));
+    spy.getDv7LibraryFiles.and.returnValue(of([
+      file({ id: 'w', status: 'queued', error: 'Waiting for disk space: this needs 110.0 GB.' }),
+      file({ id: 'q', path: '/media/Q.mkv', status: 'queued' }),
+    ]));
+    const c = open();
+    const rows = fixture.nativeElement.querySelectorAll('.settings-dv7-file');
+    expect(rows[0].textContent).toContain('Waiting for disk space');
+    expect(rows[0].querySelector('[data-testid="dv7-retry"]')).toBeNull();
+    expect(rows[1].querySelector('.settings-dv7-error')).toBeNull();
+    c.ngOnDestroy();
+  }));
+
+  it('toasts the server\'s reason when a retry is refused', () => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.getDv7LibraryFiles.and.returnValue(of([file({ status: 'failed', error: 'x' })]));
+    spy.retryDv7File.and.returnValue(
+      throwError(() => ({ status: 409, error: { detail: 'Only a failed or skipped file can be retried.' } })),
+    );
+    const c = open();
+    c.retryDv7File(c.dv7Files[0]);
+    expect(toast.show).toHaveBeenCalledWith('Only a failed or skipped file can be retried.', 'error');
+    expect(c.dv7RetryingId).toBeNull();
+  });
+
+  it('polls every 5 s while something is queued or converting, then stops', fakeAsync(() => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.getDv7LibrarySummary.and.returnValue(of(summary({ queued: 1 })));
+    spy.getDv7LibraryFiles.and.returnValue(of([file({ status: 'queued' })]));
+    open();
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(1);
+
+    tick(5000);
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(2);
+    expect(spy.getDv7LibraryFiles).toHaveBeenCalledTimes(2);
+
+    // The conversion finishes: the next poll sees it, then polling stops.
+    spy.getDv7LibrarySummary.and.returnValue(of(summary({ converted: 1 })));
+    spy.getDv7LibraryFiles.and.returnValue(of([file({ status: 'converted', dv_profile: 8 })]));
+    tick(5000);
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(3);
+    tick(30000);
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(3);
+  }));
+
+  it('does not poll when nothing is in flight', fakeAsync(() => {
+    spy.getDv7LibrarySummary.and.returnValue(of(summary({ converted: 3 })));
+    open();
+    tick(30000);
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(1);
+  }));
+
+  it('stops polling when leaving the tab or the page', fakeAsync(() => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.getDv7LibrarySummary.and.returnValue(of(summary({ converting: 1 })));
+    const c = open();
+
+    c.selectTab('tmdb');
+    tick(30000);
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(1);
+
+    c.selectTab('dv7');
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(2);
+    c.ngOnDestroy();
+    tick(30000);
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(2);
+  }));
+
+  it('keeps watching briefly after a scan so newly queued files appear', fakeAsync(() => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.startDv7Scan.and.returnValue(of({ queued: true }));
+    const c = open();
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(1);
+
+    c.scanDv7Library();
+    expect(spy.getDv7LibrarySummary).toHaveBeenCalledTimes(2);
+
+    // The scan queues a file a few seconds later; polling picks it up.
+    spy.getDv7LibrarySummary.and.returnValue(of(summary({ queued: 1 })));
+    tick(5000);
+    expect(c.dv7InFlight).toBe(true);
+
+    // Once it is done and the grace window is spent, polling stops.
+    spy.getDv7LibrarySummary.and.returnValue(of(summary({ converted: 1 })));
+    tick(60000);
+    const calls = spy.getDv7LibrarySummary.calls.count();
+    tick(30000);
+    expect(spy.getDv7LibrarySummary.calls.count()).toBe(calls);
+    c.ngOnDestroy();
+  }));
 });

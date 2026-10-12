@@ -75,6 +75,26 @@ RUN apt-get update && apt-get install -y \
     wget git rsync \
     && rm -rf /var/lib/apt/lists/*
 
+# dovi_tool for Dolby Vision 7 -> 8.1 conversion (#894; Settings -> Dolby
+# Vision conversion, off by default). Pinned to 2.3.2, the version the
+# conversion was validated with in PR #671 (105 files / 3.4 TB, outputs
+# decode-verified identical), and sha256-checked so builds are reproducible.
+ARG DOVI_TOOL_VERSION=2.3.2
+# The public image is multi-arch (amd64 + arm64), so pick the matching build.
+ARG TARGETARCH
+RUN case "${TARGETARCH:-amd64}" in \
+        amd64) DOVI_ARCH=x86_64;  DOVI_SHA256=38bd3bb88eced7cce2e42257c2bc1be3c804acf9f2887e13330fcf1111121127 ;; \
+        arm64) DOVI_ARCH=aarch64; DOVI_SHA256=ed10d12b0fc0212c8fd33b7e41f2ffc5c711f5a75fb2129b19ce63f36bc2e65e ;; \
+        *) echo "dovi_tool: unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    wget -q -O /tmp/dovi_tool.tar.gz \
+        "https://github.com/quietvoid/dovi_tool/releases/download/${DOVI_TOOL_VERSION}/dovi_tool-${DOVI_TOOL_VERSION}-${DOVI_ARCH}-unknown-linux-musl.tar.gz" && \
+    echo "${DOVI_SHA256}  /tmp/dovi_tool.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/dovi_tool.tar.gz -C /usr/local/bin ./dovi_tool && \
+    rm /tmp/dovi_tool.tar.gz && \
+    chmod +x /usr/local/bin/dovi_tool && \
+    dovi_tool --version
+
 # Configure PostgreSQL
 # Create data directory and set permissions
 RUN mkdir -p /data/postgres /data/redis /data/mkvauto/data /data/mkvauto/logs /data/mkvauto/tmp && \

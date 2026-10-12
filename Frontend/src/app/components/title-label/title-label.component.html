@@ -231,7 +231,7 @@
         </div>
         <div class="title-card-meta">
           <span class="muted text-xs">
-            {{ dupPrimary.duration ? (dupPrimary.duration/60 | number:'1.0-1') + ' min' : '' }}
+            {{ formatTimecode(dupPrimary.duration) }}
             <ng-container *ngIf="dupPrimary.size"> · {{ (dupPrimary.size/1024/1024 | number:'1.0-0') }} MB</ng-container>
             <ng-container *ngIf="getChapterCount(dupPrimary) as chapterCount"> · {{ chapterCount }} chapters</ng-container>
             <ng-container *ngIf="dupPrimary.source_file"> · {{ dupPrimary.source_file }}</ng-container>
@@ -299,7 +299,7 @@
       <div class="title-card-meta">
         <span class="muted text-xs">
           <ng-container *ngIf="getPrimaryTitle(row.group.titles) as p">
-            {{ p.duration ? (p.duration/60 | number:'1.0-1') + ' min' : '' }}
+            {{ formatTimecode(p.duration) }}
             <ng-container *ngIf="p.size"> · {{ formatSize(p.size) }}</ng-container>
             <ng-container *ngIf="getChapterCount(p) as cc"> · {{ cc }} chapters</ng-container>
           </ng-container>
@@ -382,7 +382,7 @@
 
       <div class="title-card-meta">
         <span class="muted text-xs">
-          {{ row.title.duration ? (row.title.duration/60 | number:'1.0-1') + ' min' : '' }}
+          {{ formatTimecode(row.title.duration) }}
           <ng-container *ngIf="row.title.size"> · {{ (row.title.size/1024/1024 | number:'1.0-0') }} MB</ng-container>
           <ng-container *ngIf="getChapterCount(row.title) as chapterCount"> · {{ chapterCount }} chapters</ng-container>
         </span>
@@ -551,7 +551,7 @@
             <div class="variant-info">
               <div class="variant-source-file">{{ v.source_file || 'Unknown source' }}</div>
               <div class="variant-meta">
-                <span *ngIf="v.duration">{{ (v.duration / 60 | number:'1.0-1') }} min</span>
+                <span *ngIf="v.duration">{{ formatTimecode(v.duration) }}</span>
                 <span *ngIf="v.size">{{ formatSize(v.size) }}</span>
                 <span *ngIf="getChapterCount(v) as cc">{{ cc }} ch</span>
               </div>

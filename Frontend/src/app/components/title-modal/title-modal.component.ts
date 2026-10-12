@@ -9,6 +9,7 @@ import {
   TITLE_TYPE_SELECT_OPTIONS,
 } from '../../constants/title-type-options';
 import { TitlePatchRequest } from '../../services/workflow.service';
+import { formatTimecode } from '../../utils/timecode.util';
 
 @Component({
   selector: 'app-title-modal',
@@ -253,13 +254,7 @@ export class TitleModalComponent implements OnDestroy {
   }
 
   formatDuration(seconds: number): string {
-    if (!seconds) return '';
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    }
-    return `${minutes}m`;
+    return formatTimecode(seconds);
   }
 
   formatSize(bytes: number): string {

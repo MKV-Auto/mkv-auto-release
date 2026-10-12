@@ -49,6 +49,16 @@ describe('ObfuscationBadgeComponent', () => {
     expect(component.view.tooltip).toContain('Titles 8–13.');
   });
 
+  it('reason="filler_stub" renders a slate "Filler" pill, not "Decoy" (#892)', () => {
+    component.reason = 'filler_stub';
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.textContent).toContain('Filler');
+    expect(el.textContent).not.toContain('Decoy');
+    expect(component.view.tone).toBe('slate');
+    expect(component.view.tooltip).toContain('1 MB');
+  });
+
   it('HIGH tier: reason="path_a_decoy" renders a red "Decoy" pill', () => {
     component.reason = 'path_a_decoy';
     component.flagged = true;

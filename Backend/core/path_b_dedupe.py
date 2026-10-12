@@ -701,6 +701,25 @@ def apply_path_b_marks_for_disc(db: Any, disc_id: str) -> tuple[int, int, int, i
     Returns (reason_cleared, reason_set_sibling, subsumption_marked_ignore,
     subsumption_set_subsumed_by) for caller logging.
     """
+    result = _apply_segment_and_play_all_marks(db, disc_id)
+    # #892: filler stubs last, so a reason the segment pass clears on its
+    # representatives can't wipe the filler mark (and the filler pass never
+    # replaces a stronger reason those passes set).
+    if disc_id:
+        from api import models as db_models
+        from core.filler_stub import apply_filler_stub_marks
+        rows = db.query(db_models.DiscTitle).filter(db_models.DiscTitle.disc_id == disc_id).all()
+        stubs_marked, stubs_cleared = apply_filler_stub_marks(db, rows)
+        if stubs_marked or stubs_cleared:
+            _log.info(
+                "apply_path_b_marks_for_disc disc_id=%s: filler stubs marked=%s cleared=%s",
+                disc_id, stubs_marked, stubs_cleared,
+            )
+    return result
+
+
+def _apply_segment_and_play_all_marks(db: Any, disc_id: str) -> tuple[int, int, int, int]:
+    """Segment-set, subsumption and (DVD) play-all marks; see the public wrapper."""
     if not disc_id:
         return (0, 0, 0, 0)
     from api import models as db_models

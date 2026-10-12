@@ -14,6 +14,7 @@ import {
 import { PreviewViewerComponent } from '../preview-viewer/preview-viewer.component';
 import { TitleEditorComponent } from '../title-editor/title-editor.component';
 import { TitlePatchRequest } from '../../services/workflow.service';
+import { formatTimecode } from '../../utils/timecode.util';
 
 /**
  * #848 / #849 — the shared preview + label modal.
@@ -109,15 +110,8 @@ export class PreviewLabelModalComponent implements OnInit, OnDestroy {
     if (!t) return '';
     const parts: string[] = [];
     if (t.source_file) parts.push(String(t.source_file));
-    const secs = Number(t.duration);
-    if (Number.isFinite(secs) && secs > 0) {
-      if (secs < 60) parts.push(`${Math.round(secs)}s`);
-      else {
-        const h = Math.floor(secs / 3600);
-        const m = Math.round((secs % 3600) / 60);
-        parts.push(h > 0 ? `${h}h ${m}m` : `${m}m`);
-      }
-    }
+    const duration = formatTimecode(t.duration);
+    if (duration) parts.push(duration);
     const bytes = Number(t.size);
     if (Number.isFinite(bytes) && bytes > 0) {
       parts.push(bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`);

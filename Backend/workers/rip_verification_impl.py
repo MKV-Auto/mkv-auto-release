@@ -32,6 +32,44 @@ def _add_rip_time_matches(filename_to_title_id: dict[str, str], job: Any) -> dic
     return filename_to_title_id
 
 
+def _gather_outputs(
+    job_task: Any,
+    rip_workdir: Any,
+    disc_id: str | None,
+    db: Any,
+    filename_to_title_id: dict[str, str],
+    *,
+    skip_hashes: bool = False,
+    progress_cb: Any = None,
+) -> tuple[dict, dict]:
+    """``gather_final_outputs`` plus the MKVs it couldn't match (#898).
+
+    ``gather_final_outputs`` maps files by the output name the disc scan
+    predicted (``DiscTitle.comment``) and, once anything matches, silently
+    drops the rest. A multi-angle main feature is named differently by the
+    rip: A New Hope's scan predicted ``_t10`` and the rip wrote angle 1 as
+    ``_t02``, so verification counted 9/10 and waited out its 10-minute timer
+    on a complete rip. An unmatched file is added back when
+    ``filename_to_title_id`` (which carries the rip's own matches) names its
+    title and that title isn't already taken, so nothing is mapped twice.
+    """
+    paths, _ = job_task.gather_final_outputs(rip_workdir, disc_id=disc_id, db=db, skip_hashes=True)
+    mapped = {os.path.normpath(str(rel)) for rel in paths.values()}
+    for rel in sorted(mkv_sizes_by_relpath(rip_workdir)):
+        if os.path.normpath(rel) in mapped:
+            continue
+        name = os.path.basename(rel)
+        title_id = filename_to_title_id.get(rel) or filename_to_title_id.get(name)
+        if title_id and title_id not in paths and name not in paths:
+            paths[title_id] = rel
+            log.info("rip_verification: matched %s to title %s from the rip's own record", rel, title_id)
+    if skip_hashes:
+        return paths, {}
+    return job_task.gather_final_outputs(
+        rip_workdir, final_paths=paths, progress_cb=progress_cb, disc_id=disc_id, db=db
+    )
+
+
 def run_rip_verification_for_job(job_task: Any, job_id: str) -> None:
     from api import models as db_models
 
@@ -180,8 +218,8 @@ def _run_miss_label_verification(
     _add_rip_time_matches(filename_to_title_id, job)
 
     try:
-        ripped_src0, _ = job_task.gather_final_outputs(
-            rip_workdir, disc_id=disc_id, db=db, skip_hashes=True
+        ripped_src0, _ = _gather_outputs(
+            job_task, rip_workdir, disc_id, db, filename_to_title_id, skip_hashes=True
         )
     except (ValueError, FileNotFoundError):
         ripped_src0 = {}
@@ -211,8 +249,8 @@ def _run_miss_label_verification(
         while True:
             time.sleep(min(wait_interval_sec, max(1, stable_no_growth_sec - (time.monotonic() - last_growth_time))))
             try:
-                ripped_source_new, _ = job_task.gather_final_outputs(
-                    rip_workdir, disc_id=disc_id, db=db, skip_hashes=True
+                ripped_source_new, _ = _gather_outputs(
+                    job_task, rip_workdir, disc_id, db, filename_to_title_id, skip_hashes=True
                 )
                 ripped_normalized_new = _normalize_ripped_files_to_title_ids(
                     db, ripped_source_new, disc_id=disc_id, filename_to_title_id=filename_to_title_id
@@ -237,8 +275,8 @@ def _run_miss_label_verification(
                 break
         if not count_ok_miss:
             try:
-                ripped_source_final, _ = job_task.gather_final_outputs(
-                    rip_workdir, disc_id=disc_id, db=db, skip_hashes=True
+                ripped_source_final, _ = _gather_outputs(
+                    job_task, rip_workdir, disc_id, db, filename_to_title_id, skip_hashes=True
                 )
                 ripped_final = _normalize_ripped_files_to_title_ids(
                     db, ripped_source_final, disc_id=disc_id, filename_to_title_id=filename_to_title_id
@@ -290,8 +328,8 @@ def _run_miss_label_verification(
         )
         return
 
-    ripped_files, final_hashes = job_task.gather_final_outputs(
-        rip_workdir, disc_id=disc_id, db=db, progress_cb=_verification_progress_cb
+    ripped_files, final_hashes = _gather_outputs(
+        job_task, rip_workdir, disc_id, db, filename_to_title_id, progress_cb=_verification_progress_cb
     )
     ripped_files = _normalize_ripped_files_to_title_ids(
         db, ripped_files, disc_id=disc_id, filename_to_title_id=filename_to_title_id
@@ -441,8 +479,8 @@ def _run_hit_verification(
     _add_rip_time_matches(filename_to_title_id, job)
 
     try:
-        ripped_files_source, _ = job_task.gather_final_outputs(
-            rip_workdir, disc_id=disc_id, db=db, skip_hashes=True
+        ripped_files_source, _ = _gather_outputs(
+            job_task, rip_workdir, disc_id, db, filename_to_title_id, skip_hashes=True
         )
     except (ValueError, FileNotFoundError):
         ripped_files_source = {}
@@ -463,8 +501,15 @@ def _run_hit_verification(
                 .all()
             )
             sorted_ids = [str(t.id) for t in titles if t.id]
+            # The rip's own record is authoritative: a multi-angle feature's
+            # _tNN is the rip's numbering, not a position in the scan (#898).
+            rip_named = {
+                os.path.basename(str(rel)) for rel in (getattr(job, "ripped_files", None) or {}).values()
+            } if isinstance(getattr(job, "ripped_files", None), dict) else set()
             for rp in ripped_files_source.values():
                 base = os.path.basename(str(rp))
+                if base in rip_named:
+                    continue
                 m = _t_mkv.search(base)
                 if m and sorted_ids:
                     idx = int(m.group(1))
@@ -496,8 +541,8 @@ def _run_hit_verification(
         while True:
             time.sleep(min(wait_interval_sec, max(1, stable_no_growth_sec - (time.monotonic() - last_growth_time))))
             try:
-                ripped_files_source_new, _ = job_task.gather_final_outputs(
-                    rip_workdir, disc_id=disc_id, db=db, skip_hashes=True
+                ripped_files_source_new, _ = _gather_outputs(
+                    job_task, rip_workdir, disc_id, db, filename_to_title_id, skip_hashes=True
                 )
                 ripped_normalized_new = _normalize_ripped_files_to_title_ids(
                     db, ripped_files_source_new, disc_id=disc_id, filename_to_title_id=filename_to_title_id
@@ -523,8 +568,8 @@ def _run_hit_verification(
                 break
         if not count_ok:
             try:
-                ripped_files_source_final, _ = job_task.gather_final_outputs(
-                    rip_workdir, disc_id=disc_id, db=db, skip_hashes=True
+                ripped_files_source_final, _ = _gather_outputs(
+                    job_task, rip_workdir, disc_id, db, filename_to_title_id, skip_hashes=True
                 )
                 ripped_normalized_final = _normalize_ripped_files_to_title_ids(
                     db, ripped_files_source_final, disc_id=disc_id, filename_to_title_id=filename_to_title_id
@@ -577,8 +622,8 @@ def _run_hit_verification(
         )
         return
 
-    ripped_files_source, final_hashes_source = job_task.gather_final_outputs(
-        rip_workdir, disc_id=disc_id, db=db, progress_cb=_verification_progress_cb_hit
+    ripped_files_source, final_hashes_source = _gather_outputs(
+        job_task, rip_workdir, disc_id, db, filename_to_title_id, progress_cb=_verification_progress_cb_hit
     )
     ripped_normalized = _normalize_ripped_files_to_title_ids(
         db, ripped_files_source, disc_id=disc_id, filename_to_title_id=filename_to_title_id

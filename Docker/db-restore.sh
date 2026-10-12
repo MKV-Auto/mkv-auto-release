@@ -7,9 +7,9 @@
 # List backups: docker exec mkv-auto /app/db-restore.sh list
 #
 # Stop the app writers first so nothing mutates the DB mid-restore:
-#   docker exec mkv-auto supervisorctl stop uvicorn celery-rip celery-default celery-preview
+#   docker exec mkv-auto supervisorctl stop uvicorn celery celery-rip celery-postprocess celery-transfer celery-preview celery-convert
 # then restore, then restart:
-#   docker exec mkv-auto supervisorctl start uvicorn celery-rip celery-default celery-preview
+#   docker exec mkv-auto supervisorctl start uvicorn celery celery-rip celery-postprocess celery-transfer celery-preview celery-convert
 
 set -uo pipefail
 
@@ -51,7 +51,7 @@ echo "  (this OVERWRITES existing data — Ctrl-C now if the app writers are sti
 # auth, then SET ROLE). Errors during --clean of absent objects are tolerated
 # by --if-exists; a genuine restore error still exits non-zero.
 if pg_as_postgres "'$PG_RESTORE' --clean --if-exists --no-owner --role '$APP_ROLE' -d '$DB_NAME' '$DUMP'"; then
-  echo "Restore complete. Restart writers: supervisorctl start uvicorn celery-rip celery-default celery-preview"
+  echo "Restore complete. Restart writers: supervisorctl start uvicorn celery celery-rip celery-postprocess celery-transfer celery-preview celery-convert"
 else
   rc=$?
   echo "Restore reported errors (rc=$rc). Inspect the DB before restarting writers." >&2

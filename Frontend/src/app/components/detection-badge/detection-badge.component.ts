@@ -1,6 +1,7 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import type { TitleInfo } from '../../services/drive.service';
+import { formatTimecode } from '../../utils/timecode.util';
 
 /** Amber badge showing padding/junk detection reason and metrics tooltip. */
 @Component({
@@ -141,10 +142,9 @@ export class DetectionBadgeComponent {
     const t = this.title;
     const flags = t?.detection_flags;
     const lines: string[] = [];
-    if (t?.duration != null) {
-      const m = Math.floor(t.duration / 60);
-      const s = Math.round(t.duration % 60);
-      lines.push(`Duration: ${m}m ${s}s`);
+    const duration = formatTimecode(t?.duration);
+    if (duration) {
+      lines.push(`Duration: ${duration}`);
     }
     if (flags?.bitrate_mbps != null) {
       const susp = flags.is_suspicious_bitrate ? ' (suspicious)' : '';

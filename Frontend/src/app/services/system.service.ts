@@ -399,6 +399,68 @@ export interface AutoRipConfig {
   auto_rip_enabled: boolean;
 }
 
+/** #894: Dolby Vision 7 -> 8.1 conversion. One configured library folder and
+ *  whether the container can use it (`problem` says why not). */
+export interface Dv7Folder {
+  path: string;
+  ok: boolean;
+  problem: string | null;
+}
+
+export interface Dv7Config {
+  enabled: boolean;
+  convert_new_rips: boolean;
+  library_paths: string[];
+  folders: Dv7Folder[];
+}
+
+/** Partial update for `PUT /system/dv7/config`; omitted fields are unchanged. */
+export interface Dv7ConfigUpdate {
+  enabled?: boolean;
+  convert_new_rips?: boolean;
+  library_paths?: string[];
+}
+
+export type Dv7FileStatus =
+  | 'catalogued'
+  | 'queued'
+  | 'converting'
+  | 'converted'
+  | 'failed'
+  | 'skipped';
+
+/** Catalog counts. A status with no files is absent from `by_status`. */
+export interface Dv7LibrarySummary {
+  total: number;
+  dv7: number;
+  by_status: Partial<Record<Dv7FileStatus, number>>;
+}
+
+export interface Dv7LibraryFile {
+  id: string;
+  path: string;
+  library_root: string;
+  size: number | null;
+  video_codec: string | null;
+  width: number | null;
+  height: number | null;
+  dv_profile: number | null;
+  duration: number | null;
+  status: Dv7FileStatus;
+  /** 0..1 while converting, otherwise null. */
+  progress: number | null;
+  error: string | null;
+  scanned_at: string | null;
+  converted_at: string | null;
+}
+
+export interface Dv7LibraryFilesQuery {
+  status?: Dv7FileStatus;
+  dv7_only?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
 export interface PreviewConfig {
   duration_seconds: number;
   max_parallel: number;
@@ -665,6 +727,43 @@ export class SystemService {
 
   saveAutoRipConfig(cfg: AutoRipConfig): Observable<AutoRipConfig> {
     return this.http.post<AutoRipConfig>(`${this.apiUrl}/system/auto-rip/config`, cfg);
+  }
+
+  // ── Dolby Vision 7 -> 8.1 conversion (#894) ────────────────────────
+  getDv7Config(): Observable<Dv7Config> {
+    return this.http.get<Dv7Config>(`${this.apiUrl}/system/dv7/config`);
+  }
+
+  /** 400 with `detail` when a folder is unusable. Turning the feature on, or
+   *  changing folders while on, starts a library scan server-side. */
+  saveDv7Config(update: Dv7ConfigUpdate): Observable<Dv7Config> {
+    return this.http.put<Dv7Config>(`${this.apiUrl}/system/dv7/config`, update);
+  }
+
+  /** 409 with `detail` when the feature is off or no folder is set. */
+  startDv7Scan(): Observable<{ queued: boolean }> {
+    return this.http.post<{ queued: boolean }>(`${this.apiUrl}/system/dv7/scan`, {});
+  }
+
+  getDv7LibrarySummary(): Observable<Dv7LibrarySummary> {
+    return this.http.get<Dv7LibrarySummary>(`${this.apiUrl}/system/dv7/library`);
+  }
+
+  getDv7LibraryFiles(query: Dv7LibraryFilesQuery = {}): Observable<Dv7LibraryFile[]> {
+    let params = new HttpParams();
+    if (query.status) params = params.set('status', query.status);
+    if (query.dv7_only !== undefined) params = params.set('dv7_only', String(query.dv7_only));
+    if (query.limit !== undefined) params = params.set('limit', String(query.limit));
+    if (query.offset !== undefined) params = params.set('offset', String(query.offset));
+    return this.http.get<Dv7LibraryFile[]>(`${this.apiUrl}/system/dv7/library/files`, { params });
+  }
+
+  /** Re-queue a failed or skipped file. 409 with `detail` otherwise. */
+  retryDv7File(id: string): Observable<{ queued: boolean }> {
+    return this.http.post<{ queued: boolean }>(
+      `${this.apiUrl}/system/dv7/library/files/${encodeURIComponent(id)}/retry`,
+      {},
+    );
   }
 
   /** Ask the backend to send a single test message to Discord (used by setup step). */

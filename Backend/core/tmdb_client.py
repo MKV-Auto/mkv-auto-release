@@ -534,3 +534,32 @@ def get_tv_details(tmdb_id: str | int) -> Optional[TmdbTvDetails]:
     if not tid:
         return None
     return _get_tv_details_cached(tid)
+
+
+def get_title_metadata(tmdb_type: str, tmdb_id: str | int) -> Optional[Dict[str, Any]]:
+    """Canonical name, year and poster for a movie or TV show from the TMDB
+    API (``/3/movie/{id}`` or ``/3/tv/{id}``).
+
+    Replaces scraping themoviedb.org pages, which TMDB began answering with
+    403 Forbidden (2026-10-11, #893). Returns ``None`` for a blank id or an
+    unknown type; raises ``TmdbConfigError`` (no/invalid key),
+    ``TmdbNotFoundError`` or ``TmdbNetworkError`` like the other lookups.
+    """
+    tid = str(tmdb_id).strip()
+    kind = (tmdb_type or "").strip().lower()
+    if not tid or kind not in ("movie", "tv"):
+        return None
+    data = _http_get(f"/{kind}/{tid}", {})
+    if kind == "movie":
+        name = data.get("title") or data.get("original_title")
+        date = data.get("release_date")
+    else:
+        name = data.get("name") or data.get("original_name")
+        date = data.get("first_air_date")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return {
+        "name": name.strip(),
+        "production_year": _year_from_release_date(date),
+        "cover_url": _cover_url(data.get("poster_path")),
+    }

@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends
 
-from api.routers import jobs, events, system, discs, discdb, releases, movies, drives, websockets
+from api.routers import jobs, events, system, discs, discdb, releases, movies, drives, websockets, dv7
 from sqlalchemy import text
 from api import database, crud
 from api import models as db_models
@@ -1250,6 +1250,7 @@ app.add_middleware(
 app.include_router(jobs.router)
 app.include_router(events.router)
 app.include_router(system.router)
+app.include_router(dv7.router)  # Dolby Vision 7 -> 8.1 conversion (#894)
 app.include_router(discs.router)
 app.include_router(discdb.router)
 app.include_router(releases.router)

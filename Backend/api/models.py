@@ -700,3 +700,55 @@ class TransferHealthCheck(Base):
     )
 
     transfer_config = relationship("TransferConfig", back_populates="health_checks")
+
+
+class LibraryMediaFile(Base):
+    """One video file found by the library scan (#894).
+
+    The catalog behind Dolby Vision 7 -> 8.1 conversion: every scanned file's
+    format is recorded, and DV profile 7 files move through
+    ``queued -> converting -> converted | failed | skipped``. Files that need
+    nothing are ``catalogued``. A rescan only re-probes a file whose size or
+    mtime changed.
+    """
+    __tablename__ = "library_media_files"
+
+    id = Column(String, primary_key=True, default=_uuid_str)
+    path = Column(Text, nullable=False, unique=True)
+    library_root = Column(Text, nullable=False)
+    size = Column(BigInteger, nullable=True)
+    mtime = Column(Float, nullable=True)
+    video_codec = Column(String, nullable=True)
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    dv_profile = Column(Integer, nullable=True)
+    duration = Column(Float, nullable=True)
+    status = Column(String, nullable=False, server_default=text("'catalogued'"), index=True)
+    progress = Column(Float, nullable=True)
+    error = Column(Text, nullable=True)
+    scanned_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    converted_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+
+
+class SpaceReservation(Base):
+    """Disk space a heavy task has reserved before writing (#895).
+
+    One row per (kind, ref_id): a rip keyed by its drive's mount point, a DV7
+    conversion by its library file or job/title. ``fs_key`` is the device id
+    of the filesystem written to; ``written_path`` is the task's output dir,
+    whose size is subtracted so a reservation shrinks as data lands. See
+    ``core.space_reservations``.
+    """
+    __tablename__ = "space_reservations"
+    __table_args__ = (UniqueConstraint("kind", "ref_id", name="uq_space_reservations_kind_ref"),)
+
+    id = Column(String, primary_key=True, default=_uuid_str)
+    kind = Column(String, nullable=False)
+    ref_id = Column(String, nullable=False)
+    path = Column(Text, nullable=False)
+    fs_key = Column(String, nullable=False, index=True)
+    bytes_reserved = Column(BigInteger, nullable=False)
+    written_path = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))

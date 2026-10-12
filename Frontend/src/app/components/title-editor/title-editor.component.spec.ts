@@ -70,7 +70,7 @@ describe('TitleEditorComponent', () => {
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('.title-editor__head-fn')?.textContent?.trim()).toBe('00539.mpls');
-    expect(root.querySelector('.title-editor__head-meta')?.textContent).toContain('2h 20m');
+    expect(root.querySelector('.title-editor__head-meta')?.textContent).toContain('2:20:00');
     expect(root.querySelector('input.title-editor__input')).toBeTruthy();
     expect(root.querySelector('select.title-editor__select')).toBeTruthy();
   });
@@ -209,14 +209,14 @@ describe('TitleEditorComponent', () => {
     expect(findIgnoreBtn()?.classList.contains('is-unignore')).toBeTrue();
   });
 
-  it('formats duration in h/m/s — sub-60s falls back to seconds', () => {
+  it('formats duration as full H:MM:SS timecode (#891)', () => {
     expect(component.formatDuration(0)).toBe('');
-    expect(component.formatDuration(45)).toBe('45s');
-    expect(component.formatDuration(10)).toBe('10s');
-    expect(component.formatDuration(59)).toBe('59s');
-    expect(component.formatDuration(60)).toBe('1m');
-    expect(component.formatDuration(3600)).toBe('1h 0m');
-    expect(component.formatDuration(8400)).toBe('2h 20m');
+    expect(component.formatDuration(45)).toBe('0:00:45');
+    expect(component.formatDuration(10)).toBe('0:00:10');
+    expect(component.formatDuration(59)).toBe('0:00:59');
+    expect(component.formatDuration(60)).toBe('0:01:00');
+    expect(component.formatDuration(3600)).toBe('1:00:00');
+    expect(component.formatDuration(8400)).toBe('2:20:00');
   });
 
   it('formats size in MB', () => {

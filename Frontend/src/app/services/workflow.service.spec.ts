@@ -8,9 +8,9 @@
  * - Create+Link methods
  * - Action methods
  */
-import { TestBed } from '@angular/core/testing';
+import { TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
-import { BehaviorSubject, of, throwError } from 'rxjs';
+import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
 import { WorkflowService, WorkflowContext } from './workflow.service';
 import { JobService } from './job.service';
 import { DriveService } from './drive.service';
@@ -1797,6 +1797,169 @@ describe('WorkflowService', () => {
 
       expect(step).toBe('transfer');
     });
+  });
+
+  // #696: a backend push (context_changed refetch, post-process refresh) must
+  // never overwrite a field the user is typing in. Refetches are deferred —
+  // not dropped — and replay once the user pauses; progress stays live.
+  describe('#696 typing vs pushed context updates', () => {
+    let input: HTMLInputElement;
+
+    const driveCtx = (labelForm: any = {}): any => ({
+      id: 'mnt1',
+      type: 'drive',
+      labelForm: { disc_name: 'Server name', release_name: 'R1', ...labelForm },
+      jobStatus: { jobId: 'j1', job_status: 'running', rip_state: 'running', rip_progress: 10 },
+      discInfo: { disc_id: 'd1', mount_point: 'mnt1' },
+      titles: [],
+      postProcessFiles: [],
+    });
+
+    /** What the label inputs do: a real DOM keystroke plus the immutable
+     *  labelForm update the component's ngModelChange handler performs. */
+    const typeDiscName = (value: string) => {
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const ctx = service.getCurrentContext()!;
+      service.updateContext({ labelForm: { ...ctx.labelForm, disc_name: value } });
+    };
+
+    beforeEach(() => {
+      input = document.createElement('input');
+      input.type = 'text';
+      document.body.appendChild(input);
+      (service as any)._activeContext$.next(driveCtx());
+    });
+
+    afterEach(() => input.remove());
+
+    it('defers a context_changed that arrives mid-typing, then applies it once the user pauses', fakeAsync(() => {
+      const fetchSpy = spyOn(service as any, 'fetchDiscWorkflowContextHttp').and.returnValue(
+        of(driveCtx({ disc_name: 'My typed name', release_name: 'R2 from server' })),
+      );
+
+      typeDiscName('My typed name');
+      (service as any).handleUnifiedMessage({ type: 'context_changed', disc_id: 'd1', changed_fields: ['jobStatus'] });
+      tick(400);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(service.getCurrentContext()!.labelForm.disc_name).toBe('My typed name');
+
+      tick(5000);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(service.getCurrentContext()!.labelForm.release_name).toBe('R2 from server');
+      expect(service.getCurrentContext()!.labelForm.disc_name).toBe('My typed name');
+    }));
+
+    it('keeps extending the deferral while the user keeps typing', fakeAsync(() => {
+      const fetchSpy = spyOn(service as any, 'fetchDiscWorkflowContextHttp').and.returnValue(of(driveCtx()));
+
+      typeDiscName('M');
+      (service as any).handleUnifiedMessage({ type: 'context_changed', disc_id: 'd1' });
+      tick(4000);
+      typeDiscName('My');
+      tick(4000);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(service.getCurrentContext()!.labelForm.disc_name).toBe('My');
+
+      tick(1100);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    }));
+
+    it('does not apply a refetch already in flight when the user starts typing', fakeAsync(() => {
+      const inFlight = new Subject<any>();
+      const fetchSpy = spyOn(service as any, 'fetchDiscWorkflowContextHttp').and.returnValues(
+        inFlight.asObservable(),
+        of(driveCtx({ disc_name: 'My typed name', release_name: 'R2 from server' })),
+      );
+
+      // Arrives while idle: passes the arrival gate and starts the fetch.
+      (service as any).handleUnifiedMessage({ type: 'context_changed', disc_id: 'd1' });
+      tick(300);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      // User types during the round-trip; the stale snapshot then lands.
+      typeDiscName('My typed name');
+      inFlight.next(driveCtx({ disc_name: 'Server name', release_name: 'R1' }));
+      inFlight.complete();
+
+      expect(service.getCurrentContext()!.labelForm.disc_name).toBe('My typed name');
+
+      // Not lost: replays after the window with a fresh fetch.
+      tick(5100);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(service.getCurrentContext()!.labelForm.release_name).toBe('R2 from server');
+      expect(service.getCurrentContext()!.labelForm.disc_name).toBe('My typed name');
+    }));
+
+    it('keeps progress updates live while the user is typing', fakeAsync(() => {
+      const fetchSpy = spyOn(service as any, 'fetchDiscWorkflowContextHttp').and.returnValue(of(driveCtx()));
+
+      typeDiscName('My typed name');
+      (service as any).handleUnifiedMessage({ type: 'progress_update', job_id: 'j1', rip_progress: 42 });
+      tick(200);
+
+      const ctx = service.getCurrentContext()!;
+      expect(ctx.jobStatus?.rip_progress).toBe(42);
+      expect(ctx.labelForm.disc_name).toBe('My typed name');
+      expect(fetchSpy).not.toHaveBeenCalled();
+      tick(5100);
+    }));
+
+    it('defers the post-process context refresh, not the progress itself', fakeAsync(() => {
+      const fetchJobSpy = spyOn(service as any, 'fetchJobWorkflowContextHttp').and.returnValue(of(null));
+
+      typeDiscName('My typed name');
+      (service as any).handleUnifiedMessage({ type: 'progress_update', job_id: 'j1', rip_progress: 100, post_progress: 50 });
+      tick(200);
+
+      expect(service.getCurrentContext()!.jobStatus?.post_progress).toBe(50);
+      expect(fetchJobSpy).not.toHaveBeenCalled();
+
+      tick(5100);
+      expect(fetchJobSpy).toHaveBeenCalledWith('j1', { suppressLoading: true });
+    }));
+
+    it('focusing a text field arms the window too', fakeAsync(() => {
+      const fetchSpy = spyOn(service as any, 'fetchDiscWorkflowContextHttp').and.returnValue(of(driveCtx()));
+
+      input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      (service as any).handleUnifiedMessage({ type: 'context_changed', disc_id: 'd1' });
+      tick(400);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      tick(5000);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    }));
+
+    it('picks (checkbox) do not defer refetches', fakeAsync(() => {
+      const fetchSpy = spyOn(service as any, 'fetchDiscWorkflowContextHttp').and.returnValue(of(driveCtx()));
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      document.body.appendChild(checkbox);
+
+      checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+      (service as any).handleUnifiedMessage({ type: 'context_changed', disc_id: 'd1' });
+      tick(400);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      checkbox.remove();
+    }));
+
+    it('reconciles the active context once when the window regains focus', fakeAsync(() => {
+      const resyncSpy = spyOn(service as any, '_resyncActiveWorkflowState');
+
+      window.dispatchEvent(new Event('focus'));
+      window.dispatchEvent(new Event('focus'));
+      expect(resyncSpy).toHaveBeenCalledTimes(1);
+      expect(resyncSpy).toHaveBeenCalledWith('window-focus');
+
+      tick(1100);
+      window.dispatchEvent(new Event('focus'));
+      expect(resyncSpy).toHaveBeenCalledTimes(2);
+    }));
   });
 
   describe('WebSocket event handling: disc_ejected', () => {

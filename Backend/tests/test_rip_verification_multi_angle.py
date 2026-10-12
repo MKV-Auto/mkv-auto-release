@@ -73,3 +73,84 @@ def test_rip_recognises_multi_angle_title_lines():
     assert RIP_TITLE_ADDED_RE.match(angle).groups() == ("00800.mpls", "3")
     assert RIP_TITLE_ADDED_RE.match(plain).groups() == ("00142.mpls", "0")
     assert RIP_TITLE_ADDED_RE.match(dup) is None
+
+
+# --- #898: the real gather step, A New Hope (1.7.0-rc.2, job aa1c5ef8) -------
+#
+# The test above fed normalization filename-keyed results, but the real
+# gather_final_outputs() maps files by the scan's predicted output name
+# (DiscTitle.comment) and, once any file matches, drops the rest. The 9-angle
+# main feature (00850.mpls, scan index 10, predicted "_t10") was written by the
+# rip as "_t02", so it never reached normalization and verification counted
+# 9/10 for 10 minutes.
+
+NEW_HOPE_SCAN = [(0, "00650.mpls"), (1, "00020.mpls"), (10, "00850.mpls"), (11, "00011.m2ts"),
+                 (12, "00122.m2ts"), (13, "00123.m2ts"), (14, "00720.m2ts"), (15, "00300.m2ts"),
+                 (16, "00301.m2ts"), (17, "00198.m2ts")]
+NEW_HOPE_RIP_INDEX = {10: 2}  # everything else is written under its scan index
+
+
+def _new_hope(session, raw):
+    disc = models.Disc(id=str(uuid.uuid4()), content_hash=f"h-{uuid.uuid4().hex[:12]}")
+    session.add(disc)
+    session.flush()
+    ids, ripped = {}, {}
+    for idx, src in NEW_HOPE_SCAN:
+        t = models.DiscTitle(id=str(uuid.uuid4()), disc_id=disc.id, index=idx, source_file=src,
+                             comment=f"A New Hope_t{idx:02d}.mkv")
+        session.add(t)
+        ids[idx] = t.id
+        name = f"A New Hope_t{NEW_HOPE_RIP_INDEX.get(idx, idx):02d}.mkv"
+        (raw / name).write_bytes(f"mkv {idx}".encode())
+        ripped[t.id] = name
+    session.commit()
+    return disc, ids, SimpleNamespace(ripped_files=ripped)
+
+
+class _JobTask:
+    def gather_final_outputs(self, root, **kw):
+        from workers.tasks import gather_final_outputs
+        return gather_final_outputs(root, **kw)
+
+
+def test_gather_step_alone_drops_the_angle_feature(test_db, tmp_path):
+    from workers.tasks import gather_final_outputs
+
+    with test_db() as db:
+        disc, ids, _job = _new_hope(db, tmp_path)
+        paths, _ = gather_final_outputs(tmp_path, disc_id=disc.id, db=db, skip_hashes=True)
+        assert len(paths) == len(NEW_HOPE_SCAN) - 1
+        assert ids[10] not in paths
+
+
+def test_verification_gather_keeps_the_angle_feature_and_hashes_it(test_db, tmp_path):
+    from workers.rip_verification_impl import _gather_outputs
+
+    with test_db() as db:
+        disc, ids, job = _new_hope(db, tmp_path)
+        f2t = _add_rip_time_matches({}, job)
+
+        paths, _ = _gather_outputs(_JobTask(), tmp_path, disc.id, db, f2t, skip_hashes=True)
+        assert len(paths) == len(NEW_HOPE_SCAN)
+        assert paths[ids[10]] == "A New Hope_t02.mkv"
+
+        normalized = _normalize_ripped_files_to_title_ids(db, paths, disc_id=disc.id, filename_to_title_id=f2t)
+        assert len(normalized) == len(NEW_HOPE_SCAN)
+
+        paths, hashes = _gather_outputs(_JobTask(), tmp_path, disc.id, db, f2t)
+        assert ids[10] in hashes and len(hashes) == len(NEW_HOPE_SCAN)
+
+
+def test_unmatched_file_never_takes_a_title_that_is_already_matched(test_db, tmp_path):
+    """An unmatched file whose rip record points at a title the scan's names
+    already matched is left out, not mapped twice."""
+    from workers.rip_verification_impl import _gather_outputs
+
+    with test_db() as db:
+        disc, ids, job = _new_hope(db, tmp_path)
+        (tmp_path / "A New Hope_t99.mkv").write_bytes(b"stray")
+        f2t = {**_add_rip_time_matches({}, job), "A New Hope_t99.mkv": ids[11]}
+
+        paths, _ = _gather_outputs(_JobTask(), tmp_path, disc.id, db, f2t, skip_hashes=True)
+        assert paths[ids[11]] == "A New Hope_t11.mkv"
+        assert "A New Hope_t99.mkv" not in paths.values()

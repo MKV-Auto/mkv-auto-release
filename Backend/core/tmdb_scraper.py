@@ -86,8 +86,10 @@ def fetch_tmdb_metadata_for_id(
     title_type: str | None = None,
 ) -> Dict[str, str | int | None] | None:
     """
-    Scrape TMDB by id for canonical title, year, and poster. Returns None on failure
-    (network, parse, or empty title) so callers can fall back to other sources.
+    Canonical title, year and poster for a TMDB id: the TMDB API first, the
+    page scrape only as a fallback (#893). Returns None on failure (not
+    found, network, parse, or empty title) so callers can fall back to
+    other sources.
     """
     tid = normalize_tmdb_id_str(tmdb_id)
     if not tid:
@@ -99,6 +101,22 @@ def fetch_tmdb_metadata_for_id(
         group_type=group_type,
         title_type=title_type,
     )
+    # #893: themoviedb.org answers page scrapes with 403. The API is the
+    # primary source; scraping is only the fallback for setups without an
+    # API key.
+    from core import tmdb_client
+    try:
+        meta = tmdb_client.get_title_metadata(ttype, tid)
+    except tmdb_client.TmdbConfigError:
+        meta = None  # no usable key: fall back to the page
+    except tmdb_client.TmdbNotFoundError:
+        logger.warning("TMDB API has no %s/%s", ttype, tid)
+        return None
+    except tmdb_client.TmdbError as exc:
+        logger.warning("TMDB API lookup failed for %s/%s: %s", ttype, tid, exc)
+        meta = None
+    if meta:
+        return {**meta, "tmdb_type": ttype, "tmdb_id": tid}
     try:
         scraped = scrape_tmdb_page(ttype, tid)
     except Exception as exc:

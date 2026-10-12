@@ -52,6 +52,9 @@ _KNOWN_TOP_LEVEL = frozenset({
     # on a desktop and then being asked again on a phone reads as the app
     # ignoring the answer.
     "support_prompt",
+    # Dolby Vision 7 -> 8.1 conversion (#894): {enabled, convert_new_rips,
+    # library_paths}. Everything off by default; see get_dv7_conversion().
+    "dv7_conversion",
 })
 
 # Successful rips required before the support prompt is eligible to appear.
@@ -87,6 +90,11 @@ def _default_settings() -> dict:
             "tmdb_disabled": False,
         },
         "media_server": "plex",
+        "dv7_conversion": {
+            "enabled": False,
+            "convert_new_rips": False,
+            "library_paths": [],
+        },
         "eject_on_finish": False,
         "eject_on_restart": False,
         "path_template_movie": None,   # Custom path template for movies (#131), e.g. "{type_dir}/{movie} ({year})/{title}.{resolution}.mkv"
@@ -272,6 +280,48 @@ def get_auto_rip_enabled() -> bool:
 
 def set_auto_rip_enabled(value: bool) -> None:
     save_settings({"auto_rip_enabled": bool(value)})
+
+
+def get_dv7_conversion() -> dict:
+    """Dolby Vision 7 -> 8.1 conversion settings (#894), normalised.
+
+    - ``enabled``: master switch, default off. Nothing converts while it's off.
+    - ``convert_new_rips``: convert DV7 outputs during postprocess, before
+      transfer (only when ``enabled``). Default off: each part is opted
+      into separately.
+    - ``library_paths``: container paths whose files the library scan
+      catalogs and converts. Each must be a mapped mount.
+    """
+    raw = load_settings().get("dv7_conversion")
+    raw = raw if isinstance(raw, dict) else {}
+    paths: list[str] = []
+    for p in raw.get("library_paths") or []:
+        p = str(p).strip()
+        if p and p not in paths:
+            paths.append(p)
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "convert_new_rips": bool(raw.get("convert_new_rips", False)),
+        "library_paths": paths,
+    }
+
+
+def set_dv7_conversion(
+    *,
+    enabled: Optional[bool] = None,
+    convert_new_rips: Optional[bool] = None,
+    library_paths: Optional[list] = None,
+) -> dict:
+    """Update any of the DV7 conversion settings; returns the normalised result."""
+    current = get_dv7_conversion()
+    if enabled is not None:
+        current["enabled"] = bool(enabled)
+    if convert_new_rips is not None:
+        current["convert_new_rips"] = bool(convert_new_rips)
+    if library_paths is not None:
+        current["library_paths"] = [str(p).strip() for p in library_paths if str(p).strip()]
+    save_settings({"dv7_conversion": current})
+    return get_dv7_conversion()
 
 
 def apply_discdb_miss_workflow_prefill_to_payload(d: dict) -> None:

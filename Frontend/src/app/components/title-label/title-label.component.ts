@@ -36,6 +36,7 @@ import {
   isBackdropTitleType,
   TITLE_TYPE_SELECT_OPTIONS,
 } from '../../constants/title-type-options';
+import { formatTimecode } from '../../utils/timecode.util';
 
 /** Title labeling step (template: TitlesStep.tsx / TitleCard.tsx). Duplicate group UI when backend provides title duplicate_info. */
 @Component({
@@ -1718,14 +1719,11 @@ export class TitleLabelComponent implements OnChanges, OnInit, OnDestroy {
    * Sub-60s clips render as "Xs" rather than "0m" so a real 45-second
    * bumper doesn't look like a zero-length entry on the titles screen. */
   getTitleDurationLabel(title: any): string | null {
-    const seconds = title?.duration;
-    if (!seconds) return null;
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    if (minutes > 0) return `${minutes}m`;
-    return `${Math.round(seconds)}s`;
+    return formatTimecode(title?.duration) || null;
   }
+
+  /** Template access to the shared formatter (#891). */
+  readonly formatTimecode = formatTimecode;
 
   /** Click-handler for a title row: selects it for the side-panel editor. */
   selectTitle(title: any): void {

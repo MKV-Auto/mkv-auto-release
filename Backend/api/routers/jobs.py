@@ -2790,12 +2790,15 @@ def start_rip(req: JobCreate, db: Session = Depends(get_db)):
         elif disc_record and disc_record.disc_size_bytes:
             disc_size_bytes = disc_record.disc_size_bytes
 
-        # The cached scan payload's titles carry {file, flag, obfuscated} and
-        # NO size, so summing them yields 0 and the estimate would fall back to
-        # the physical disc size — which is far too small for a disc that lists
-        # the same feature twice (#875). The sizes are already in disc_titles;
-        # use them whenever the payload cannot answer.
-        if disc_record and calculate_disc_size_from_titles(titles or {}) <= 0:
+        # The cached scan payload can't be trusted to hold every title's size:
+        # it may carry {file, flag, obfuscated} and no sizes at all (#875), or
+        # sizes for only some titles. A New Hope's cache held 9 of its 10
+        # titles, without the 41.5 GB multi-angle main feature, so the estimate
+        # fell back to the physical size and reserved 64 GB for an 81 GB rip
+        # (#897). The sizes are already in disc_titles; use them whenever they
+        # add up to more than the payload does.
+        payload_titles_bytes = calculate_disc_size_from_titles(titles or {})
+        if disc_record:
             try:
                 sized_rows = (
                     db.query(db_models.DiscTitle)
@@ -2806,17 +2809,21 @@ def start_rip(req: JobCreate, db: Session = Depends(get_db)):
                     )
                     .all()
                 )
-                if sized_rows:
-                    titles = {
-                        str(row.index if row.index is not None else row.id): {"size": int(row.size)}
-                        for row in sized_rows
-                    }
+                db_titles = {
+                    str(row.index if row.index is not None else row.id): {"size": int(row.size)}
+                    for row in sized_rows
+                }
+                db_titles_bytes = calculate_disc_size_from_titles(db_titles)
+                if db_titles_bytes > payload_titles_bytes:
+                    titles = db_titles
                     log.info(
                         "POST /jobs/rip rid=%s space estimate using %d DiscTitle size(s) from DB "
-                        "(sum=%.1f GB) instead of physical disc size (%.1f GB)",
+                        "(sum=%.1f GB) instead of the cached scan's titles (sum=%.1f GB) and "
+                        "physical disc size (%.1f GB)",
                         rip_request_id,
                         len(sized_rows),
-                        calculate_disc_size_from_titles(titles) / (1024 ** 3),
+                        db_titles_bytes / (1024 ** 3),
+                        payload_titles_bytes / (1024 ** 3),
                         (disc_size_bytes or 0) / (1024 ** 3),
                     )
             except Exception as exc:
@@ -2840,6 +2847,23 @@ def start_rip(req: JobCreate, db: Session = Depends(get_db)):
 
             # Check available space
             is_sufficient, error_msg = check_disk_space_for_rip(check_dir, required_bytes)
+
+            # #895: then reserve it, so a rip on the other drive (or a DV7
+            # conversion) can't claim the same free space at the same time.
+            # Keyed by the drive: one rip per drive. Released by the
+            # rip-complete callback, or swept once no rip runs on the drive.
+            if is_sufficient:
+                from core import space_reservations as _sr
+                decision = _sr.try_reserve(db, _sr.KIND_RIP, req.mount_point, check_dir, required_bytes)
+                if not decision.granted:
+                    is_sufficient = False
+                    error_msg = (
+                        f"Insufficient disk space. Required: {required_bytes / (1024 ** 3):.2f} GB, "
+                        f"Available: {max(0, decision.available) / (1024 ** 3):.2f} GB "
+                        f"({decision.free / (1024 ** 3):.2f} GB free, "
+                        f"{decision.reserved_by_others / (1024 ** 3):.2f} GB reserved by other running work, "
+                        f"{decision.floor / (1024 ** 3):.2f} GB kept free for the database)."
+                    )
 
             if not is_sufficient:
                 log.error("Pre-flight disk space check failed: %s", error_msg)
@@ -2947,6 +2971,13 @@ def start_rip(req: JobCreate, db: Session = Depends(get_db)):
             rip_request_id=rip_request_id
         )
         job_id = str(job.id)
+        # #895: the rip's reservation shrinks as its output lands.
+        try:
+            from core import space_reservations as _sr
+            from core.job_paths import JobPaths as _JobPaths
+            _sr.attach_written_path(db, _sr.KIND_RIP, req.mount_point, str(_JobPaths.for_id(job_id).raw))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("POST /jobs/rip rid=%s could not attach the space reservation: %s", rip_request_id, exc)
         log.info(
             "Rip started successfully: rid=%s job=%s disc_num=%s hash=%s mount_point=%s",
             rip_request_id, job_id, disc_num, disc_hash or "computed", req.mount_point
@@ -2976,10 +3007,23 @@ def start_rip(req: JobCreate, db: Session = Depends(get_db)):
         return status
     except ValueError as exc:
         log.warning("Gatekeeper validation error: %s", exc, exc_info=True)
+        _release_rip_reservation(db, req.mount_point)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         log.error("Failed to start rip via gatekeeper: %s", exc, exc_info=True)
+        _release_rip_reservation(db, req.mount_point)
         raise HTTPException(status_code=500, detail=f"Failed to start rip: {exc}") from exc
+
+
+def _release_rip_reservation(db: Session, mount_point: Optional[str]) -> None:
+    """#895: free a drive's rip reservation (rip finished, failed or never started)."""
+    if not mount_point:
+        return
+    try:
+        from core import space_reservations as _sr
+        _sr.release(db, _sr.KIND_RIP, mount_point)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not release the space reservation for %s: %s", mount_point, exc)
 
 
 async def _emit_disc_context_when_job_updates(job_id: str, db: Session) -> None:
@@ -3504,6 +3548,9 @@ def rip_complete_callback(
     job = crud.get_job(db, job_id)
     if not job:
         raise HTTPException(404, detail="Job not found")
+    # #895: MakeMKV has stopped writing (copy done or failed), so the drive's
+    # space reservation has done its job.
+    _release_rip_reservation(db, getattr(job, "mount_point", None))
     rip_state = getattr(job, "rip_state", None)
     if body.success:
         if rip_state in ("completed", "skipped"):

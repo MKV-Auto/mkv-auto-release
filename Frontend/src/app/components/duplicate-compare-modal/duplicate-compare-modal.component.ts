@@ -4,6 +4,7 @@ import { BtnComponent } from '../../ui/btn/btn.component';
 import { CardComponent } from '../../ui/card/card.component';
 import { PillComponent } from '../../ui/pill/pill.component';
 import { IconComponent } from '../../ui/icon/icon.component';
+import { formatTimecode } from '../../utils/timecode.util';
 
 /**
  * Side-by-side comparison of every member of a dedupe group.
@@ -58,12 +59,7 @@ export class DuplicateCompareModalComponent {
   }
 
   formatDuration(seconds: number | null | undefined): string {
-    if (!seconds) return '—';
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    if (minutes > 0) return `${minutes}m`;
-    return `${Math.round(seconds)}s`;
+    return formatTimecode(seconds) || '—';
   }
 
   formatSize(m: any): string {

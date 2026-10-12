@@ -537,6 +537,8 @@ start_backend() {
     echo $! > "$MKVAUTO_PIDS_DIR/celery_transfer.pid"
     celery -A workers.tasks worker -Q preview -c 5 --loglevel=warning >>"$MKVAUTO_LOG_DIR/celery_preview.log" 2>&1 &
     echo $! > "$MKVAUTO_PIDS_DIR/celery_preview.pid"
+    celery -A workers.tasks worker -Q convert -c 1 --loglevel=warning >>"$MKVAUTO_LOG_DIR/celery_convert.log" 2>&1 &
+    echo $! > "$MKVAUTO_PIDS_DIR/celery_convert.pid"
     celery -A workers.tasks worker -Q celery -c 2 --loglevel=warning >>"$MKVAUTO_LOG_DIR/celery.log" 2>&1 &
     echo $! > "$MKVAUTO_PIDS_DIR/celery.pid"
 
@@ -556,7 +558,7 @@ start_frontend() {
 
 stop_backend() {
   echo "⏹  Stopping backend services..."
-  for pidfile in "$MKVAUTO_PIDS_DIR"/uvicorn.pid "$MKVAUTO_PIDS_DIR"/celery.pid "$MKVAUTO_PIDS_DIR"/celery_rip.pid "$MKVAUTO_PIDS_DIR"/celery_postprocess.pid "$MKVAUTO_PIDS_DIR"/celery_transfer.pid "$MKVAUTO_PIDS_DIR"/celery_preview.pid "$MKVAUTO_PIDS_DIR"/root_helper.pid; do
+  for pidfile in "$MKVAUTO_PIDS_DIR"/uvicorn.pid "$MKVAUTO_PIDS_DIR"/celery.pid "$MKVAUTO_PIDS_DIR"/celery_rip.pid "$MKVAUTO_PIDS_DIR"/celery_postprocess.pid "$MKVAUTO_PIDS_DIR"/celery_transfer.pid "$MKVAUTO_PIDS_DIR"/celery_preview.pid "$MKVAUTO_PIDS_DIR"/celery_convert.pid "$MKVAUTO_PIDS_DIR"/root_helper.pid; do
     [ -f "$pidfile" ] || continue
     pid=$(<"$pidfile")
     echo "    → Killing PID $pid"
@@ -786,6 +788,11 @@ dev_status() {
     printf "  %-18s %s\n" "Celery (preview):" "running (pid $(cat "$MKVAUTO_PIDS_DIR/celery_preview.pid"))"
   else
     printf "  %-18s %s\n" "Celery (preview):" "stopped"
+  fi
+  if [ -f "$MKVAUTO_PIDS_DIR/celery_convert.pid" ] && ps -p "$(cat "$MKVAUTO_PIDS_DIR/celery_convert.pid")" >/dev/null 2>&1; then
+    printf "  %-18s %s\n" "Celery (convert):" "running (pid $(cat "$MKVAUTO_PIDS_DIR/celery_convert.pid"))"
+  else
+    printf "  %-18s %s\n" "Celery (convert):" "stopped"
   fi
   if [ -f "$MKVAUTO_PIDS_DIR/celery.pid" ] && ps -p "$(cat "$MKVAUTO_PIDS_DIR/celery.pid")" >/dev/null 2>&1; then
     printf "  %-18s %s\n" "Celery (maint):" "running (pid $(cat "$MKVAUTO_PIDS_DIR/celery.pid"))"

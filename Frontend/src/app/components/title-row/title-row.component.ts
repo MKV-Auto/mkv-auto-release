@@ -132,6 +132,11 @@ export type TitleRowStatus = 'complete' | 'running' | 'failed' | 'pending' | 'ig
       flex-wrap: wrap;
       min-width: 0;
     }
+    .title-row__duration {
+      /* #891: equal-width digits so H:MM:SS values line up down the list. */
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
     .title-row__source {
       font-family: var(--ui-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, monospace);
       overflow: hidden;

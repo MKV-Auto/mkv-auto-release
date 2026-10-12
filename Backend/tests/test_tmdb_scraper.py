@@ -55,7 +55,9 @@ def test_normalize_tmdb_type_for_scrape():
     assert normalize_tmdb_type_for_scrape(None, group_type="series") == "tv"
 
 
-def test_fetch_tmdb_metadata_for_id_uses_scrape(monkeypatch):
+def test_fetch_tmdb_metadata_for_id_scrapes_when_no_api_key(monkeypatch):
+    from core import tmdb_client
+    monkeypatch.setattr(tmdb_client.settings, "get_tmdb_api_key", lambda: None)
     monkeypatch.setattr(
         "core.tmdb_scraper.scrape_tmdb_page",
         lambda ttype, tid: {"name": "X", "production_year": 2001, "cover_url": "http://p"},
@@ -71,6 +73,8 @@ def test_fetch_tmdb_metadata_for_id_uses_scrape(monkeypatch):
 
 
 def test_fetch_tmdb_metadata_for_id_returns_none_on_empty_title(monkeypatch):
+    from core import tmdb_client
+    monkeypatch.setattr(tmdb_client.settings, "get_tmdb_api_key", lambda: None)
     monkeypatch.setattr(
         "core.tmdb_scraper.scrape_tmdb_page",
         lambda ttype, tid: {"name": "", "production_year": None, "cover_url": None},
@@ -304,3 +308,67 @@ def test_metadata_json_generation_matches_expected_format(tmp_path, monkeypatch,
     assert "ImageUrl" in generated
     assert "Slug" in generated
 
+
+
+# --- #893: themoviedb.org answers page scrapes with 403; use the API ---------
+
+def _no_scrape(*_a, **_k):
+    raise AssertionError("must not scrape when the API answered")
+
+
+def test_fetch_uses_the_api_when_a_key_is_configured(monkeypatch):
+    from core import tmdb_client
+    calls = []
+    monkeypatch.setattr(tmdb_client.settings, "get_tmdb_api_key", lambda: "k")
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(url)
+        class R:
+            status_code = 200
+            ok = True
+            text = ""
+            def json(self):
+                return {"title": "Star Wars", "release_date": "1977-05-25", "poster_path": "/abc.jpg"}
+        return R()
+
+    monkeypatch.setattr(tmdb_client.requests, "get", fake_get)
+    monkeypatch.setattr("core.tmdb_scraper.scrape_tmdb_page", _no_scrape)
+    out = fetch_tmdb_metadata_for_id("11", "movie")
+    assert calls == ["https://api.themoviedb.org/3/movie/11"]
+    assert out == {
+        "name": "Star Wars",
+        "production_year": 1977,
+        "cover_url": "https://image.tmdb.org/t/p/w500/abc.jpg",
+        "tmdb_type": "movie",
+        "tmdb_id": "11",
+    }
+
+
+def test_fetch_tv_uses_name_and_first_air_date(monkeypatch):
+    from core import tmdb_client
+    monkeypatch.setattr(tmdb_client, "_http_get", lambda path, params: {
+        "name": "Star Wars Rebels", "first_air_date": "2014-10-03", "poster_path": None})
+    monkeypatch.setattr("core.tmdb_scraper.scrape_tmdb_page", _no_scrape)
+    out = fetch_tmdb_metadata_for_id("60554", "tv")
+    assert out["name"] == "Star Wars Rebels" and out["production_year"] == 2014 and out["cover_url"] is None
+
+
+def test_unknown_id_returns_none_without_scraping(monkeypatch):
+    from core import tmdb_client
+
+    def not_found(path, params):
+        raise tmdb_client.TmdbNotFoundError("404")
+    monkeypatch.setattr(tmdb_client, "_http_get", not_found)
+    monkeypatch.setattr("core.tmdb_scraper.scrape_tmdb_page", _no_scrape)
+    assert fetch_tmdb_metadata_for_id("999999999", "movie") is None
+
+
+def test_api_network_failure_falls_back_to_the_scrape(monkeypatch):
+    from core import tmdb_client
+
+    def down(path, params):
+        raise tmdb_client.TmdbNetworkError("timeout")
+    monkeypatch.setattr(tmdb_client, "_http_get", down)
+    monkeypatch.setattr("core.tmdb_scraper.scrape_tmdb_page",
+                        lambda t, i: {"name": "X", "production_year": 2001, "cover_url": None})
+    assert fetch_tmdb_metadata_for_id("5", "movie")["name"] == "X"

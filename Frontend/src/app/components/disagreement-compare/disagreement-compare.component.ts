@@ -4,6 +4,7 @@ import { BtnComponent } from '../../ui/btn/btn.component';
 import { CardComponent } from '../../ui/card/card.component';
 import { IconComponent } from '../../ui/icon/icon.component';
 import { PillComponent } from '../../ui/pill/pill.component';
+import { formatTimecode } from '../../utils/timecode.util';
 
 /**
  * Side-by-side compare card surfaced when DiscDB and MakeMKV's obfuscation
@@ -42,11 +43,8 @@ export class DisagreementCompareComponent {
   @Output() showDecoys = new EventEmitter<void>();
 
   formatDuration(seconds: number | string | null | undefined): string {
-    if (typeof seconds === 'string') return seconds;
-    if (!seconds) return '—';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}m ${s.toString().padStart(2, '0')}s`;
+    // An unparseable raw string is shown as-is rather than hidden.
+    return formatTimecode(seconds) || (typeof seconds === 'string' && seconds.trim() ? seconds : '—');
   }
 
   formatSize(bytes: number | null | undefined): string {

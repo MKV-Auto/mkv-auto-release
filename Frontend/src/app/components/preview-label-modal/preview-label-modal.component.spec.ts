@@ -152,15 +152,15 @@ describe('PreviewLabelModalComponent', () => {
   it('header mirrors the rail row: name (or Untitled) plus source · duration · size', () => {
     component.title = { title_id: 't1', title: '', source_file: '00362.mpls', duration: 240, size: 654 * 1024 * 1024 };
     fixture.detectChanges();
-    expect(component.headMeta()).toBe('00362.mpls · 4m · 654 MB');
+    expect(component.headMeta()).toBe('00362.mpls · 0:04:00 · 654 MB');
     const head = (fixture.nativeElement as HTMLElement);
     expect(head.querySelector('.plm-heading')?.textContent?.trim()).toBe('Untitled');
-    expect(head.querySelector('.plm-headmeta')?.textContent?.trim()).toBe('00362.mpls · 4m · 654 MB');
+    expect(head.querySelector('.plm-headmeta')?.textContent?.trim()).toBe('00362.mpls · 0:04:00 · 654 MB');
 
     component.title = { title_id: 't2', title: 'The Lost Commanders', source_file: '00351.m2ts', duration: 45 };
-    expect(component.headMeta()).toBe('00351.m2ts · 45s');
+    expect(component.headMeta()).toBe('00351.m2ts · 0:00:45');
     component.title = { title_id: 't3', duration: 5400 };
-    expect(component.headMeta()).toBe('1h 30m');
+    expect(component.headMeta()).toBe('1:30:00');
   });
 
   it('shows the no-preview placeholder when the title has no clip', () => {

@@ -16,6 +16,7 @@ import {
 } from '../../constants/title-type-options';
 import { SystemService } from '../../services/system.service';
 import { WorkflowService, TmdbEpisodeSummary, TitlePatchRequest } from '../../services/workflow.service';
+import { formatTimecode } from '../../utils/timecode.util';
 
 const STATUS_TONE: Record<string, PillTone> = {
   completed: 'emerald',
@@ -652,6 +653,7 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
     if (reason === 'makemkv_msg3307') return 'MakeMKV flagged as likely decoy';
     if (reason === 'subsumed') return 'Component clip wrapped by this playlist';
     if (reason === 'play_all_wrapper') return 'Play All of titles listed separately on this disc';
+    if (reason === 'filler_stub') return 'Filler: 10 s or shorter and 1 MB or smaller';
     return '';
   }
 
@@ -726,16 +728,7 @@ export class TitleEditorComponent implements OnChanges, OnDestroy {
   }
 
   formatDuration(seconds: number): string {
-    if (!seconds) return '';
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    }
-    if (minutes > 0) {
-      return `${minutes}m`;
-    }
-    return `${Math.round(seconds)}s`;
+    return formatTimecode(seconds);
   }
 
   formatSize(bytes: number): string {

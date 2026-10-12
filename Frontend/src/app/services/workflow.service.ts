@@ -176,7 +176,7 @@ export type WorkflowContextStatus = 'loading' | 'ready' | 'stale' | 'pending' | 
 
 /** Why the active workflow context is being force-refetched. Logged, so keep
  * each value descriptive enough to identify the trigger in a support bundle. */
-export type WorkflowResyncSource = 'ws-reconnect' | 'visibility-change';
+export type WorkflowResyncSource = 'ws-reconnect' | 'visibility-change' | 'window-focus';
 
 export interface WorkflowValidationResult {
   valid: boolean;
@@ -909,12 +909,47 @@ export class WorkflowService implements OnDestroy {
     // UI by the time the user comes back. Force a fresh workflow-context
     // fetch on visible so the UI matches backend state without a reload.
     if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', () => {
+      this._addDomListener(document, 'visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-          this._resyncActiveWorkflowState('visibility-change');
+          this._resyncOnFocusBoundary('visibility-change');
         }
       });
+      // #696: typing into (or focusing) a text field arms the interaction
+      // window, so context_changed refetches never land mid-edit. Capture
+      // phase on document covers every labeling surface (disc step, title
+      // editor, drawer, preview modal) without per-component wiring.
+      const onEdit = (e: Event) => {
+        if (WorkflowService._isTextEditTarget(e.target)) this._noteUserEditing();
+      };
+      this._addDomListener(document, 'input', onEdit, true);
+      this._addDomListener(document, 'focusin', onEdit, true);
     }
+    // #696: returning to the window is a focus boundary — reconcile once.
+    if (typeof window !== 'undefined') {
+      this._addDomListener(window, 'focus', () => this._resyncOnFocusBoundary('window-focus'));
+    }
+  }
+
+  /** DOM listeners registered by this service, removed in ngOnDestroy. */
+  private _domListeners: Array<() => void> = [];
+
+  private _addDomListener(target: EventTarget, type: string, handler: (e: Event) => void, capture = false): void {
+    target.addEventListener(type, handler, capture);
+    this._domListeners.push(() => target.removeEventListener(type, handler, capture));
+  }
+
+  private static readonly TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'number', 'url', 'email', 'tel']);
+
+  /** True for an enabled, writable field the user types into. Picks
+   *  (checkbox, radio, select) save immediately and are not "editing". */
+  private static _isTextEditTarget(target: EventTarget | null): boolean {
+    if (typeof HTMLElement === 'undefined' || !(target instanceof HTMLElement)) return false;
+    if (target instanceof HTMLTextAreaElement) return !target.disabled && !target.readOnly;
+    if (target instanceof HTMLInputElement) {
+      return !target.disabled && !target.readOnly &&
+        WorkflowService.TEXT_INPUT_TYPES.has((target.getAttribute('type') || '').toLowerCase());
+    }
+    return target.isContentEditable;
   }
   
   /**
@@ -939,6 +974,13 @@ export class WorkflowService implements OnDestroy {
     this.isDestroyed = true;
     this.disconnectUnified();
     // Old per-disc/per-job connections removed - unified WebSocket handles all updates
+    this._domListeners.forEach(remove => remove());
+    this._domListeners = [];
+    if (this._deferredContextFlushTimer) {
+      clearTimeout(this._deferredContextFlushTimer);
+      this._deferredContextFlushTimer = null;
+    }
+    this._deferredContextChanged.clear();
   }
   
   /**
@@ -2743,8 +2785,11 @@ export class WorkflowService implements OnDestroy {
         if (message.disc_id && Date.now() < this._lastDiscContextSaveUntil) {
           break;
         }
-        // Skip applying context to active card while user recently interacted (only progress updates should update UI)
-        if (Date.now() < this._contextApplySuppressUntil && this._contextChangedMatchesActiveCard(message)) {
+        // Defer (never drop) the refetch for the active card while the user is
+        // interacting — it replays when the window closes (#696). Progress
+        // updates are a separate message type and stay live.
+        if (this._isContextApplySuppressed() && this._contextChangedMatchesActiveCard(message)) {
+          this._deferContextChanged(message);
           break;
         }
         // Do not refetch while a step-advance POST is in flight for this context (ignore context_changed until ready)
@@ -3372,7 +3417,14 @@ export class WorkflowService implements OnDestroy {
               (activeDiscId && contextDiscId && activeDiscId === contextDiscId) ||
               (activeContext.jobStatus?.jobId && context.jobStatus?.jobId && activeContext.jobStatus.jobId === context.jobStatus.jobId)
             );
-            
+
+            // #696: the gate ran when the message ARRIVED; the user may have
+            // started typing during the debounce + round-trip. Re-check now.
+            if (shouldUpdate && this._isContextApplySuppressed()) {
+              this._deferContextChanged(message);
+              return;
+            }
+
             if (shouldUpdate) {
               if (activeContext.type === 'job') {
                 const patch = this._discContextPatchForActiveJob(context, message.changed_fields);
@@ -3449,7 +3501,13 @@ export class WorkflowService implements OnDestroy {
               (message.disc_id && activeContext.type === 'drive' && 
                (activeContext.id === message.disc_id || activeContext.discInfo?.disc_id === message.disc_id))
             );
-            
+
+            // #696: re-check at apply time (see disc branch above).
+            if (shouldUpdate && this._isContextApplySuppressed()) {
+              this._deferContextChanged(message);
+              return;
+            }
+
             if (shouldUpdate) {
               this.applyFetchedContext(context);
               
@@ -3642,11 +3700,6 @@ export class WorkflowService implements OnDestroy {
     const activeContext = this._activeContext$.value;
     if (!activeContext) return;
 
-    // Skip full context refetch while user recently interacted (only progress should update UI)
-    if (Date.now() < this._contextApplySuppressUntil && activeContext.jobStatus?.jobId === jobId) {
-      return;
-    }
-
     const postState = updatedJobStatus?.post_state || updatedJobStatus?.pipeline?.['postprocess'];
     const hasPostProcessFiles = (activeContext.postProcessFiles || []).length > 0;
     const isCompleted = postProgress >= 100 || postState === 'completed';
@@ -3654,6 +3707,13 @@ export class WorkflowService implements OnDestroy {
       (isCompleted && (postState !== 'completed' || !hasPostProcessFiles));
 
     if (!shouldRefresh) return;
+
+    // While the user is interacting, the progress itself stays live (applied
+    // above); only the full-context refetch waits for the window (#696).
+    if (this._isContextApplySuppressed() && activeContext.jobStatus?.jobId === jobId) {
+      this._deferJobContextRefresh(jobId);
+      return;
+    }
 
     const lastRefresh = this.lastPostprocessContextRefresh.get(jobId) ?? 0;
     if (Date.now() - lastRefresh < this.postprocessContextRefreshCooldownMs) return;
@@ -3678,6 +3738,10 @@ export class WorkflowService implements OnDestroy {
         );
 
         if (!shouldUpdate) return;
+        if (this._isContextApplySuppressed()) {
+          this._deferJobContextRefresh(jobId);
+          return;
+        }
 
         this.applyFetchedContext(context);
 
@@ -3736,6 +3800,10 @@ export class WorkflowService implements OnDestroy {
           );
 
           if (!shouldUpdate) return;
+          if (this._isContextApplySuppressed()) {
+            this._deferJobContextRefresh(jobId);
+            return;
+          }
 
           this.applyFetchedContext(context);
 
@@ -3855,6 +3923,20 @@ export class WorkflowService implements OnDestroy {
         this.logger.warn('[WorkflowService] dedupe-group refresh failed', err);
       },
     });
+  }
+
+  /** Last tab/window focus resync — returning to the tab usually fires both
+   *  visibilitychange and window focus; one reconcile is enough. */
+  private _lastFocusBoundaryResyncAt = 0;
+  private static readonly FOCUS_RESYNC_COALESCE_MS = 1000;
+
+  /** #696: reconcile the active context once at a tab/window focus boundary.
+   *  The fetch still respects the interaction window at apply time. */
+  private _resyncOnFocusBoundary(source: WorkflowResyncSource): void {
+    const now = Date.now();
+    if (now - this._lastFocusBoundaryResyncAt < WorkflowService.FOCUS_RESYNC_COALESCE_MS) return;
+    this._lastFocusBoundaryResyncAt = now;
+    this._resyncActiveWorkflowState(source);
   }
 
   private _resyncActiveWorkflowState(source: WorkflowResyncSource): void {
@@ -6767,6 +6849,69 @@ export class WorkflowService implements OnDestroy {
 
   private _setContextApplySuppressFor(durationMs: number): void {
     this._contextApplySuppressUntil = Date.now() + durationMs;
+  }
+
+  private _isContextApplySuppressed(): boolean {
+    return Date.now() < this._contextApplySuppressUntil;
+  }
+
+  /** #696: a keystroke or focus in a text field. Each one pushes the window
+   *  out, so pushed refetches wait until the user pauses. */
+  private _noteUserEditing(): void {
+    this._setContextApplySuppressFor(WorkflowService.INTERACT_SUPPRESS_MS);
+  }
+
+  /** #696: context_changed refetches held back during the interaction window,
+   *  keyed by the branch they take (disc first, as the handler does). Plain
+   *  map, not state: it is drained into the normal fetch path, never read by UI. */
+  private _deferredContextChanged = new Map<string, any>();
+  private _deferredContextFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Hold a context_changed until the user stops interacting. Repeats for the
+   *  same disc/job coalesce, keeping the union of changed_fields so a deferred
+   *  jobStatus hint is not lost to a later message without one. */
+  private _deferContextChanged(message: any): void {
+    const key = message?.disc_id ? `disc:${message.disc_id}` : message?.job_id ? `job:${message.job_id}` : null;
+    if (!key) return;
+    const prev = this._deferredContextChanged.get(key);
+    let merged = { ...message };
+    if (prev) {
+      merged = { ...prev, ...message };
+      if (Array.isArray(prev.changed_fields) || Array.isArray(message.changed_fields)) {
+        merged.changed_fields = Array.from(new Set([
+          ...(prev.changed_fields || []),
+          ...(message.changed_fields || []),
+        ]));
+      }
+    }
+    this._deferredContextChanged.set(key, merged);
+    this._scheduleDeferredContextFlush();
+  }
+
+  /** Defer a full job-context refresh (post-process files etc.). Keyed by job
+   *  only so the replay takes the job branch, which applies the whole context. */
+  private _deferJobContextRefresh(jobId: string): void {
+    this._deferContextChanged({ type: 'context_changed', job_id: jobId, changed_fields: ['jobStatus'] });
+  }
+
+  /** Replay deferred refetches once the window has closed. Re-arms itself if
+   *  the user is still typing; the replay re-checks at apply time too. */
+  private _scheduleDeferredContextFlush(): void {
+    if (this._deferredContextFlushTimer || this._deferredContextChanged.size === 0 || this.isDestroyed) return;
+    const waitMs = Math.max(0, this._contextApplySuppressUntil - Date.now()) + 50;
+    this._deferredContextFlushTimer = setTimeout(() => {
+      this._deferredContextFlushTimer = null;
+      if (this.isDestroyed) return;
+      if (this._isContextApplySuppressed()) {
+        this._scheduleDeferredContextFlush();
+        return;
+      }
+      const pending = Array.from(this._deferredContextChanged.values());
+      this._deferredContextChanged.clear();
+      for (const message of pending) {
+        this._handleDebouncedContextChanged(message);
+      }
+    }, waitMs);
   }
 
   /**

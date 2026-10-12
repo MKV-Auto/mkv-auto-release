@@ -55,7 +55,7 @@ def _make_disc(session, *, disc_hash, with_sizes=True):
     return disc
 
 
-def _post_rip(disc_id, disc_hash, free_bytes):
+def _post_rip(disc_id, disc_hash, free_bytes, payload_titles=SIZELESS_PAYLOAD_TITLES):
     client = TestClient(app)
     with patch(
         "core.disc_scan_dispatch.disc_info_cache_satisfies", return_value=True
@@ -66,8 +66,8 @@ def _post_rip(disc_id, disc_hash, free_bytes):
                 "disc_num": "0",
                 "mount_point": "/dev/sr0",
                 "disc_hash": disc_hash,
-                # Sizeless, exactly as the on-disc payload is
-                "titles": SIZELESS_PAYLOAD_TITLES,
+                # Sizeless by default, exactly as the on-disc payload is
+                "titles": payload_titles,
             }
         ],
     ), patch(
@@ -135,3 +135,47 @@ def test_rip_still_uses_physical_size_when_no_title_sizes_exist(test_db):
 
     assert resp.status_code == 400, resp.text
     assert "Insufficient disk space" in (resp.json().get("detail") or "")
+
+
+def test_rip_uses_db_sizes_when_the_cached_scan_misses_the_main_feature(test_db):
+    """#897, A New Hope on 1.7.0-rc.2: the cached scan held sizes for every
+    title except the multi-angle main feature. Its partial sum (~40 GB) was
+    non-zero, so the DB was never consulted and the rip was sized from the
+    46 GB physical disc. The DB rows hold the whole 81 GB → size from those."""
+    session = test_db()
+    try:
+        disc = _make_disc(session, disc_hash="hash-897-partial")
+        disc_id = disc.id
+    finally:
+        session.close()
+
+    partial = {
+        str(i): {"file": f"{i:05d}.mpls", "size": size}
+        for i, size in TITLE_SIZES.items()
+        if i != 10  # the main feature is missing from the cache
+    }
+    resp = _post_rip(disc_id, "hash-897-partial", free_bytes=78 * GB, payload_titles=partial)
+
+    assert resp.status_code == 400, resp.text
+    detail = resp.json().get("detail") or ""
+    assert "Insufficient disk space" in detail
+    required_gb = float(detail.split("Required: ")[1].split(" GB")[0])
+    assert required_gb > 100, detail
+
+
+def test_rip_keeps_the_cached_sizes_when_they_exceed_the_db(test_db):
+    """The DB is a floor, not an override: a cache with more bytes than the
+    DB rows (e.g. sizes not yet persisted) still decides the estimate."""
+    session = test_db()
+    try:
+        disc = _make_disc(session, disc_hash="hash-897-cache-wins", with_sizes=False)
+        disc_id = disc.id
+    finally:
+        session.close()
+
+    sized = {str(i): {"file": f"{i:05d}.mpls", "size": size} for i, size in TITLE_SIZES.items()}
+    resp = _post_rip(disc_id, "hash-897-cache-wins", free_bytes=78 * GB, payload_titles=sized)
+
+    assert resp.status_code == 400, resp.text
+    required_gb = float((resp.json().get("detail") or "").split("Required: ")[1].split(" GB")[0])
+    assert required_gb > 100

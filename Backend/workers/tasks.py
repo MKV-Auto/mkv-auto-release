@@ -133,6 +133,14 @@ celery_app.conf.update(
         "reconcile_job_mkv_cleanup": {"queue": "celery"},
         "load_disc_info": {"queue": "celery"},
         "probe_transfer_capabilities": {"queue": "celery"},
+        # #894: library scans are ffprobe work, so they share the preview
+        # workers (5 slots) instead of the 2-slot default queue that also
+        # runs disc scans. Conversions get their own single-slot queue so
+        # only one multi-GB remux ever runs at a time.
+        "library_scan": {"queue": "preview"},
+        "workers.tasks.library_scan": {"queue": "preview"},
+        "convert_library_file": {"queue": "convert"},
+        "workers.tasks.convert_library_file": {"queue": "convert"},
         "workers.tasks.cleanup_zombies": {"queue": "celery"},
         "workers.tasks.cleanup_job_mkv": {"queue": "celery"},
         "workers.tasks.reconcile_job_mkv_cleanup": {"queue": "celery"},
@@ -4986,6 +4994,79 @@ def resume_expected_title_count(job, disc) -> int:
     return expected_count
 
 
+def _maybe_convert_dv7_outputs(self, job, db, root: Path, renamed_paths: dict, post_log=None) -> dict:
+    """Convert this rip's Dolby Vision profile 7 outputs to 8.1 in place (#894).
+
+    Runs in the prep phase after rename and before validation, so for an SMB
+    or NFS destination the file is converted locally before upload rather
+    than pulled back down later. Only when Settings -> DV7 conversion is
+    enabled with "convert new rips".
+
+    Returns ``{title_id: sha256}`` for converted files. The caller merges it
+    into ``final_hashes``: transfer verification otherwise falls back to the
+    rip-time ``source_hashes``, which a converted file no longer matches.
+    Also updates each converted title's ``mkv_size``. A conversion failure
+    never fails the job: the original stays in place, untouched.
+    """
+    from core import settings as _settings
+    try:
+        cfg = _settings.get_dv7_conversion()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("dv7: job_id=%s could not read conversion settings: %s", job.id, exc)
+        return {}
+    if not (cfg.get("enabled") and cfg.get("convert_new_rips")) or not renamed_paths:
+        return {}
+
+    from core import dv_remux
+    from core.transfer.validation import calculate_file_hash
+    from api import models as db_models
+
+    def _note(message: str, level: str = "info") -> None:
+        self.add_log(job, db, f"dv7: {message}")
+        if post_log:
+            try:
+                post_log(f"dv7_convert: {message}", level)
+            except Exception:  # noqa: BLE001
+                pass
+
+    hashes: dict = {}
+    for title_id, rel in renamed_paths.items():
+        path = Path(root) / str(rel)
+        if path.suffix.lower() != ".mkv" or not path.is_file():
+            continue
+        if not dv_remux.needs_dv7_remux(path):
+            continue
+        # #895: reserve 2x next to the file first, so a conversion can't
+        # starve a concurrent rip (or the database) of space.
+        from core import space_reservations as _sr
+        ref = f"{job.id}:{title_id}"
+        decision = _sr.try_reserve(
+            db, _sr.KIND_DV7_POSTPROCESS, ref, path.parent, 2 * path.stat().st_size,
+            written_path=str(dv_remux.work_dir_for(path)),
+        )
+        if not decision.granted:
+            _note(f"not converting {rel}: {decision.detail} It will transfer as Dolby Vision 7.", "warning")
+            continue
+        _note(f"Dolby Vision profile 7 detected, converting to 8.1: {rel}")
+        try:
+            result = dv_remux.remux_dv7_to_dv81(path, check_space=False)
+        finally:
+            _sr.release(db, _sr.KIND_DV7_POSTPROCESS, ref)
+        if not result.converted:
+            _note(f"conversion {result.status} for {rel}: {result.reason}; the original is kept", "warning")
+            continue
+        try:
+            hashes[str(title_id)] = calculate_file_hash(path)
+            row = db.query(db_models.DiscTitle).filter(db_models.DiscTitle.id == str(title_id)).first()
+            if row is not None:
+                row.mkv_size = path.stat().st_size
+                db.flush()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("dv7: job_id=%s post-conversion bookkeeping failed for %s: %s", job.id, rel, exc)
+        _note(f"converted {rel} to Dolby Vision profile 8.1")
+    return hashes
+
+
 def _run_prep_phase(self, job_id: str):
     """Shared body for the post-rip prep work (rename + hash + validate).
 
@@ -5884,6 +5965,9 @@ def _run_prep_phase(self, job_id: str):
             else:
                 active_root = trans_root
 
+            # #894: convert DV7 outputs before validation and hashing.
+            dv7_final_hashes = _maybe_convert_dv7_outputs(self, job, db, active_root, renamed_paths, post_log)
+
             validation_error = None
             post_paths = {}
             final_hashes = {}
@@ -5903,6 +5987,8 @@ def _run_prep_phase(self, job_id: str):
                     # Use mapping from rename_outputs (or gather_final_outputs if files_already_moved)
                     post_paths = renamed_paths
                     final_hashes = {}  # Will be calculated later if needed
+                    # Converted files no longer match their rip-time hash (#894).
+                    final_hashes.update(dv7_final_hashes)
                 
                 self.set_status(job, db, post_progress=100)
                 
@@ -6732,6 +6818,46 @@ def generate_segment_previews(self, job_id: str):
             )
         except Exception:
             log.warning("generate_segment_previews: failed to emit ready notification", exc_info=True)
+
+
+@celery_app.task(name="library_scan")
+def library_scan():
+    """Catalog the configured library folders and queue DV7 conversions (#894)."""
+    from core import library_catalog
+    from core import settings as _settings
+
+    cfg = _settings.get_dv7_conversion()
+    if not cfg.get("enabled"):
+        return {"skipped": "DV7 conversion is disabled"}
+    with db_session() as db:
+        summary = library_catalog.scan_library(db, cfg.get("library_paths") or [])
+    for file_id in summary["queued_ids"]:
+        # Duplicates are harmless: a conversion only runs from ``queued``.
+        convert_library_file.apply_async(args=[file_id])
+    log.info(
+        "library_scan: files=%s probed=%s unchanged=%s recent=%s removed=%s dv7=%s queued=%s errors=%s",
+        summary["files"], summary["probed"], summary["unchanged"], summary["recent"],
+        summary["removed"], summary["dv7"], len(summary["queued_ids"]), len(summary["errors"]),
+    )
+    return {k: v for k, v in summary.items() if k != "queued_ids"} | {"queued": len(summary["queued_ids"])}
+
+
+DV7_SPACE_RETRY_SECONDS = 15 * 60
+
+
+@celery_app.task(name="convert_library_file")
+def convert_library_file(file_id: str):
+    """Convert one queued library file from DV7 to DV8.1 in place (#894)."""
+    from core import library_catalog
+
+    with db_session() as db:
+        status = library_catalog.convert_catalog_file(db, file_id)
+    if status == library_catalog.WAITING_FOR_SPACE:
+        # #895: not enough unreserved space right now (a rip or another
+        # conversion holds it). The file stays queued; check again later.
+        convert_library_file.apply_async(args=[file_id], countdown=DV7_SPACE_RETRY_SECONDS)
+    log.info("convert_library_file: file_id=%s -> %s", file_id, status)
+    return status
 
 
 # Configure Celery Beat schedule for periodic tasks

@@ -237,7 +237,7 @@ resolve_log_path() {
 }
 
 # Celery worker programs in Supervisor (keep in sync with Docker/supervisord.conf).
-MKV_DOCKER_CELERY_PROGRAMS="celery celery-rip celery-postprocess celery-transfer celery-preview"
+MKV_DOCKER_CELERY_PROGRAMS="celery celery-rip celery-postprocess celery-transfer celery-preview celery-convert"
 
 # Returns app log paths under /data/mkvauto/logs for Celery virtual targets (one per line).
 # Usage: mapfile -t paths < <(get_celery_log_paths "celery-rip" "stdout")
@@ -277,6 +277,9 @@ get_celery_log_paths() {
     celery-preview)
       echo "$base/celery_preview.log"
       ;;
+    celery-convert)
+      echo "$base/celery_convert.log"
+      ;;
     celery-extra)
       # Alias: default-queue (maintenance) worker only — same as log name celery.log
       echo "$base/celery.log"
@@ -314,7 +317,7 @@ list_logs() {
   echo "  mkv docker logs <name>     # View log"
   echo "  mkv docker logs <name> -f  # Follow log in real-time"
   echo ""
-  echo "Celery: celery (all workers), celery-rip, celery-postprocess, celery-transfer, celery-preview, celery-extra (maintenance log)"
+  echo "Celery: celery (all workers), celery-rip, celery-postprocess, celery-transfer, celery-preview, celery-convert, celery-extra (maintenance log)"
   echo "  Append stdout or stderr to filter stream; -f to follow."
 }
 
@@ -323,7 +326,7 @@ view_log() {
   local stream="${2:-}"
   check_container_running
 
-  if [[ "$log_name" == "celery" || "$log_name" == "celery-rip" || "$log_name" == "celery-postprocess" || "$log_name" == "celery-transfer" || "$log_name" == "celery-preview" || "$log_name" == "celery-extra" ]]; then
+  if [[ "$log_name" == "celery" || "$log_name" == "celery-rip" || "$log_name" == "celery-postprocess" || "$log_name" == "celery-transfer" || "$log_name" == "celery-preview" || "$log_name" == "celery-convert" || "$log_name" == "celery-extra" ]]; then
     local paths
     mapfile -t paths < <(get_celery_log_paths "$log_name" "$stream")
     if [[ ${#paths[@]} -eq 0 ]]; then
@@ -359,7 +362,7 @@ follow_log() {
   local stream="${2:-}"
   check_container_running
 
-  if [[ "$log_name" == "celery" || "$log_name" == "celery-rip" || "$log_name" == "celery-postprocess" || "$log_name" == "celery-transfer" || "$log_name" == "celery-preview" || "$log_name" == "celery-extra" ]]; then
+  if [[ "$log_name" == "celery" || "$log_name" == "celery-rip" || "$log_name" == "celery-postprocess" || "$log_name" == "celery-transfer" || "$log_name" == "celery-preview" || "$log_name" == "celery-convert" || "$log_name" == "celery-extra" ]]; then
     local paths
     mapfile -t paths < <(get_celery_log_paths "$log_name" "$stream")
     if [[ ${#paths[@]} -eq 0 ]]; then

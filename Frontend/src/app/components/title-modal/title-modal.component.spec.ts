@@ -25,8 +25,8 @@ describe('TitleModalComponent', () => {
   });
 
   it('formatDuration formats seconds', () => {
-    expect(component.formatDuration(90)).toBe('1m');
-    expect(component.formatDuration(3665)).toBe('1h 1m');
+    expect(component.formatDuration(90)).toBe('0:01:30');
+    expect(component.formatDuration(3665)).toBe('1:01:05');
   });
 
   it('formatSize formats bytes', () => {

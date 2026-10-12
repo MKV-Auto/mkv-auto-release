@@ -11,6 +11,7 @@ export type ObfuscationReason =
   | 'duration_short'
   | 'low_bitrate_decoy'
   | 'play_all_wrapper'
+  | 'filler_stub'
   | null
   | undefined;
 
@@ -130,6 +131,14 @@ export class ObfuscationBadgeComponent {
           label: 'Play All',
           tooltip:
             'This title runs the titles listed next to it back to back — its duration is exactly their sum. The parts are ripped individually, so this copy is skipped; give it a type if you want the single file instead.',
+        };
+      case 'filler_stub':
+        return {
+          tone: 'slate',
+          icon: 'info',
+          label: 'Filler',
+          tooltip:
+            'Ten seconds or shorter and 1 MB or smaller: a logo, menu stub or empty playlist, so it was ignored automatically. Give it a type if you want to keep it.',
         };
     }
     // Legacy boolean fallback so pre-Phase-1 callers still render.

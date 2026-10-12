@@ -44,6 +44,19 @@ TZ=America/New_York
 MAKEMKV_ROOT_HELPER_SOCK=/tmp/makemkv_auto.sock
 ```
 
+#### Disk space
+
+```bash
+# Rips and Dolby Vision conversions reserve the space they'll write before
+# they start, so two of them can't both count on the same free space. This
+# much is always kept free on top of every reservation (default 10 GiB), so
+# the database never runs out of room.
+MKVAUTO_SPACE_RESERVE_FLOOR_BYTES=10737418240
+# Where Dolby Vision conversions of files on a network share do their work.
+# Defaults to the data volume's tmp folder.
+MKVAUTO_DV7_SCRATCH_DIR=/data/mkvauto/tmp/dv7-scratch
+```
+
 #### Optical drives
 
 ```bash
@@ -203,6 +216,29 @@ docker run --rm \
   -v mkv-data-new:/dest \
   ubuntu bash -c "cp -a /source/* /dest/"
 ```
+
+## Dolby Vision conversion (Plex compatibility)
+
+UHD Blu-rays use **Dolby Vision profile 7**, which most Plex and Jellyfin clients, browsers and streaming devices can't play. MKV-Auto can convert those files to **profile 8.1**, which plays everywhere. The conversion is lossless: the video is copied bit for bit, the HDR metadata is kept, and only the enhancement layer, which streaming devices don't use, is dropped.
+
+It's **off by default**. Turn it on in **Settings > Dolby Vision**:
+
+- **Convert new rips** converts UHD rips during postprocessing, before they're transferred, so nothing is copied to your server twice.
+- **Library folders** are scanned for existing files. Every video's format is recorded, and each Dolby Vision 7 file is queued for conversion, one at a time.
+
+Before you turn it on:
+
+- **The library must be mapped into the container.** A folder on your NAS or a second drive needs a volume mapping, and you enter the container-side path in Settings:
+
+  ```yaml
+      volumes:
+        - /mnt/user/media:/media   # then add /media in Settings > Dolby Vision
+  ```
+
+  The settings page refuses a folder that doesn't exist inside the container or isn't a mapped drive.
+- **The original file is replaced.** Each converted file is checked before anything is touched: Dolby Vision 8.1 present, the same duration, the same audio and subtitle tracks. Only then does it replace the original. If any check fails, the original stays exactly as it was. There's no second copy kept, so back up your library first if you want an undo.
+- **Free space:** a conversion needs about **twice the file's size** in working space. For a file on a network share (NFS or SMB), MKV-Auto works in local scratch space when there's room and copies the finished file back, which roughly halves the network traffic. Otherwise it works next to the file. A file that can't get the space yet waits in the queue with "Waiting for disk space" and is retried automatically.
+- **Time:** one file converts at a time. A UHD movie takes roughly as long as reading and writing the file once.
 
 ## Networking
 

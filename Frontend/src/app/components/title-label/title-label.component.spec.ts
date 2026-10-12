@@ -242,20 +242,21 @@ describe('TitleLabelComponent', () => {
   });
 
   describe('getTitleDurationLabel', () => {
-    it('renders seconds for sub-60s clips', () => {
-      expect(component.getTitleDurationLabel({ duration: 45 })).toBe('45s');
-      expect(component.getTitleDurationLabel({ duration: 10 })).toBe('10s');
-      expect(component.getTitleDurationLabel({ duration: 59 })).toBe('59s');
+    it('renders sub-60s clips as 0:00:SS (#891)', () => {
+      expect(component.getTitleDurationLabel({ duration: 45 })).toBe('0:00:45');
+      expect(component.getTitleDurationLabel({ duration: 10 })).toBe('0:00:10');
+      expect(component.getTitleDurationLabel({ duration: 59 })).toBe('0:00:59');
     });
 
-    it('renders minutes for clips < 1h', () => {
-      expect(component.getTitleDurationLabel({ duration: 60 })).toBe('1m');
-      expect(component.getTitleDurationLabel({ duration: 3540 })).toBe('59m');
+    it('renders full H:MM:SS timecode for clips < 1h (#891)', () => {
+      expect(component.getTitleDurationLabel({ duration: 60 })).toBe('0:01:00');
+      expect(component.getTitleDurationLabel({ duration: 3540 })).toBe('0:59:00');
+      expect(component.getTitleDurationLabel({ duration: 45 })).toBe('0:00:45');
     });
 
-    it('renders hours+minutes for clips >= 1h', () => {
-      expect(component.getTitleDurationLabel({ duration: 3600 })).toBe('1h 0m');
-      expect(component.getTitleDurationLabel({ duration: 8304 })).toBe('2h 18m');
+    it('renders full H:MM:SS timecode for clips >= 1h, keeping seconds (#891)', () => {
+      expect(component.getTitleDurationLabel({ duration: 3600 })).toBe('1:00:00');
+      expect(component.getTitleDurationLabel({ duration: 8304 })).toBe('2:18:24');
     });
 
     it('returns null for zero/falsy', () => {

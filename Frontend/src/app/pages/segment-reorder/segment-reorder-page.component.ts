@@ -21,6 +21,7 @@ import {
   SegmentSupersetPickerComponent,
   SegmentSupersetCluster,
 } from '../../components/segment-superset-picker/segment-superset-picker.component';
+import { formatTimecode } from '../../utils/timecode.util';
 
 /**
  * Path A — segment-reorder UI.
@@ -535,9 +536,7 @@ export class SegmentReorderPageComponent implements OnInit, OnChanges, OnDestroy
   }
 
   formatDuration(seconds: number): string {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
+    return formatTimecode(seconds);
   }
 
   // ── Reordering ───────────────────────────────────────────────────────────
