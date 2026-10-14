@@ -5,6 +5,9 @@ import { SettingsPageComponent } from './settings-page.component';
 import {
   SystemService,
   defaultNotificationPreferences,
+  Dv7Config,
+  Dv7Destination,
+  Dv7LastScan,
   Dv7LibraryFile,
   Dv7LibrarySummary,
 } from '../../services/system.service';
@@ -32,7 +35,8 @@ function makeSystemServiceSpy(): jasmine.SpyObj<SystemService> {
     'getDv7LibrarySummary', 'getDv7LibraryFiles', 'retryDv7File',
   ]);
   spy.getDv7Config.and.returnValue(of({
-    enabled: false, convert_new_rips: false, library_paths: [], folders: [],
+    enabled: false, convert_new_rips: false, last_scan: null,
+    destination: { available: false, mode: null, name: null, display: null, problem: null },
   }));
   spy.getDv7LibrarySummary.and.returnValue(of({ total: 0, dv7: 0, by_status: {} }));
   spy.getDv7LibraryFiles.and.returnValue(of([]));
@@ -505,11 +509,15 @@ describe('SettingsPageComponent (#894 Dolby Vision conversion)', () => {
   let spy: jasmine.SpyObj<SystemService>;
   let toast: jasmine.SpyObj<ToastService>;
 
-  const OFF = { enabled: false, convert_new_rips: false, library_paths: [], folders: [] };
-  const ON = {
-    enabled: true, convert_new_rips: false, library_paths: ['/media'],
-    folders: [{ path: '/media', ok: true, problem: null }],
+  const SHARE: Dv7Destination = {
+    available: true, mode: 'smb', name: 'Plex', display: 'smb://nas/PLEX Media', problem: null,
   };
+  const OFF: Dv7Config = { enabled: false, convert_new_rips: false, destination: SHARE, last_scan: null };
+  const ON: Dv7Config = { ...OFF, enabled: true };
+  const scan = (over: Partial<Dv7LastScan> = {}): Dv7LastScan => ({
+    at: '2026-10-12T10:00:00Z', ok: true, destination: SHARE.display,
+    files: 4210, dv7: 4, queued: 4, unreadable: 0, problem: null, ...over,
+  });
   const file = (over: Partial<Dv7LibraryFile> = {}): Dv7LibraryFile => ({
     id: 'f1', path: '/media/Movies/Dune (2021)/Dune.mkv', library_root: '/media',
     size: 60 * 1024 ** 3, video_codec: 'hevc', width: 3840, height: 2160, dv_profile: 7,
@@ -563,7 +571,8 @@ describe('SettingsPageComponent (#894 Dolby Vision conversion)', () => {
     expect(text()).toContain('Convert Dolby Vision profile 7 to 8.1');
     expect(text()).toContain('lossless');
     expect(text()).toContain('twice its size');
-    expect(q('[data-testid="dv7-folders"]')).toBeNull();
+    expect(q('[data-testid="dv7-folder-input"]')).toBeNull();
+    expect(q('[data-testid="dv7-destination"]')!.textContent).toContain('No transfer destination');
     expect(scanButton().disabled).toBe(true);
   });
 
@@ -617,57 +626,139 @@ describe('SettingsPageComponent (#894 Dolby Vision conversion)', () => {
     expect(spy.saveDv7Config).toHaveBeenCalledWith({ convert_new_rips: true });
   });
 
-  it('adding a bad folder shows the server\'s reason and keeps the input', () => {
-    const detail = "/nope doesn't exist inside the container. Map it as a volume first.";
-    spy.saveDv7Config.and.returnValue(throwError(() => ({ status: 400, error: { detail } })));
-    const c = open();
-
-    c.dv7NewFolder = '/nope';
-    fixture.detectChanges();
-    (q('[data-testid="dv7-folder-add"]') as HTMLElement).click();
-    fixture.detectChanges();
-
-    expect(spy.saveDv7Config).toHaveBeenCalledWith({ library_paths: ['/nope'] });
-    expect(q('[data-testid="dv7-folder-error"]')!.textContent).toContain(detail);
-    expect(c.dv7NewFolder).toBe('/nope');
+  it('shows the transfer destination as the library, with its name (#902)', () => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    open();
+    const dest = q('[data-testid="dv7-destination"]')!;
+    expect(dest.textContent).toContain('smb://nas/PLEX Media');
+    expect(dest.textContent).toContain('Plex');
+    expect(dest.classList).not.toContain('is-bad');
   });
 
-  it('adds a good folder and clears the input', fakeAsync(() => {
-    spy.getDv7Config.and.returnValue(of(ON));
-    spy.saveDv7Config.and.returnValue(of({
-      ...ON, library_paths: ['/media', '/tv'],
-      folders: [...ON.folders, { path: '/tv', ok: true, problem: null }],
+  it('shows why the destination can\'t be scanned and disables Scan', () => {
+    const problem = "Your transfer destination uses rsync, which the library scan can't read from.";
+    spy.getDv7Config.and.returnValue(of({
+      ...ON, destination: { available: false, mode: 'rsync', name: 'Box', display: null, problem },
     }));
     const c = open();
+    const dest = q('[data-testid="dv7-destination"]')!;
+    expect(dest.classList).toContain('is-bad');
+    expect(dest.textContent).toContain(problem);
+    expect(scanButton().disabled).toBe(true);
+    expect(c.dv7ScanHint).toBe(problem);
+  });
 
-    c.dv7NewFolder = '  /tv ';
-    c.addDv7Folder();
+  it('Manage destinations opens the Destinations tab', () => {
+    const c = open();
+    (q('[data-testid="dv7-manage-destinations"] button') as HTMLElement).click();
+    expect(c.activeTab).toBe('configs');
+  });
+
+  it('the counts are filters: select one to list it, select it again for queued + converting', () => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    const c = open();
+    const cell = (key: string) => q(`[data-filter="${key}"]`) as HTMLButtonElement;
+    expect(c.dv7Filter).toBeNull();
+    expect(q('[data-testid="dv7-filter-note"]')!.textContent).toContain('queued and converting');
+
+    cell('unreadable').click();
     fixture.detectChanges();
+    expect(c.dv7Filter).toBe('unreadable');
+    expect(cell('unreadable').getAttribute('aria-pressed')).toBe('true');
+    expect(spy.getDv7LibraryFiles).toHaveBeenCalledWith({ dv7_only: false, limit: 200, status: 'unreadable' });
+    expect(q('[data-testid="dv7-filter-note"]')!.textContent).toContain('Unreadable');
 
-    expect(spy.saveDv7Config).toHaveBeenCalledWith({ library_paths: ['/media', '/tv'] });
-    expect(c.dv7NewFolder).toBe('');
-    expect(q('[data-testid="dv7-folders"]')!.textContent).toContain('/tv');
+    cell('unreadable').click();
+    fixture.detectChanges();
+    expect(c.dv7Filter).toBeNull();
+    expect(spy.getDv7LibraryFiles.calls.mostRecent().args[0])
+      .toEqual({ dv7_only: false, limit: 200, status: ['queued', 'converting'] });
+  });
+
+  it('Catalogued lists every video and DV7 found lists profile 7 files', () => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    const c = open();
+    c.toggleDv7Filter('all');
+    expect(spy.getDv7LibraryFiles.calls.mostRecent().args[0]).toEqual({ dv7_only: false, limit: 200 });
+    c.toggleDv7Filter('dv7');
+    expect(spy.getDv7LibraryFiles.calls.mostRecent().args[0]).toEqual({ dv7_only: false, limit: 200, dv_profile: 7 });
+    expect(c.dv7EmptyText).toBe('No Dolby Vision profile 7 files found.');
+  });
+
+  it('lists an unreadable file with its reason and no Retry (#902)', () => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.getDv7LibraryFiles.and.returnValue(of([file({
+      id: 'u1', path: '/media/Movies/Due Date/Due Date.mp4', dv_profile: null, status: 'unreadable',
+      error: "Couldn't read this file. It may be damaged or incomplete; check whether it plays.",
+    })]));
+    open();
+    const row = q('[data-status="unreadable"]')!;
+    expect(row.textContent).toContain('Due Date.mp4');
+    expect(row.textContent).toContain("Couldn't read this file");
+    expect(row.querySelector('[data-testid="dv7-retry"]')).toBeNull();
+  });
+
+  it('offers Retry only on Dolby Vision 7 files', () => {
+    spy.getDv7Config.and.returnValue(of(ON));
+    spy.getDv7LibraryFiles.and.returnValue(of([
+      file({ id: 'a', status: 'failed', error: 'boom' }),
+      file({ id: 'b', path: '/media/x.mp4', dv_profile: null, status: 'failed', error: 'old 1.7.0 row' }),
+    ]));
+    open();
+    expect(fixture.nativeElement.querySelectorAll('[data-testid="dv7-retry"]').length).toBe(1);
+  });
+
+  it('a finished scan with file problems shows counts plus a short note, not "failed"', () => {
+    spy.getDv7Config.and.returnValue(of({ ...ON, last_scan: scan({
+      ok: true, problem: "3 files couldn't be read from the share; details are in the app log.",
+    }) }));
+    open();
+    const line = q('[data-testid="dv7-last-scan"]')!;
+    expect(line.textContent).toContain('4210 videos');
+    expect(line.textContent).toContain("3 files couldn't be read from the share");
+    expect(line.textContent).not.toContain('failed');
+    expect(line.classList).not.toContain('is-bad');
+  });
+
+  it('the last scan mentions unreadable files', () => {
+    spy.getDv7Config.and.returnValue(of({ ...ON, last_scan: scan({ unreadable: 3 }) }));
+    open();
+    expect(q('[data-testid="dv7-last-scan"]')!.textContent).toContain('3 unreadable (listed below)');
+  });
+
+  it('shows the last scan\'s counts, or why it failed', () => {
+    spy.getDv7Config.and.returnValue(of({ ...ON, last_scan: scan() }));
+    open();
+    const line = q('[data-testid="dv7-last-scan"]')!;
+    expect(line.textContent).toContain('4210 videos, 4 Dolby Vision 7, 4 queued for conversion.');
+    expect(line.classList).not.toContain('is-bad');
+    component!.ngOnDestroy();
+
+    spy.getDv7Config.and.returnValue(of({
+      ...ON, last_scan: scan({ ok: false, problem: "Couldn't mount //nas/PLEX Media: Host is down" }),
+    }));
+    open();
+    const bad = q('[data-testid="dv7-last-scan"]')!;
+    expect(bad.textContent).toContain("failed: Couldn't mount //nas/PLEX Media: Host is down");
+    expect(bad.classList).toContain('is-bad');
+  });
+
+  it('while a scan runs, Scan is disabled and the page keeps polling for its result', fakeAsync(() => {
+    spy.getDv7Config.and.returnValue(of({ ...ON, last_scan: scan({ ok: null, files: 1200 }) }));
+    const c = open();
+    expect(q('[data-testid="dv7-last-scan"]')!.textContent).toContain('Scanning since');
+    expect(q('[data-testid="dv7-last-scan"]')!.textContent).toContain('1200 files checked so far.');
+    expect(scanButton().disabled).toBe(true);
+
+    const calls = spy.getDv7Config.calls.count();
+    spy.getDv7Config.and.returnValue(of({ ...ON, last_scan: scan() }));
+    tick(c.dv7PollMs);
+    fixture.detectChanges();
+    expect(spy.getDv7Config.calls.count()).toBeGreaterThan(calls);
+    expect(q('[data-testid="dv7-last-scan"]')!.textContent).toContain('4210 videos');
+    expect(scanButton().disabled).toBe(false);
     c.ngOnDestroy();
   }));
-
-  it('removes a folder', () => {
-    spy.getDv7Config.and.returnValue(of(ON));
-    spy.saveDv7Config.and.returnValue(of({ ...ON, library_paths: [], folders: [] }));
-    open();
-
-    (q('[aria-label="Remove /media"]') as HTMLButtonElement).click();
-    expect(spy.saveDv7Config).toHaveBeenCalledWith({ library_paths: [] });
-  });
-
-  it('shows the problem under a folder the container cannot use', () => {
-    spy.getDv7Config.and.returnValue(of({
-      ...ON, folders: [{ path: '/media', ok: false, problem: '/media is not a mapped mount.' }],
-    }));
-    open();
-    const row = q('.settings-dv7-item.is-bad');
-    expect(row).not.toBeNull();
-    expect(row!.textContent).toContain('/media is not a mapped mount.');
-  });
 
   it('Scan now is disabled when off and calls the endpoint when on', fakeAsync(() => {
     open().ngOnDestroy();
@@ -684,8 +775,10 @@ describe('SettingsPageComponent (#894 Dolby Vision conversion)', () => {
     c.ngOnDestroy();
   }));
 
-  it('Scan now is disabled with no folders even when on', () => {
-    spy.getDv7Config.and.returnValue(of({ ...OFF, enabled: true }));
+  it('Scan now is disabled with no transfer destination even when on', () => {
+    spy.getDv7Config.and.returnValue(of({
+      ...ON, destination: { available: false, mode: null, name: null, display: null, problem: 'No transfer destination is set up.' },
+    }));
     open();
     expect(scanButton().disabled).toBe(true);
   });
@@ -693,27 +786,27 @@ describe('SettingsPageComponent (#894 Dolby Vision conversion)', () => {
   it('shows the server\'s reason when a scan is refused', () => {
     spy.getDv7Config.and.returnValue(of(ON));
     spy.startDv7Scan.and.returnValue(
-      throwError(() => ({ status: 409, error: { detail: 'Add a library folder first.' } })),
+      throwError(() => ({ status: 409, error: { detail: 'No transfer destination is set up.' } })),
     );
     const c = open();
     c.scanDv7Library();
     fixture.detectChanges();
-    expect(q('[data-testid="dv7-error"]')!.textContent).toContain('Add a library folder first.');
+    expect(q('[data-testid="dv7-error"]')!.textContent).toContain('No transfer destination is set up.');
   });
 
   it('shows the summary counts, treating missing statuses as 0', () => {
     spy.getDv7LibrarySummary.and.returnValue(of(summary({ converted: 2, failed: 1 })));
     open();
-    const cells = Array.from(fixture.nativeElement.querySelectorAll('.settings-dv7-summary > div'))
+    const cells = Array.from(fixture.nativeElement.querySelectorAll('.settings-dv7-summary > button'))
       .map((cell: any) => [
         cell.querySelector('.settings-import-summary__value').textContent.trim(),
         cell.querySelector('.settings-import-summary__label').textContent.trim(),
       ].join(' '));
     expect(cells).toEqual([
       '40 Catalogued', '3 DV7 found', '0 Queued', '0 Converting',
-      '2 Converted', '1 Failed', '0 Skipped',
+      '2 Converted', '1 Failed', '0 Skipped', '0 Unreadable',
     ]);
-    expect(spy.getDv7LibraryFiles).toHaveBeenCalledWith({ dv7_only: true, limit: 200 });
+    expect(spy.getDv7LibraryFiles).toHaveBeenCalledWith({ dv7_only: false, limit: 200, status: ['queued', 'converting'] });
   });
 
   it('lists files with status, progress, errors and Retry', fakeAsync(() => {

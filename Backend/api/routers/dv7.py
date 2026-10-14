@@ -1,14 +1,15 @@
 """Dolby Vision 7 -> 8.1 conversion: settings, library catalog and queue (#894).
 
-    GET  /system/dv7/config                 settings + per-folder checks
-    PUT  /system/dv7/config                 update settings (folders validated)
+    GET  /system/dv7/config                 settings + the library (transfer destination) + last scan
+    PUT  /system/dv7/config                 update the switches
     POST /system/dv7/scan                   catalog the library now
     GET  /system/dv7/library                counts by status
-    GET  /system/dv7/library/files          catalog rows (filter by status / DV7)
+    GET  /system/dv7/library/files          catalog rows (filter by status list / DV profile)
     POST /system/dv7/library/files/{id}/retry  re-queue a failed/skipped file
 
 Everything is disabled by default. Scanning and converting only happen while
-the master switch is on.
+the master switch is on. The library is the active transfer destination
+(#902, ``core.library_destination``); there is no separate folder setting.
 """
 from __future__ import annotations
 
@@ -20,29 +21,42 @@ from sqlalchemy.orm import Session
 
 from api import models as db_models
 from api.database import get_db
-from core import library_catalog
+from core import library_catalog, library_destination
 from core import settings
 
 router = APIRouter(prefix="/system/dv7", tags=["dv7"])
 
 
-class Dv7Folder(BaseModel):
-    path: str
-    ok: bool
+class Dv7Destination(BaseModel):
+    available: bool
+    mode: Optional[str] = None
+    name: Optional[str] = None
+    display: Optional[str] = None
     problem: Optional[str] = None
+
+
+class Dv7LastScan(BaseModel):
+    at: str
+    ok: Optional[bool] = None      # None while the scan is still running
+    destination: Optional[str] = None
+    files: Optional[int] = None
+    dv7: Optional[int] = None
+    queued: Optional[int] = None
+    unreadable: Optional[int] = None
+    problem: Optional[str] = None
+    heartbeat: Optional[str] = None
 
 
 class Dv7Config(BaseModel):
     enabled: bool
     convert_new_rips: bool
-    library_paths: List[str]
-    folders: List[Dv7Folder] = []
+    destination: Dv7Destination
+    last_scan: Optional[Dv7LastScan] = None
 
 
 class Dv7ConfigUpdate(BaseModel):
     enabled: Optional[bool] = None
     convert_new_rips: Optional[bool] = None
-    library_paths: Optional[List[str]] = None
 
 
 class Dv7LibraryFile(BaseModel):
@@ -62,13 +76,18 @@ class Dv7LibraryFile(BaseModel):
     converted_at: Optional[str] = None
 
 
-def _config_out() -> Dv7Config:
+def _config_out(db: Session) -> Dv7Config:
     cfg = settings.get_dv7_conversion()
-    folders = []
-    for p in cfg["library_paths"]:
-        problem = library_catalog.library_path_problem(p)
-        folders.append(Dv7Folder(path=p, ok=problem is None, problem=problem))
-    return Dv7Config(**cfg, folders=folders)
+    dest = library_destination.describe(db)
+    return Dv7Config(
+        enabled=cfg["enabled"],
+        convert_new_rips=cfg["convert_new_rips"],
+        destination=Dv7Destination(
+            available=dest.available, mode=dest.mode, name=dest.name,
+            display=dest.display, problem=dest.problem,
+        ),
+        last_scan=cfg["last_scan"],
+    )
 
 
 def _dispatch_scan() -> None:
@@ -77,45 +96,31 @@ def _dispatch_scan() -> None:
 
 
 @router.get("/config", response_model=Dv7Config)
-def get_dv7_config() -> Dv7Config:
-    return _config_out()
+def get_dv7_config(db: Session = Depends(get_db)) -> Dv7Config:
+    return _config_out(db)
 
 
 @router.put("/config", response_model=Dv7Config)
-def update_dv7_config(payload: Dv7ConfigUpdate) -> Dv7Config:
-    """Save settings. A folder that doesn't exist, isn't a mapped mount or
-    overlaps the app's data is rejected with the reason. Turning the feature
-    on (or changing folders while on) starts a scan."""
-    if payload.library_paths is not None:
-        problems = []
-        for p in payload.library_paths:
-            if not str(p).strip():
-                continue
-            problem = library_catalog.library_path_problem(str(p).strip())
-            if problem:
-                problems.append(problem)
-        if problems:
-            raise HTTPException(400, detail=" ".join(problems))
+def update_dv7_config(payload: Dv7ConfigUpdate, db: Session = Depends(get_db)) -> Dv7Config:
+    """Save the switches. Turning the feature on starts a scan of the
+    transfer destination when there is one the scan can reach."""
     before = settings.get_dv7_conversion()
     after = settings.set_dv7_conversion(
         enabled=payload.enabled,
         convert_new_rips=payload.convert_new_rips,
-        library_paths=payload.library_paths,
     )
-    turned_on = after["enabled"] and not before["enabled"]
-    folders_changed = after["enabled"] and after["library_paths"] != before["library_paths"]
-    if (turned_on or folders_changed) and after["library_paths"]:
+    if after["enabled"] and not before["enabled"] and library_destination.describe(db).available:
         _dispatch_scan()
-    return _config_out()
+    return _config_out(db)
 
 
 @router.post("/scan")
-def scan_now() -> dict:
-    cfg = settings.get_dv7_conversion()
-    if not cfg["enabled"]:
+def scan_now(db: Session = Depends(get_db)) -> dict:
+    if not settings.get_dv7_conversion()["enabled"]:
         raise HTTPException(409, detail="Dolby Vision conversion is turned off.")
-    if not cfg["library_paths"]:
-        raise HTTPException(409, detail="Add a library folder first.")
+    dest = library_destination.describe(db)
+    if not dest.available:
+        raise HTTPException(409, detail=dest.problem)
     _dispatch_scan()
     return {"queued": True}
 
@@ -129,18 +134,26 @@ def library_summary(db: Session = Depends(get_db)) -> dict:
 def library_files(
     status: Optional[str] = None,
     dv7_only: bool = True,
+    dv_profile: Optional[int] = None,
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ) -> List[Dv7LibraryFile]:
+    """``status`` takes one status or a comma-separated list (the Settings
+    page's default view is ``queued,converting``)."""
     q = db.query(db_models.LibraryMediaFile)
-    if status:
-        q = q.filter(db_models.LibraryMediaFile.status == status)
+    statuses = [s.strip() for s in (status or "").split(",") if s.strip()]
+    if statuses:
+        q = q.filter(db_models.LibraryMediaFile.status.in_(statuses))
+    if dv_profile is not None:
+        q = q.filter(db_models.LibraryMediaFile.dv_profile == dv_profile)
     if dv7_only:
-        # DV7 files, plus the ones already converted from DV7.
+        # DV7 files, the ones already converted from DV7, and files the scan
+        # couldn't read (so the user can see which ones are damaged).
         q = q.filter(
             (db_models.LibraryMediaFile.dv_profile == 7)
             | (db_models.LibraryMediaFile.status == library_catalog.CONVERTED)
+            | (db_models.LibraryMediaFile.status == library_catalog.UNREADABLE)
         )
     rows = q.order_by(db_models.LibraryMediaFile.path).offset(offset).limit(limit).all()
     return [

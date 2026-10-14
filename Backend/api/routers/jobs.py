@@ -7781,6 +7781,24 @@ def finish_job(job_id: str, db: Session = Depends(get_db)):
             detail=f"Transfer state is {transfer_state!r}; finish only allowed when transfer is completed",
         )
 
+    # Never let Finish delete the only copy of a labeled title (#903): a
+    # transfer can report "completed" while a kept title was never
+    # post-processed, and the cleanup below removes everything in raw/.
+    from core.job_cleanup import untransferred_kept_titles
+
+    missing = untransferred_kept_titles(job, db)
+    if missing:
+        names = ", ".join(f"{m['title']} ({m['file']})" for m in missing[:5])
+        more = f" and {len(missing) - 5} more" if len(missing) > 5 else ""
+        raise HTTPException(
+            409,
+            detail=(
+                f"{len(missing)} labeled title(s) were ripped but never transferred: {names}{more}. "
+                "Finishing now would delete the only copy. Run post-processing again, or label them "
+                "ignore if you don't want them."
+            ),
+        )
+
     # Build updates so the completed invariant passes (label/finalize/finalize_release may be unset).
     updates: dict = {"job_status": "completed"}
     profile = _infer_profile(job)

@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-10-14
+
+### Changed
+
+- **Dolby Vision conversion only touches titles you've labeled.** Converting new rips skips ignored and unlabeled titles.
+- **The Dolby Vision library scan uses your transfer destination.** There's no separate "library folders" setting to fill in. Settings > Dolby Vision shows the destination it will scan and the result of the last scan. A local destination is scanned directly. An SMB or NFS share is mounted inside the container while the scan and conversions run, using the destination's saved login. rsync destinations can't be scanned; converting new rips still works with them.
+- **The library scan only looks where MKV-Auto puts files.** It reads the Movies and Series folders on your destination, not the rest of the share, and only real videos: files under 1 MB and TypeScript `.ts` files are skipped. **Failed** now only ever means a Dolby Vision conversion failed. A video the scan can't read at all is listed separately as **Unreadable**, which usually means a damaged or incomplete file. A long scan shows how many files it has checked so far, and one cut short by a restart says so instead of looking stuck. The counts across the top of the library are filters: by default it lists what's queued and converting, and selecting a count (Failed, Unreadable, Converted, and so on) lists those files instead.
+
+### Fixed
+
+- **A rip's main feature can no longer be left behind and then deleted.** On a disc whose main feature is a multi-angle playlist (the Star Wars Blu-rays, for example), MakeMKV numbers the ripped file differently from the disc scan. Post-processing looked the file up by the scan's numbering, found nothing, and silently skipped it, so only the extras were transferred. The job still reported success, and pressing Finish deleted the rip. Post-processing now matches each file through the rip's own record. If a labeled title was ripped but not post-processed, the job fails at validation and says which title. Finish refuses while any labeled title was never transferred, and so does the cleanup it triggers, so the only copy stays in place.
+- **A container stopped mid-conversion can no longer lose the original file.** On an SMB share, replacing a file could delete the original a moment before the converted copy was renamed into place. The original is now set aside first and removed only after the new file is in place and checked. Every step is recorded, and on the next start an interrupted conversion is either completed or rolled back with the original restored, then queued again.
+
 ## [1.7.0] - 2026-10-12
 
 ### Added

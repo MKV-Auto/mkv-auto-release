@@ -15,6 +15,13 @@ from tests.conftest_backend import *  # noqa: F401,F403
 from tests.conftest_e2e import *  # noqa: F401,F403
 
 
+@pytest.fixture(autouse=True)
+def _isolated_dv7_journal(monkeypatch, tmp_path_factory):
+    """DV7 conversions journal their file swaps under MKVAUTO_ROOT (#902);
+    keep every test's journal out of the real one."""
+    monkeypatch.setenv("MKVAUTO_DV7_JOURNAL_DIR", str(tmp_path_factory.mktemp("dv7-journal")))
+
+
 def pytest_configure(config):
     """Register custom marks."""
     # Rip verification: test fixtures use non-ffprobe-valid byte blobs; keep quiescence short.

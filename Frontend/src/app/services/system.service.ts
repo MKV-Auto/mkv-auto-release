@@ -399,26 +399,43 @@ export interface AutoRipConfig {
   auto_rip_enabled: boolean;
 }
 
-/** #894: Dolby Vision 7 -> 8.1 conversion. One configured library folder and
- *  whether the container can use it (`problem` says why not). */
-export interface Dv7Folder {
-  path: string;
-  ok: boolean;
+/** #902: the DV7 library is the active transfer destination. `available` is
+ *  false with `problem` set when the scan can't use it (none set up, rsync,
+ *  a local folder that isn't mapped). Describing it never mounts a share. */
+export interface Dv7Destination {
+  available: boolean;
+  mode: string | null;
+  name: string | null;
+  display: string | null;
   problem: string | null;
 }
 
+/** The most recent library scan. `ok` is null while it is still running. */
+export interface Dv7LastScan {
+  at: string;
+  ok: boolean | null;
+  destination: string | null;
+  files: number | null;
+  dv7: number | null;
+  queued: number | null;
+  unreadable: number | null;
+  problem: string | null;
+  /** Last progress report of a running scan; the server marks a silent one interrupted. */
+  heartbeat?: string | null;
+}
+
+/** #894: Dolby Vision 7 -> 8.1 conversion settings. */
 export interface Dv7Config {
   enabled: boolean;
   convert_new_rips: boolean;
-  library_paths: string[];
-  folders: Dv7Folder[];
+  destination: Dv7Destination;
+  last_scan: Dv7LastScan | null;
 }
 
 /** Partial update for `PUT /system/dv7/config`; omitted fields are unchanged. */
 export interface Dv7ConfigUpdate {
   enabled?: boolean;
   convert_new_rips?: boolean;
-  library_paths?: string[];
 }
 
 export type Dv7FileStatus =
@@ -427,7 +444,9 @@ export type Dv7FileStatus =
   | 'converting'
   | 'converted'
   | 'failed'
-  | 'skipped';
+  | 'skipped'
+  /** #902: ffprobe couldn't read the file (damaged or incomplete); nothing to convert. */
+  | 'unreadable';
 
 /** Catalog counts. A status with no files is absent from `by_status`. */
 export interface Dv7LibrarySummary {
@@ -455,8 +474,11 @@ export interface Dv7LibraryFile {
 }
 
 export interface Dv7LibraryFilesQuery {
-  status?: Dv7FileStatus;
+  /** One status, or several (sent comma-separated). */
+  status?: Dv7FileStatus | Dv7FileStatus[];
   dv7_only?: boolean;
+  /** Only files with this Dolby Vision profile (7 = "DV7 found"). */
+  dv_profile?: number;
   limit?: number;
   offset?: number;
 }
@@ -734,8 +756,8 @@ export class SystemService {
     return this.http.get<Dv7Config>(`${this.apiUrl}/system/dv7/config`);
   }
 
-  /** 400 with `detail` when a folder is unusable. Turning the feature on, or
-   *  changing folders while on, starts a library scan server-side. */
+  /** Turning the feature on starts a scan of the transfer destination
+   *  server-side, when the scan can reach it. */
   saveDv7Config(update: Dv7ConfigUpdate): Observable<Dv7Config> {
     return this.http.put<Dv7Config>(`${this.apiUrl}/system/dv7/config`, update);
   }
@@ -751,8 +773,10 @@ export class SystemService {
 
   getDv7LibraryFiles(query: Dv7LibraryFilesQuery = {}): Observable<Dv7LibraryFile[]> {
     let params = new HttpParams();
-    if (query.status) params = params.set('status', query.status);
+    const status = Array.isArray(query.status) ? query.status.join(',') : query.status;
+    if (status) params = params.set('status', status);
     if (query.dv7_only !== undefined) params = params.set('dv7_only', String(query.dv7_only));
+    if (query.dv_profile !== undefined) params = params.set('dv_profile', String(query.dv_profile));
     if (query.limit !== undefined) params = params.set('limit', String(query.limit));
     if (query.offset !== undefined) params = params.set('offset', String(query.offset));
     return this.http.get<Dv7LibraryFile[]>(`${this.apiUrl}/system/dv7/library/files`, { params });

@@ -1010,6 +1010,7 @@ class Disc:
         media_server: "plex" | "jellyfin" — controls separator and s01e01 vs S01E01 style
         """
         series_logger = get_logger("core.disc", "_rename_series")
+        self.unmatched_outputs = []
         series_logger.info(f"_rename_series: Starting rename from {origin_folder} to {show_folder}")
         if self.log_fn:
             try:
@@ -1135,16 +1136,25 @@ class Disc:
 
                 tid = int(m.group(1))
                 title_info = self.titles.get(tid)
-                if not title_info:
-                    series_logger.warning(f"_rename_series: No title_info for tid {tid}, skipping {fn}")
+                # The rip's own record wins over the scan index (#903; see _rename_movie).
+                rip_title_id = None
+                if input_to_title_id:
+                    rip_title_id = input_to_title_id.get(fn) or input_to_title_id.get(fn.strip())
+                if not title_info and not rip_title_id:
+                    msg = (f"{fn} could not be matched to any title (no scan title #{tid}, and it is not "
+                           f"in the rip's file record); left in raw/")
+                    series_logger.warning(f"_rename_series: {msg}")
+                    self.unmatched_outputs.append(fn)
                     if self.log_fn:
                         try:
-                            self.log_fn(f"[postprocess] Warning: No title_info for tid {tid}, skipping {fn}")
+                            self.log_fn(f"[postprocess] Warning: {msg}")
                         except Exception:
                             pass
                     continue
 
                 source_file = title_info.get("file") if isinstance(title_info, dict) else None
+                if rip_title_id and title_id_to_source_file and title_id_to_source_file.get(rip_title_id):
+                    source_file = title_id_to_source_file.get(rip_title_id)
                 title_id_from_final_paths = None
                 source_file_from_final_paths = None
 
@@ -1604,6 +1614,8 @@ class Disc:
         # Log to unified logger for api.log visibility
         from core.logging_utils import get_logger
         logger = get_logger("core.disc", "_rename_movie")
+        # MKVs this rename couldn't attribute to a title; validation reports them (#903).
+        self.unmatched_outputs = []
         logger.info(f"_rename_movie: Starting rename from {origin_folder} to {show_folder}")
         if self.log_fn:
             try:
@@ -1708,11 +1720,27 @@ class Disc:
             tid = int(m.group(1))
             
             title_info = self.titles.get(tid)
-            if not title_info:
-                logger.debug(f"_rename_movie: Skipping {fn} - no title_info for tid {tid}")
+            # The rip's own record wins (#903): MakeMKV numbers a multi-angle
+            # feature by its rip index (``_t02``), not the scan's (index 10),
+            # so a scan lookup by ``_tNN`` can miss it, or land on another title.
+            rip_title_id = None
+            if input_to_title_id:
+                rip_title_id = input_to_title_id.get(fn) or input_to_title_id.get(os.path.basename(fn))
+            if not title_info and not rip_title_id:
+                msg = (f"{fn} could not be matched to any title (no scan title #{tid}, and it is not "
+                       f"in the rip's file record); left in raw/")
+                logger.warning(f"_rename_movie: {msg}")
+                self.unmatched_outputs.append(fn)
+                if self.log_fn:
+                    try:
+                        self.log_fn(f"[postprocess] Warning: {msg}")
+                    except Exception:
+                        pass
                 continue
 
             source_file = title_info.get("file") if isinstance(title_info, dict) else None
+            if rip_title_id and title_id_to_source_file and title_id_to_source_file.get(rip_title_id):
+                source_file = title_id_to_source_file.get(rip_title_id)
             title_id_from_final_paths = None
             source_file_from_final_paths = None
             

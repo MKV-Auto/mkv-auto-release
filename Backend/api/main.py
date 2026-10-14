@@ -992,6 +992,15 @@ async def lifespan(app: FastAPI):
     )
     get_logger(__name__, "lifespan").info("Scheduled background MakeMKV source pre-download")
 
+    # #902: settle Dolby Vision conversions a stopped container left
+    # half-done. Runs on the convert worker, never alongside a conversion.
+    try:
+        from workers.tasks import recover_library_conversions
+
+        recover_library_conversions.apply_async(countdown=20)
+    except Exception as exc:  # noqa: BLE001
+        get_logger(__name__, "lifespan").warning("Could not queue DV7 conversion recovery: %s", exc)
+
     yield
     
     # Shutdown tasks

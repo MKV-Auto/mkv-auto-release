@@ -141,6 +141,8 @@ celery_app.conf.update(
         "workers.tasks.library_scan": {"queue": "preview"},
         "convert_library_file": {"queue": "convert"},
         "workers.tasks.convert_library_file": {"queue": "convert"},
+        "recover_library_conversions": {"queue": "convert"},
+        "workers.tasks.recover_library_conversions": {"queue": "convert"},
         "workers.tasks.cleanup_zombies": {"queue": "celery"},
         "workers.tasks.cleanup_job_mkv": {"queue": "celery"},
         "workers.tasks.reconcile_job_mkv_cleanup": {"queue": "celery"},
@@ -5007,6 +5009,10 @@ def _maybe_convert_dv7_outputs(self, job, db, root: Path, renamed_paths: dict, p
     rip-time ``source_hashes``, which a converted file no longer matches.
     Also updates each converted title's ``mkv_size``. A conversion failure
     never fails the job: the original stays in place, untouched.
+
+    Only labeled titles are converted: a title with no type, or ``ignore``,
+    is left alone (the rename step already drops ignored ones; this holds
+    even if it ever doesn't).
     """
     from core import settings as _settings
     try:
@@ -5032,7 +5038,22 @@ def _maybe_convert_dv7_outputs(self, job, db, root: Path, renamed_paths: dict, p
     hashes: dict = {}
     for title_id, rel in renamed_paths.items():
         path = Path(root) / str(rel)
-        if path.suffix.lower() != ".mkv" or not path.is_file():
+        if path.suffix.lower() != ".mkv":
+            continue
+        # A postprocess stopped mid-swap left the file under its set-aside
+        # name; put it back (or keep the finished conversion) before looking.
+        try:
+            recovered = dv_remux.recover_path(path)
+            if recovered:
+                _note(f"recovered an interrupted conversion of {rel}: {recovered}")
+        except OSError as exc:
+            _note(f"could not recover an interrupted conversion of {rel}: {exc}", "warning")
+            continue
+        if not path.is_file():
+            continue
+        title_row = db.query(db_models.DiscTitle).filter(db_models.DiscTitle.id == str(title_id)).first() if db else None
+        title_type = (getattr(title_row, "type", None) or "").strip().lower()
+        if not title_type or title_type == "ignore":
             continue
         if not dv_remux.needs_dv7_remux(path):
             continue
@@ -5049,7 +5070,7 @@ def _maybe_convert_dv7_outputs(self, job, db, root: Path, renamed_paths: dict, p
             continue
         _note(f"Dolby Vision profile 7 detected, converting to 8.1: {rel}")
         try:
-            result = dv_remux.remux_dv7_to_dv81(path, check_space=False)
+            result = dv_remux.remux_dv7_to_dv81(path, check_space=False, owner="postprocess")
         finally:
             _sr.release(db, _sr.KIND_DV7_POSTPROCESS, ref)
         if not result.converted:
@@ -6305,13 +6326,26 @@ def cleanup_job_mkv(job_id: str, reason: str):
     Reason: user_finish, transfer_cleanup, stale_cleanup, or reconciliation.
     Idempotent: if no .mkv left, only sets transfer_source_cleaned = True.
     """
-    from core.job_cleanup import job_has_mkv_files, job_source_is_safe_to_clean, remove_mkv_files_from_job
+    from core.job_cleanup import (
+        job_has_mkv_files, job_source_is_safe_to_clean, remove_mkv_files_from_job, untransferred_kept_titles,
+    )
 
     db = database.SessionLocal()
     try:
         job = crud.get_job(db, job_id)
         if not job:
             return
+        if reason == "user_finish":
+            # Finish checks this too; this is the last line of defense for a
+            # job whose transfer "completed" without every kept title (#903).
+            missing = untransferred_kept_titles(job, db)
+            if missing:
+                log.error(
+                    "cleanup_job_mkv: REFUSING to clean job %s (reason=%s): %s labeled title(s) were "
+                    "ripped but never transferred: %s",
+                    job_id, reason, len(missing), ", ".join(m["file"] for m in missing[:5]),
+                )
+                return
         # LAST LINE OF DEFENSE against deleting the only copy: automated
         # cleanups may only remove MKVs once the content is safe elsewhere —
         # the job finished, or its transfer verified. A job that FAILED
@@ -6822,27 +6856,87 @@ def generate_segment_previews(self, job_id: str):
 
 @celery_app.task(name="library_scan")
 def library_scan():
-    """Catalog the configured library folders and queue DV7 conversions (#894)."""
-    from core import library_catalog
+    """Catalog the transfer destination and queue DV7 conversions (#894, #902)."""
+    from core import library_catalog, library_destination
     from core import settings as _settings
 
     cfg = _settings.get_dv7_conversion()
     if not cfg.get("enabled"):
         return {"skipped": "DV7 conversion is disabled"}
+    started = datetime.now(timezone.utc).isoformat()
     with db_session() as db:
-        summary = library_catalog.scan_library(db, cfg.get("library_paths") or [])
+        dest = library_destination.ensure_root(db)
+        if not dest.available:
+            _settings.record_dv7_last_scan(at=started, ok=False, destination=dest.display, problem=dest.problem)
+            log.warning("library_scan: destination unavailable: %s", dest.problem)
+            return {"skipped": dest.problem}
+        # ok=None marks the scan as running, so Settings can say so (a large
+        # share takes a while); the outcome below replaces it.
+        _settings.record_dv7_last_scan(at=started, ok=None, destination=dest.display, heartbeat=started)
+
+        def _progress(files: int) -> None:
+            _settings.record_dv7_last_scan(
+                at=started, ok=None, destination=dest.display, files=files,
+                heartbeat=datetime.now(timezone.utc).isoformat(),
+            )
+
+        folders = library_catalog.scan_folders(dest.root)
+        if not folders:
+            problem = f"There's no Movies or Series folder on {dest.display} yet."
+            _settings.record_dv7_last_scan(at=started, ok=False, destination=dest.display, problem=problem)
+            return {"skipped": problem}
+        summary = library_catalog.scan_library(db, folders, progress_cb=_progress)
+    # One short sentence for Settings; the per-file details go to the log.
+    bad_root = next((r["problem"] for r in summary["roots"] if not r["ok"]), None)
+    file_errors = [e for e in summary["errors"] if e != bad_root]
+    for err in file_errors[:200]:
+        log.warning("library_scan: %s", err)
+    if bad_root:
+        problem = bad_root
+    elif file_errors:
+        n = len(file_errors)
+        problem = f"{n} file{'s' if n != 1 else ''} couldn't be read from the share; details are in the app log."
+    else:
+        problem = None
+    _settings.record_dv7_last_scan(
+        at=started, ok=bad_root is None, destination=dest.display, files=summary["files"],
+        dv7=summary["dv7"], queued=len(summary["queued_ids"]), unreadable=summary["unreadable"],
+        problem=problem,
+    )
     for file_id in summary["queued_ids"]:
         # Duplicates are harmless: a conversion only runs from ``queued``.
         convert_library_file.apply_async(args=[file_id])
     log.info(
-        "library_scan: files=%s probed=%s unchanged=%s recent=%s removed=%s dv7=%s queued=%s errors=%s",
-        summary["files"], summary["probed"], summary["unchanged"], summary["recent"],
-        summary["removed"], summary["dv7"], len(summary["queued_ids"]), len(summary["errors"]),
+        "library_scan: root=%s files=%s probed=%s unchanged=%s recent=%s removed=%s dv7=%s queued=%s "
+        "unreadable=%s errors=%s",
+        dest.root, summary["files"], summary["probed"], summary["unchanged"], summary["recent"],
+        summary["removed"], summary["dv7"], len(summary["queued_ids"]), summary["unreadable"],
+        len(summary["errors"]),
     )
     return {k: v for k, v in summary.items() if k != "queued_ids"} | {"queued": len(summary["queued_ids"])}
 
 
 DV7_SPACE_RETRY_SECONDS = 15 * 60
+
+
+@celery_app.task(name="recover_library_conversions")
+def recover_library_conversions():
+    """Settle conversions a stopped container left half-done (queued at startup).
+
+    Runs on the convert queue, so never alongside a conversion. If the
+    library can't be reached yet (a share that isn't up), it tries again.
+    """
+    from core import dv_remux, library_catalog
+
+    with db_session() as db:
+        requeued = library_catalog.recover_interrupted(db)
+        pending = dv_remux.journal_entries(owner="library")
+    for file_id in requeued:
+        convert_library_file.apply_async(args=[file_id])
+    if pending:
+        recover_library_conversions.apply_async(countdown=DV7_SPACE_RETRY_SECONDS)
+    log.info("recover_library_conversions: requeued=%s still_pending=%s", len(requeued), len(pending))
+    return {"requeued": len(requeued), "pending": len(pending)}
 
 
 @celery_app.task(name="convert_library_file")
@@ -6851,6 +6945,11 @@ def convert_library_file(file_id: str):
     from core import library_catalog
 
     with db_session() as db:
+        # The convert worker runs one task at a time, so anything still
+        # "converting" was interrupted: settle it before starting another.
+        for requeued in library_catalog.recover_interrupted(db):
+            if requeued != file_id:
+                convert_library_file.apply_async(args=[requeued])
         status = library_catalog.convert_catalog_file(db, file_id)
     if status == library_catalog.WAITING_FOR_SPACE:
         # #895: not enough unreserved space right now (a rip or another

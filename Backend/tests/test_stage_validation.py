@@ -627,3 +627,46 @@ class TestTransferStageValidation:
         assert result.valid is False
         assert any("not found" in err.lower() for err in result.errors)
 
+
+
+def test_transfer_prep_validation_fails_when_a_kept_title_was_ripped_but_not_post_processed(
+    mock_job, mock_db, job_paths, sample_postprocess_files
+):
+    """#903: the rename dropped a multi-angle main feature; post_paths held
+    only the extra, and validation passed "1/1". It must fail and name the
+    title, so the job never reaches a state where Finish can delete the rip."""
+    disc_titles = mock_db.query.return_value.filter.return_value.all.return_value
+    main, extra = disc_titles[0], disc_titles[1]
+    main.type, extra.type = "MainMovie", "Extra"
+    extra_path = sample_postprocess_files / "Movies" / "Movie Name (2020)" / "Other" / "Movie Name (2020) - Extra.mkv"
+    extra.mkv_size = extra_path.stat().st_size
+    post_paths = {str(extra.id): "Movies/Movie Name (2020)/Other/Movie Name (2020) - Extra.mkv"}
+    mock_job.post_paths = post_paths
+    mock_job.ripped_files = {str(main.id): "Movie_t02.mkv", str(extra.id): "Movie_t01.mkv"}
+    mock_job.disc_payload = {"post_paths": post_paths}
+    job_paths.raw.mkdir(parents=True, exist_ok=True)
+    (job_paths.raw / "Movie_t02.mkv").write_bytes(b"m" * 100)   # the feature never left raw/
+
+    result = validate_transfer_prep_output(mock_job, mock_db, job_paths)
+
+    assert result.valid is False
+    assert any("never be transferred" in e and "Movie Name" in e and "Movie_t02.mkv" in e for e in result.errors), result.errors
+    assert result.details["not_post_processed"] == [str(main.id)]
+
+
+def test_transfer_prep_validation_accepts_a_moved_file_with_no_recorded_path(
+    mock_job, mock_db, job_paths, sample_postprocess_files
+):
+    """A legacy rename (no title-id map) moves files without recording post
+    paths; nothing is left in raw/, so nothing is lost and it still passes."""
+    disc_titles = mock_db.query.return_value.filter.return_value.all.return_value
+    disc_titles[0].type, disc_titles[1].type = "MainMovie", "Extra"
+    mock_job.post_paths = {}
+    mock_job.ripped_files = {str(disc_titles[0].id): "Movie_t02.mkv"}
+    mock_job.disc_payload = {}
+    job_paths.raw.mkdir(parents=True, exist_ok=True)              # empty: the file was moved
+
+    result = validate_transfer_prep_output(mock_job, mock_db, job_paths)
+
+    assert result.details["not_post_processed"] == []
+    assert not any("never be transferred" in e for e in result.errors)

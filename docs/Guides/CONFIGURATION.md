@@ -55,6 +55,9 @@ MKVAUTO_SPACE_RESERVE_FLOOR_BYTES=10737418240
 # Where Dolby Vision conversions of files on a network share do their work.
 # Defaults to the data volume's tmp folder.
 MKVAUTO_DV7_SCRATCH_DIR=/data/mkvauto/tmp/dv7-scratch
+# Where an SMB or NFS transfer destination is mounted inside the container
+# for the Dolby Vision library scan.
+MKVAUTO_LIBRARY_MOUNT=/mnt/mkvauto-library
 ```
 
 #### Optical drives
@@ -223,20 +226,17 @@ UHD Blu-rays use **Dolby Vision profile 7**, which most Plex and Jellyfin client
 
 It's **off by default**. Turn it on in **Settings > Dolby Vision**:
 
-- **Convert new rips** converts UHD rips during postprocessing, before they're transferred, so nothing is copied to your server twice.
-- **Library folders** are scanned for existing files. Every video's format is recorded, and each Dolby Vision 7 file is queued for conversion, one at a time.
+- **Convert new rips** converts UHD rips during postprocessing, before they're transferred, so nothing is copied to your server twice. Only titles you've labeled are converted; ignored and unlabeled titles are left alone.
+- **Scan library** looks through your **transfer destination** (Settings > Destinations) for existing files, but only in the folders MKV-Auto writes to: **Movies** and **Series** (and the first folder of a custom path template, if it's a fixed name). Anything else on the share is never read. Every video's format is recorded, and each Dolby Vision 7 file is queued for conversion, one at a time. There's nothing extra to set up: the library is wherever your rips are sent. Files under 1 MB, and `.ts` files that aren't video (TypeScript), are skipped. A file the scan can't read at all is listed as **Unreadable**: that usually means it's damaged or an incomplete download, so check whether it plays. On a large network share the first scan takes a while; Settings shows how many files it has checked so far, and later scans only re-read files that changed.
 
 Before you turn it on:
 
-- **The library must be mapped into the container.** A folder on your NAS or a second drive needs a volume mapping, and you enter the container-side path in Settings:
-
-  ```yaml
-      volumes:
-        - /mnt/user/media:/media   # then add /media in Settings > Dolby Vision
-  ```
-
-  The settings page refuses a folder that doesn't exist inside the container or isn't a mapped drive.
-- **The original file is replaced.** Each converted file is checked before anything is touched: Dolby Vision 8.1 present, the same duration, the same audio and subtitle tracks. Only then does it replace the original. If any check fails, the original stays exactly as it was. There's no second copy kept, so back up your library first if you want an undo.
+- **How the library is reached depends on the destination type:**
+  - **Local folder:** used as-is. It must be a folder mapped into the container, which a local destination already needs.
+  - **SMB or NFS share:** MKV-Auto mounts the share inside the container while it scans and converts, using the destination's saved login. Nothing is mounted for ordinary transfers. If the mount fails, Settings shows the reason under **Library** and in the last scan's result.
+  - **rsync:** the library can't be scanned over rsync. Map the library folder into the container and use a local destination instead. **Convert new rips** still works, because it converts before the transfer.
+- **The original file is replaced.** Each converted file is checked before anything is touched: Dolby Vision 8.1 present, the same duration, the same audio and subtitle tracks. Only then does it replace the original. If any check fails, the original stays exactly as it was. There's no second copy kept afterwards, so back up your library first if you want an undo.
+- **Stopping the container mid-conversion is safe.** The original is never deleted before the converted file is fully in place: it's set aside under a hidden name, the new file is moved in and checked, and only then is the original removed. Each step is recorded in `/data`, and when the container starts again any interrupted conversion is either finished (if the new file was already in place) or rolled back with the original restored, and then queued again.
 - **Free space:** a conversion needs about **twice the file's size** in working space. For a file on a network share (NFS or SMB), MKV-Auto works in local scratch space when there's room and copies the finished file back, which roughly halves the network traffic. Otherwise it works next to the file. A file that can't get the space yet waits in the queue with "Waiting for disk space" and is retried automatically.
 - **Time:** one file converts at a time. A UHD movie takes roughly as long as reading and writing the file once.
 

@@ -23,6 +23,7 @@ import {
   Dv7ConfigUpdate,
   Dv7FileStatus,
   Dv7LibraryFile,
+  Dv7LibraryFilesQuery,
   Dv7LibrarySummary,
 } from '../../services/system.service';
 import { ToastService, formatHttpErrorDetail } from '../../services/toast.service';
@@ -79,6 +80,9 @@ const SETTINGS_NAV: ReadonlyArray<SettingsNavItem> = [
 ];
 
 /** #894: status pill tones for the Dolby Vision library list. */
+/** A count in the Dolby Vision summary bar: every file, DV7 files, or one status. */
+type Dv7FilterKey = 'all' | 'dv7' | Dv7FileStatus;
+
 const DV7_STATUS_TONES: Record<Dv7FileStatus, PillTone> = {
   catalogued: 'slate',
   queued: 'blue',
@@ -86,6 +90,7 @@ const DV7_STATUS_TONES: Record<Dv7FileStatus, PillTone> = {
   converted: 'emerald',
   failed: 'red',
   skipped: 'amber',
+  unreadable: 'amber',
 };
 
 /** Polls (at 5 s each) to keep watching after a scan is requested with nothing
@@ -680,45 +685,22 @@ const DV7_SCAN_GRACE_POLLS = 6;
               </ui-field>
 
               <ui-field
-                label="Library folders"
-                hint="Folders to scan for profile 7 files. Use the path inside the container (e.g. /media), mapped as a volume in your Docker configuration.">
-                <ul class="settings-dv7-list" *ngIf="dv7.folders.length" data-testid="dv7-folders">
-                  <li *ngFor="let f of dv7.folders" class="settings-dv7-item" [class.is-bad]="!f.ok">
-                    <div class="settings-dv7-row">
-                      <ui-icon [name]="f.ok ? 'check-circle' : 'alert'" [size]="14" class="settings-dv7-ok"></ui-icon>
-                      <span class="settings-file-row__name settings-input--mono">{{ f.path }}</span>
-                      <button type="button" class="settings-dv7-icon-btn"
-                              [attr.aria-label]="'Remove ' + f.path"
-                              [disabled]="dv7Saving"
-                              (click)="removeDv7Folder(f.path)">
-                        <ui-icon name="trash" [size]="13"></ui-icon>
-                      </button>
-                    </div>
-                    <div class="settings-dv7-error" *ngIf="!f.ok && f.problem">{{ f.problem }}</div>
-                  </li>
-                </ul>
-                <div class="settings-dv7-add">
-                  <input
-                    type="text"
-                    class="settings-input settings-input--mono"
-                    data-testid="dv7-folder-input"
-                    placeholder="/media/movies"
-                    autocomplete="off"
-                    spellcheck="false"
-                    [(ngModel)]="dv7NewFolder"
-                    (keydown.enter)="addDv7Folder()">
-                  <ui-btn variant="secondary" data-testid="dv7-folder-add"
-                          [disabled]="!dv7NewFolder.trim()"
-                          [loading]="dv7Saving && !!dv7NewFolder.trim()"
-                          (click)="addDv7Folder()">
-                    <ui-icon uiBtnIcon name="plus" [size]="13"></ui-icon>
-                    Add
-                  </ui-btn>
+                label="Library"
+                hint="The scan looks through your transfer destination. A network share is mounted while it scans and converts.">
+                <div class="settings-dv7-item" [class.is-bad]="!dv7.destination.available" data-testid="dv7-destination">
+                  <div class="settings-dv7-row">
+                    <ui-icon [name]="dv7.destination.available ? 'check-circle' : 'alert'" [size]="14" class="settings-dv7-ok"></ui-icon>
+                    <span class="settings-file-row__name settings-input--mono">{{ dv7.destination.display || 'No transfer destination' }}</span>
+                    <span class="settings-dv7-meta" *ngIf="dv7.destination.name">{{ dv7.destination.name }}</span>
+                  </div>
+                  <div class="settings-dv7-error" *ngIf="dv7.destination.problem">{{ dv7.destination.problem }}</div>
                 </div>
-                <div class="settings-alert settings-alert--error" *ngIf="dv7FolderError" data-testid="dv7-folder-error">
-                  <ui-icon name="alert" [size]="14"></ui-icon>
-                  <span>{{ dv7FolderError }}</span>
-                </div>
+                <p class="settings-dv7-last-scan" *ngIf="dv7LastScanText"
+                   [class.is-bad]="dv7.last_scan?.ok === false" data-testid="dv7-last-scan">{{ dv7LastScanText }}</p>
+                <ui-btn variant="ghost" data-testid="dv7-manage-destinations" (click)="selectTab('configs')">
+                  <ui-icon uiBtnIcon name="server" [size]="13"></ui-icon>
+                  Manage destinations
+                </ui-btn>
               </ui-field>
 
               <div class="settings-actions">
@@ -738,7 +720,7 @@ const DV7_SCAN_GRACE_POLLS = 6;
             <div class="settings-section-body">
               <ui-section-header
                 title="Library"
-                subtitle="Files found in your library folders. Only Dolby Vision profile 7 files are listed.">
+                subtitle="Videos in the Movies and Series folders on your transfer destination.">
                 <ui-icon uiSecIcon name="film" [size]="14"></ui-icon>
                 <ui-btn variant="ghost" (click)="loadDv7Library()" [loading]="dv7LibraryLoading">
                   <ui-icon uiBtnIcon name="refresh" [size]="13"></ui-icon>
@@ -751,15 +733,21 @@ const DV7_SCAN_GRACE_POLLS = 6;
                 <span>{{ dv7LibraryError }}</span>
               </div>
 
-              <div class="settings-dv7-summary" data-testid="dv7-summary">
-                <div *ngFor="let c of dv7SummaryCells">
+              <div class="settings-dv7-summary" data-testid="dv7-summary" role="group" aria-label="Show files by status">
+                <button type="button" *ngFor="let c of dv7SummaryCells"
+                        class="settings-dv7-summary__cell"
+                        [class.is-active]="dv7Filter === c.key"
+                        [attr.aria-pressed]="dv7Filter === c.key ? 'true' : 'false'"
+                        [attr.data-filter]="c.key"
+                        (click)="toggleDv7Filter(c.key)">
                   <div class="settings-import-summary__value">{{ c.value }}</div>
                   <div class="settings-import-summary__label">{{ c.label }}</div>
-                </div>
+                </button>
               </div>
+              <p class="settings-dv7-filter-note" data-testid="dv7-filter-note">{{ dv7FilterNote }}</p>
 
               <p class="settings-dv7-empty" *ngIf="!dv7Files.length && !dv7LibraryLoading">
-                {{ dv7.enabled ? 'No Dolby Vision profile 7 files found yet.' : 'Turn on conversion and add a library folder to scan for profile 7 files.' }}
+                {{ dv7EmptyText }}
               </p>
 
               <ul class="settings-dv7-list" *ngIf="dv7Files.length" data-testid="dv7-files">
@@ -774,7 +762,7 @@ const DV7_SCAN_GRACE_POLLS = 6;
                       </div>
                     </div>
                     <ui-pill [tone]="dv7StatusTone(file.status)">{{ dv7StatusLabel(file.status) }}</ui-pill>
-                    <ui-btn *ngIf="file.status === 'failed' || file.status === 'skipped'"
+                    <ui-btn *ngIf="(file.status === 'failed' || file.status === 'skipped') && file.dv_profile === 7"
                             variant="secondary"
                             data-testid="dv7-retry"
                             [disabled]="!dv7.enabled"
@@ -793,7 +781,7 @@ const DV7_SCAN_GRACE_POLLS = 6;
                     </div>
                     <p class="settings-export-progress__label">{{ dv7ProgressPercent(file) }}%</p>
                   </div>
-                  <div class="settings-dv7-error" *ngIf="(file.status === 'failed' || file.status === 'skipped' || file.status === 'queued') && file.error">
+                  <div class="settings-dv7-error" *ngIf="(file.status === 'failed' || file.status === 'skipped' || file.status === 'queued' || file.status === 'unreadable') && file.error">
                     {{ file.error }}
                   </div>
                 </li>
@@ -1641,25 +1629,29 @@ const DV7_SCAN_GRACE_POLLS = 6;
     .settings-dv7-ok { color: #6ee7b7; flex-shrink: 0; }
     .is-bad .settings-dv7-ok { color: #fca5a5; }
     .settings-dv7-error { margin-top: 4px; font-size: 12px; line-height: 1.45; color: #fca5a5; }
-    [data-status="skipped"] .settings-dv7-error { color: #fcd34d; }
-    .settings-dv7-icon-btn {
-      all: unset;
-      cursor: pointer;
-      display: inline-flex;
-      padding: 4px;
-      border-radius: 6px;
-      color: rgba(255, 255, 255, 0.55);
-    }
-    .settings-dv7-icon-btn:hover:not(:disabled) { color: #fca5a5; }
-    .settings-dv7-icon-btn:disabled { cursor: not-allowed; opacity: 0.5; }
-    .settings-dv7-add { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    [data-status="skipped"] .settings-dv7-error,
+    [data-status="unreadable"] .settings-dv7-error { color: #fcd34d; }
+    .settings-dv7-last-scan { margin: 8px 0; font-size: 12px; line-height: 1.45; color: rgba(255, 255, 255, 0.6); }
+    .settings-dv7-last-scan.is-bad { color: #fca5a5; }
     .settings-dv7-summary {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
       gap: 8px;
       margin-bottom: 14px;
     }
-    .settings-dv7-summary > div { padding: 8px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.03); }
+    .settings-dv7-summary__cell {
+      all: unset;
+      box-sizing: border-box;
+      cursor: pointer;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .settings-dv7-summary__cell:hover { background: rgba(255, 255, 255, 0.06); }
+    .settings-dv7-summary__cell:focus-visible { outline: 2px solid rgba(129, 140, 248, 0.8); outline-offset: 1px; }
+    .settings-dv7-summary__cell.is-active { border-color: rgba(129, 140, 248, 0.7); background: rgba(129, 140, 248, 0.12); }
+    .settings-dv7-filter-note { margin: -6px 0 10px; font-size: 12px; color: rgba(255, 255, 255, 0.5); }
     .settings-dv7-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: rgba(255, 255, 255, 0.5); }
     .settings-dv7-empty { margin: 0; font-size: 13px; color: rgba(255, 255, 255, 0.55); }
 
@@ -2311,20 +2303,21 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
   tmdbSaved: string | null = null;
 
   // #894: Dolby Vision 7 -> 8.1 conversion. Everything is off until the
-  // server says otherwise; each toggle and folder change is saved at once.
-  dv7: Dv7Config = { enabled: false, convert_new_rips: false, library_paths: [], folders: [] };
+  // server says otherwise; each toggle is saved at once. The library is the
+  // transfer destination (#902).
+  dv7: Dv7Config = this.normalizeDv7Config(null);
   dv7Saving = false;
   dv7Error: string | null = null;
-  dv7NewFolder = '';
-  dv7FolderError: string | null = null;
   dv7Scanning = false;
   dv7Summary: Dv7LibrarySummary | null = null;
+  /** Which count in the summary bar is selected; null = queued + converting. */
+  dv7Filter: Dv7FilterKey | null = null;
   dv7Files: Dv7LibraryFile[] = [];
   dv7LibraryLoading = false;
   dv7LibraryError: string | null = null;
   dv7RetryingId: string | null = null;
   /** Bound to an *ngFor, so it is rebuilt only when the summary changes. */
-  dv7SummaryCells: ReadonlyArray<{ label: string; value: number }> = this.buildDv7SummaryCells(null);
+  dv7SummaryCells: ReadonlyArray<{ key: Dv7FilterKey; label: string; value: number }> = this.buildDv7SummaryCells(null);
   readonly dv7FileLimit = 200;
   readonly dv7PollMs = 5000;
   readonly dv7Explainer =
@@ -2505,7 +2498,10 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
   loadDv7Config(): void {
     this.dv7Error = null;
     this.systemSvc.getDv7Config().subscribe({
-      next: cfg => (this.dv7 = this.normalizeDv7Config(cfg)),
+      next: cfg => {
+        this.dv7 = this.normalizeDv7Config(cfg);
+        this.updateDv7Polling();
+      },
       error: err => (this.dv7Error = formatHttpErrorDetail(err)),
     });
   }
@@ -2519,22 +2515,6 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
     this.saveDv7({ convert_new_rips: on });
   }
 
-  addDv7Folder(): void {
-    const path = this.dv7NewFolder.trim();
-    if (!path || this.dv7Saving) return;
-    if (this.dv7.library_paths.includes(path)) {
-      this.dv7FolderError = `${path} is already in the list.`;
-      return;
-    }
-    // The input keeps the text on failure so the user can fix a typo.
-    this.saveDv7({ library_paths: [...this.dv7.library_paths, path] }, () => (this.dv7NewFolder = ''));
-  }
-
-  removeDv7Folder(path: string): void {
-    if (this.dv7Saving) return;
-    this.saveDv7({ library_paths: this.dv7.library_paths.filter(p => p !== path) });
-  }
-
   /** The stored value defaults to on, but nothing converts while the master
    *  switch is off, so the toggle shows what will actually happen. */
   get dv7NewRipsEffective(): boolean {
@@ -2542,13 +2522,34 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
   }
 
   get dv7CanScan(): boolean {
-    return this.dv7.enabled && this.dv7.library_paths.length > 0 && !this.dv7Saving;
+    return this.dv7.enabled && this.dv7.destination.available && !this.dv7Saving && !this.dv7ScanRunning;
   }
 
   get dv7ScanHint(): string | null {
     if (!this.dv7.enabled) return 'Turn on Dolby Vision conversion first.';
-    if (!this.dv7.library_paths.length) return 'Add a library folder first.';
+    if (!this.dv7.destination.available) return this.dv7.destination.problem;
+    if (this.dv7ScanRunning) return 'A scan is already running.';
     return null;
+  }
+
+  /** The last scan reports ok=null until it finishes. */
+  get dv7ScanRunning(): boolean {
+    return !!this.dv7.last_scan && this.dv7.last_scan.ok === null;
+  }
+
+  get dv7LastScanText(): string | null {
+    const last = this.dv7.last_scan;
+    if (!last) return null;
+    const when = new Date(last.at).toLocaleString();
+    if (last.ok === null) {
+      const sofar = last.files ? ` ${last.files} files checked so far.` : '';
+      return `Scanning since ${when}…${sofar}`;
+    }
+    if (!last.ok) return `Last scan ${when} failed: ${last.problem ?? 'unknown error'}`;
+    const queued = last.queued ? `, ${last.queued} queued for conversion` : '';
+    const unreadable = last.unreadable ? `, ${last.unreadable} unreadable (listed below)` : '';
+    const note = last.problem ? ` ${last.problem}` : '';
+    return `Last scan ${when}: ${last.files ?? 0} videos, ${last.dv7 ?? 0} Dolby Vision 7${queued}${unreadable}.${note}`;
   }
 
   scanDv7Library(): void {
@@ -2630,29 +2631,21 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
     return file.id;
   }
 
-  private saveDv7(update: Dv7ConfigUpdate, onSaved?: () => void): void {
+  private saveDv7(update: Dv7ConfigUpdate): void {
     const before = this.dv7;
-    const folderChange = update.library_paths !== undefined;
     this.dv7Saving = true;
     this.dv7Error = null;
-    this.dv7FolderError = null;
     this.systemSvc.saveDv7Config(update).subscribe({
       next: cfg => {
         this.dv7 = this.normalizeDv7Config(cfg);
         this.dv7Saving = false;
-        onSaved?.();
-        // Same rule as the server: turning it on, or changing folders while
-        // on, starts a scan. Watch for what it queues.
-        const turnedOn = this.dv7.enabled && !before.enabled;
-        const foldersChanged =
-          this.dv7.enabled && this.dv7.library_paths.join('\n') !== before.library_paths.join('\n');
-        if ((turnedOn || foldersChanged) && this.dv7.library_paths.length) this.expectDv7Scan();
+        // Same rule as the server: turning it on starts a scan of a
+        // reachable destination. Watch for what it queues.
+        if (this.dv7.enabled && !before.enabled && this.dv7.destination.available) this.expectDv7Scan();
       },
       error: err => {
         this.dv7Saving = false;
-        const message = formatHttpErrorDetail(err);
-        if (folderChange) this.dv7FolderError = message;
-        else this.dv7Error = message;
+        this.dv7Error = formatHttpErrorDetail(err);
       },
     });
   }
@@ -2661,8 +2654,10 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
     return {
       enabled: !!cfg?.enabled,
       convert_new_rips: !!cfg?.convert_new_rips,
-      library_paths: cfg?.library_paths ?? [],
-      folders: cfg?.folders ?? [],
+      destination: cfg?.destination ?? {
+        available: false, mode: null, name: null, display: null, problem: null,
+      },
+      last_scan: cfg?.last_scan ?? null,
     };
   }
 
@@ -2676,7 +2671,7 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
   private fetchDv7Library() {
     return forkJoin({
       summary: this.systemSvc.getDv7LibrarySummary(),
-      files: this.systemSvc.getDv7LibraryFiles({ dv7_only: true, limit: this.dv7FileLimit }),
+      files: this.systemSvc.getDv7LibraryFiles(this.dv7FilesQuery()),
     });
   }
 
@@ -2687,24 +2682,66 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
     this.updateDv7Polling();
   }
 
-  private buildDv7SummaryCells(s: Dv7LibrarySummary | null): Array<{ label: string; value: number }> {
+  /** While a scan is running (or was just requested) its outcome lands in the
+   *  config's last_scan, so refresh that alongside the library. */
+  private refreshDv7ScanState(): void {
+    if (this.dv7PollGrace > 0 || this.dv7ScanRunning) this.loadDv7Config();
+  }
+
+  private buildDv7SummaryCells(s: Dv7LibrarySummary | null): Array<{ key: Dv7FilterKey; label: string; value: number }> {
     const counts = s?.by_status ?? {};
     return [
-      { label: 'Catalogued', value: s?.total ?? 0 },
-      { label: 'DV7 found', value: s?.dv7 ?? 0 },
-      { label: 'Queued', value: counts.queued ?? 0 },
-      { label: 'Converting', value: counts.converting ?? 0 },
-      { label: 'Converted', value: counts.converted ?? 0 },
-      { label: 'Failed', value: counts.failed ?? 0 },
-      { label: 'Skipped', value: counts.skipped ?? 0 },
+      { key: 'all', label: 'Catalogued', value: s?.total ?? 0 },
+      { key: 'dv7', label: 'DV7 found', value: s?.dv7 ?? 0 },
+      { key: 'queued', label: 'Queued', value: counts.queued ?? 0 },
+      { key: 'converting', label: 'Converting', value: counts.converting ?? 0 },
+      { key: 'converted', label: 'Converted', value: counts.converted ?? 0 },
+      { key: 'failed', label: 'Failed', value: counts.failed ?? 0 },
+      { key: 'skipped', label: 'Skipped', value: counts.skipped ?? 0 },
+      { key: 'unreadable', label: 'Unreadable', value: counts.unreadable ?? 0 },
     ];
+  }
+
+  /** Select a count to list those files; select it again for the default view. */
+  toggleDv7Filter(key: Dv7FilterKey): void {
+    this.dv7Filter = this.dv7Filter === key ? null : key;
+    this.loadDv7Library();
+  }
+
+  get dv7FilterNote(): string {
+    if (this.dv7Filter === null) return 'Showing queued and converting files. Select a count to see others.';
+    const label = this.dv7SummaryCells.find(c => c.key === this.dv7Filter)?.label ?? '';
+    return `Showing: ${label}. Select it again to go back to queued and converting.`;
+  }
+
+  get dv7EmptyText(): string {
+    if (!this.dv7.enabled && this.dv7Filter === null) {
+      return 'Turn on conversion to scan your transfer destination for profile 7 files.';
+    }
+    switch (this.dv7Filter) {
+      case null: return 'Nothing is queued or converting.';
+      case 'all': return 'No videos catalogued yet.';
+      case 'dv7': return 'No Dolby Vision profile 7 files found.';
+      default: return 'No files with this status.';
+    }
+  }
+
+  private dv7FilesQuery(): Dv7LibraryFilesQuery {
+    const base = { dv7_only: false, limit: this.dv7FileLimit };
+    switch (this.dv7Filter) {
+      case null: return { ...base, status: ['queued', 'converting'] };
+      case 'all': return base;
+      case 'dv7': return { ...base, dv_profile: 7 };
+      default: return { ...base, status: this.dv7Filter };
+    }
   }
 
   /** Poll while the tab is open and something is queued or converting (or a
    *  scan was just requested); stop as soon as neither holds. */
   private updateDv7Polling(): void {
     const keepPolling =
-      !this.destroyed && this.activeTab === 'dv7' && (this.dv7InFlight || this.dv7PollGrace > 0);
+      !this.destroyed && this.activeTab === 'dv7' &&
+      (this.dv7InFlight || this.dv7PollGrace > 0 || this.dv7ScanRunning);
     if (!keepPolling) {
       this.stopDv7Polling();
       return;
@@ -2714,6 +2751,7 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
       .pipe(switchMap(() => this.fetchDv7Library()))
       .subscribe({
         next: res => {
+          this.refreshDv7ScanState();
           if (this.dv7PollGrace > 0) this.dv7PollGrace--;
           this.applyDv7Library(res);
         },

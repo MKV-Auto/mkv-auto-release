@@ -151,7 +151,8 @@ describe('SystemService', () => {
         done();
       });
       httpMock.expectOne(`${apiUrl}/system/dv7/config`).flush({
-        enabled: false, convert_new_rips: false, library_paths: [], folders: [],
+        enabled: false, convert_new_rips: false, last_scan: null,
+        destination: { available: false, mode: null, name: null, display: null, problem: null },
       });
     });
 
@@ -183,6 +184,15 @@ describe('SystemService', () => {
       expect(req.request.params.get('dv7_only')).toBe('true');
       expect(req.request.params.get('limit')).toBe('200');
       expect(req.request.params.has('status')).toBe(false);
+      req.flush([]);
+    });
+
+    it('sends several statuses comma-separated, and the DV profile', () => {
+      service.getDv7LibraryFiles({ status: ['queued', 'converting'], dv_profile: 7, dv7_only: false }).subscribe();
+      const req = httpMock.expectOne(r => r.url === `${apiUrl}/system/dv7/library/files`);
+      expect(req.request.params.get('status')).toBe('queued,converting');
+      expect(req.request.params.get('dv_profile')).toBe('7');
+      expect(req.request.params.get('dv7_only')).toBe('false');
       req.flush([]);
     });
 

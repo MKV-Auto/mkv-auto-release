@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
-import { of, BehaviorSubject } from 'rxjs';
+import { of, BehaviorSubject, throwError } from 'rxjs';
 import { take } from 'rxjs/operators';
 import { WorkflowActionsComponent } from './workflow-actions.component';
 import { WorkflowService, WorkflowContext, WorkflowStep } from '../../../../services/workflow.service';
@@ -764,4 +764,90 @@ describe('WorkflowActionsComponent', () => {
       expect(toastSvc.show).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('Finish refused by the server (#903)', () => {
+    let toastSvc: { show: jasmine.Spy };
+    let contextSubject: BehaviorSubject<WorkflowContext | null>;
+    let testFixture: ComponentFixture<WorkflowActionsComponent>;
+    let testComponent: WorkflowActionsComponent;
+    let wf: Record<string, jasmine.Spy>;
+
+    beforeEach(async () => {
+      wf = mockWorkflow as unknown as Record<string, jasmine.Spy>;
+      toastSvc = { show: jasmine.createSpy('show') };
+      contextSubject = new BehaviorSubject<WorkflowContext | null>(null);
+      mockWorkflow.getActiveContext.and.returnValue(contextSubject.asObservable());
+      wf['finishJob'] = jasmine.createSpy('finishJob');
+      wf['setSelectedCard'] = jasmine.createSpy('setSelectedCard');
+      await TestBed.resetTestingModule()
+        .configureTestingModule({
+          imports: [WorkflowActionsComponent],
+          providers: [
+            { provide: WorkflowService, useValue: mockWorkflow },
+            { provide: LoggerService, useValue: { warn: loggerWarnSpy, error: () => {}, debug: () => {} } },
+            { provide: ToastService, useValue: toastSvc },
+            { provide: DriveSnapshotService, useValue: {
+              drives$: of([]), current: () => [] as any[],
+              startPolling: jasmine.createSpy('startPolling'), stopPolling: jasmine.createSpy('stopPolling'),
+            } },
+          ],
+        })
+        .compileComponents();
+      testFixture = TestBed.createComponent(WorkflowActionsComponent);
+      testComponent = testFixture.componentInstance;
+      testFixture.detectChanges();
+    });
+
+    /** A hit-profile job whose transfer completed: Continue means Finish. */
+    const finishedJobContext = (): WorkflowContext => ({
+      id: 'job-1',
+      type: 'job',
+      workflowStep: 'transfer',
+      discdbHit: true,
+      labelForm: { movie_id: 'movie-1', release_id: 'release-1', disc_name: 'Disc 1', disc_format: 'Blu-Ray', tracks: [] } as any,
+      jobStatus: {
+        jobId: 'job-1', job_status: 'running', rip_state: 'completed',
+        label_state: 'completed', transfer_state: 'completed',
+      } as any,
+      titles: [],
+      titleOrder: [],
+      titlesComplete: true,
+      stepCompletionState: { film: true, boxset: true, disc: true, titles: true, postprocess: true, transfer: true },
+      movieOptions: [], boxsetOptions: [], releaseOptions: [], groupOptions: [],
+      discInfo: null, labelDraftProcessed: false, discNameLocked: false, discSlugLocked: false,
+      isSeries: false, discMode: 'rip', lastReleaseDetails: null, releaseNameHint: '', releaseSlugHint: '',
+      postProcessFiles: [], transferDestination: null, releaseDiscs: [], boxsetMovies: [],
+      movieCover: null, movieName: null, productionYear: null, labelSaving: false, lastAutosaveOk: false,
+      hasLabelContent: false, devMode: false, showTitleStatus: false,
+    });
+
+    it('shows the server\'s reason and keeps the card when Finish is refused', fakeAsync(() => {
+      const detail = '1 labeled title(s) were ripped but never transferred: Star Wars (A New Hope_t02.mkv). '
+        + 'Finishing now would delete the only copy.';
+      wf['finishJob'].and.returnValue(throwError(() => ({ status: 409, error: { detail } })));
+      contextSubject.next(finishedJobContext());
+      testFixture.detectChanges();
+
+      testComponent.onContinue();
+      tick();
+
+      expect(wf['finishJob']).toHaveBeenCalledWith('job-1');
+      expect(toastSvc.show).toHaveBeenCalledWith(jasmine.stringMatching(/A New Hope_t02\.mkv/), 'error');
+      expect(toastSvc.show).not.toHaveBeenCalledWith(jasmine.stringMatching(/Please try again/), 'error');
+      expect(wf['setSelectedCard']).not.toHaveBeenCalled();
+    }));
+
+    it('dismisses the card when the server accepts', fakeAsync(() => {
+      wf['finishJob'].and.returnValue(of(undefined));
+      contextSubject.next(finishedJobContext());
+      testFixture.detectChanges();
+
+      testComponent.onContinue();
+      tick();
+
+      expect(wf['setSelectedCard']).toHaveBeenCalledWith(null);
+      expect(toastSvc.show).not.toHaveBeenCalled();
+    }));
+  });
+
 });

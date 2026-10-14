@@ -336,6 +336,7 @@ def generate_expected_transfer_prep_output(job, db) -> Dict[str, Any]:
         "expected_files": {},   # title_id -> expected_path
         "expected_hashes": {},  # title_id -> expected_hash (legacy; prefer expected_sizes)
         "expected_sizes": {},   # title_id -> mkv_size (from disc_titles)
+        "kept_titles": {},      # title_id -> display name, every non-ignored title (#903)
         "directory_structure": [],
     }
     
@@ -457,6 +458,10 @@ def generate_expected_transfer_prep_output(job, db) -> Dict[str, Any]:
                     if t.id and t.type and str(t.type).strip().lower() == "ignore":
                         skipped_ignore += 1
                         continue
+                    if t.id:
+                        expected["kept_titles"][str(t.id)] = (
+                            getattr(t, "title", None) or getattr(t, "source_file", None) or str(t.id)
+                        )
                     if t.id and t.mkv_size is not None:
                         expected["expected_sizes"][str(t.id)] = t.mkv_size
                     elif t.id:
@@ -781,6 +786,24 @@ def validate_transfer_preconditions(job, db, paths: Optional[JobPaths] = None) -
     )
 
 
+def _still_in_raw(paths, rel) -> bool:
+    """True when a ripped file is still under raw/: the rename never took it.
+
+    A legacy flow with no title-id map moves files without recording a post
+    path; that is fine. A file left behind in raw/ is the #903 failure.
+    """
+    if not rel or paths is None:
+        return False
+    rel = str(rel)
+    for candidate in (paths.raw / rel, paths.raw / os.path.basename(rel)):
+        try:
+            if candidate.is_file():
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def validate_transfer_prep_output(job, db, paths: Optional[JobPaths] = None) -> ValidationResult:
     """
     Validate post-process stage output.
@@ -828,6 +851,21 @@ def validate_transfer_prep_output(job, db, paths: Optional[JobPaths] = None) -> 
         if isinstance(job_r, dict):
             ripped.update(job_r)
         ripped_title_ids = {str(k) for k in ripped.keys()}
+
+        # A kept (non-ignored) title that was ripped but never post-processed
+        # has no expected file, so the checks below can't miss it: prod lost
+        # five main features that way (#903). It fails here instead.
+        kept_titles = expected.get("kept_titles") or {}
+        not_processed = sorted(
+            tid for tid in ripped_title_ids
+            if tid in kept_titles and tid not in expected_files and _still_in_raw(paths, ripped.get(tid))
+        )
+        for tid in not_processed:
+            errors.append(
+                f"Ripped title was not post-processed, so it would never be transferred: "
+                f"{kept_titles[tid]} (title_id: {tid}, file: {ripped.get(tid)}). The rip is kept in raw/."
+            )
+        details["not_post_processed"] = not_processed
 
         log.info(f"Job {job.id}: Post-process validation: Expected {len(expected_files)} files")
 

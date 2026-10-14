@@ -1028,7 +1028,9 @@ export class WorkflowActionsComponent implements OnInit, OnDestroy {
               },
               error: (err: unknown) => {
                 this.logger.error('Failed to finish job:', err);
-                this.toast.show('Failed to dismiss job. Please try again.', 'error');
+                // The server refuses with the reason when finishing would
+                // delete a labeled title that was never transferred (#903).
+                this.toast.show(`Couldn't finish this job: ${formatHttpErrorDetail(err)}`, 'error');
                 this._continueInProgress = false;
               }
             });

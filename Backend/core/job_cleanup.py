@@ -91,6 +91,44 @@ def job_source_is_safe_to_clean(job) -> bool:
     return status == "completed" or transfer == "completed"
 
 
+def untransferred_kept_titles(job, db) -> list[dict]:
+    """Labeled (non-ignore) titles whose ripped MKV never got a post-processed
+    path, so no transfer ever carried them (#903).
+
+    Finish and the user_finish cleanup refuse while this is non-empty: the
+    file is still in raw/, and that copy is the only one. Returns
+    ``[{title_id, title, file}]``.
+    """
+    from api import models
+
+    payload = getattr(job, "disc_payload", None)
+    payload = payload if isinstance(payload, dict) else {}
+    ripped: dict = {}
+    post: dict = {}
+    for src in (payload.get("ripped_files"), getattr(job, "ripped_files", None)):
+        if isinstance(src, dict):
+            ripped.update({str(k): v for k, v in src.items()})
+    for src in (payload.get("post_paths"), getattr(job, "post_paths", None)):
+        if isinstance(src, dict):
+            post.update({str(k): v for k, v in src.items()})
+    disc_id = getattr(job, "disc_id", None)
+    if not disc_id or not ripped:
+        return []
+    raw = JobPaths.for_id(str(job.id)).raw
+    out = []
+    for t in db.query(models.DiscTitle).filter(models.DiscTitle.disc_id == disc_id).all():
+        tid = str(t.id)
+        if (getattr(t, "type", None) or "").strip().lower() == "ignore":
+            continue
+        if tid in ripped and tid not in post:
+            rel = str(ripped[tid])
+            # Only a file still sitting in raw/ is the only copy; a legacy
+            # rename that moved it without recording a path is fine.
+            if (raw / rel).is_file() or (raw / Path(rel).name).is_file():
+                out.append({"title_id": tid, "title": t.title or t.source_file or tid, "file": rel})
+    return out
+
+
 def job_has_mkv_files(paths: JobPaths) -> bool:
     """
     Return True if paths.raw or paths.transient contain any *.mkv file,

@@ -32,8 +32,25 @@ Pipeline:
 4. Verify (mandatory before the original is touched): mkvmerge exit code,
    output carries DV profile 8, duration within 2 s of the source,
    audio/subtitle stream counts unchanged.
-5. ``os.replace`` the verified output over the original (same directory, so
-   an atomic rename on one filesystem).
+5. Swap the verified output in without ever deleting the original first
+   (``_swap_in``, journaled; see "Never losing the original" below).
+
+Never losing the original
+-------------------------
+The container can be stopped at any instant, and the library may be an SMB
+share, where the kernel client implements "rename over an existing file" by
+deleting the target and then renaming: a stop between the two leaves no file
+at the original name. So the original is never overwritten. The swap is:
+
+1. write a journal entry (``<MKVAUTO_ROOT>/dv7-journal``, fsynced),
+2. rename the original aside to a hidden ``.dv7remux-orig-<name>``,
+3. rename the verified file to the original name,
+4. check its size, then delete the set-aside original and the journal.
+
+Every rename lands on a free name, so nothing is ever deleted to make room,
+and at every instant a complete copy of the original exists. ``recover``
+finishes or rolls back an interrupted swap from its journal: if the new file
+is fully in place it keeps it, otherwise it puts the original back.
 
 Tools are invoked as bare names on PATH (repo convention; see
 ``core/ffmpeg_detection.py``). Sources can approach ~100 GB, so subprocess
@@ -61,8 +78,8 @@ MKVMERGE_TIMEOUT_SECONDS = 4 * 60 * 60
 # Container duration drift allowed between source and remuxed output.
 DURATION_TOLERANCE_SECONDS = 2.0
 
-# Work-dir prefix; created next to the source so the final os.replace is
-# a same-filesystem rename.
+# Prefix for every hidden name this module creates (work dirs, the pushed
+# copy, the set-aside original), so a library scan never catalogs them.
 _WORK_DIR_PREFIX = ".dv7remux-"
 
 # Peak scratch space during a conversion, as a multiple of the source size.
@@ -455,9 +472,15 @@ def work_dir_for(src, scratch_dir=None) -> Path:
 
 def push_temp_path(src) -> Path:
     """Hidden temp name next to ``src`` that a scratch result is copied to
-    before the atomic rename (hidden, so a library scan never catalogs it)."""
+    before it is swapped in (hidden, so a library scan never catalogs it)."""
     src = Path(src)
     return src.parent / f"{_WORK_DIR_PREFIX}push-{src.name}"
+
+
+def backup_path(src) -> Path:
+    """Hidden name the original is renamed to while the new file is swapped in."""
+    src = Path(src)
+    return src.parent / f"{_WORK_DIR_PREFIX}orig-{src.name}"
 
 
 def _copy_durably(src: Path, dst: Path) -> None:
@@ -467,12 +490,181 @@ def _copy_durably(src: Path, dst: Path) -> None:
         os.fsync(fout.fileno())
 
 
+# ── swap journal ─────────────────────────────────────────────────────────
+
+def journal_dir() -> Path:
+    from core.utils import get_mkvauto_root
+
+    return Path(os.environ.get("MKVAUTO_DV7_JOURNAL_DIR") or (get_mkvauto_root() / "dv7-journal"))
+
+
+def _journal_path(src: Path) -> Path:
+    import hashlib
+
+    return journal_dir() / (hashlib.sha1(str(src).encode("utf-8")).hexdigest() + ".json")
+
+
+def _fsync_dir(path: Path) -> None:
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _write_journal(src: Path, new_path: Path, size: int, owner: str, extra: Optional[dict] = None) -> None:
+    jdir = journal_dir()
+    jdir.mkdir(parents=True, exist_ok=True)
+    entry = {**(extra or {}), "src": str(src), "new": str(new_path), "backup": str(backup_path(src)),
+             "size": int(size), "owner": owner}
+    target = _journal_path(src)
+    tmp = target.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(entry, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, target)
+    _fsync_dir(jdir)
+
+
+def _clear_journal(src: Path) -> None:
+    try:
+        _journal_path(src).unlink(missing_ok=True)
+    except OSError:
+        pass
+    _fsync_dir(journal_dir())
+
+
+def journal_entries(owner: Optional[str] = None) -> list:
+    """Unfinished swaps, optionally only those started by ``owner``."""
+    out = []
+    jdir = journal_dir()
+    if not jdir.is_dir():
+        return out
+    for p in sorted(jdir.glob("*.json")):
+        try:
+            entry = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            log.warning("dv_remux: unreadable journal entry %s left in place", p)
+            continue
+        if isinstance(entry, dict) and entry.get("src") and (owner is None or entry.get("owner") == owner):
+            out.append(entry)
+    return out
+
+
+def journal_entry_for(src) -> Optional[dict]:
+    p = _journal_path(Path(src))
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _swap_in(src: Path, new_path: Path, owner: str, extra: Optional[dict] = None) -> Optional[str]:
+    """Put the verified ``new_path`` at ``src`` without deleting the original
+    first. Returns an error (with the original back in place) or None."""
+    backup = backup_path(src)
+    if backup.exists():
+        return f"{backup.name} is still there from an interrupted conversion; it needs recovering first"
+    size = new_path.stat().st_size
+    _write_journal(src, new_path, size, owner, extra)
+    try:
+        os.rename(src, backup)
+    except OSError as exc:
+        _clear_journal(src)
+        return f"setting the original aside failed: {exc}"
+    try:
+        os.rename(new_path, src)
+        if src.stat().st_size != size:
+            raise OSError(f"the new file is {src.stat().st_size} bytes at its final name, expected {size}")
+    except OSError as exc:
+        outcome = recover(journal_entry_for(src) or {})
+        return f"swapping the new file in failed ({exc}); recovery: {outcome}"
+    try:
+        backup.unlink()
+    except OSError as exc:
+        # The new file is in place; the leftover original is removed by recovery.
+        log.warning("dv_remux: converted %s but couldn't delete the set-aside original: %s", src, exc)
+        return None
+    _clear_journal(src)
+    return None
+
+
+# Outcomes of ``recover``.
+RECOVERED_COMPLETED = "completed"   # the converted file is in place
+RECOVERED_RESTORED = "restored"     # the original is back in place
+RECOVERED_UNTOUCHED = "untouched"   # the swap never started; the original never moved
+RECOVERED_MISSING = "missing"       # nothing found at any of the names (never expected)
+
+
+def recover(entry: dict) -> str:
+    """Finish or roll back one interrupted swap from its journal entry.
+
+    Deletes only the new file's temp name or the set-aside original, and only
+    when the other copy is complete at the original name.
+    """
+    src = Path(entry["src"])
+    new = Path(entry["new"])
+    backup = Path(entry["backup"])
+    size = int(entry.get("size") or -1)
+    s, n, b = src.exists(), new.exists(), backup.exists()
+
+    def _size(p: Path) -> int:
+        try:
+            return p.stat().st_size
+        except OSError:
+            return -2
+
+    if b:
+        if s and not n and _size(src) == size:
+            backup.unlink()                      # stopped just before deleting the original
+            outcome = RECOVERED_COMPLETED
+        else:
+            if s:                                # whatever is at src isn't the verified file
+                if n:
+                    src.unlink()
+                else:
+                    os.rename(src, new)
+            os.rename(backup, src)               # src is free now: no overwrite
+            if new.exists():
+                new.unlink()
+            outcome = RECOVERED_RESTORED
+    elif s:
+        if n:                                    # stopped before the original was set aside
+            new.unlink()
+            outcome = RECOVERED_UNTOUCHED
+        else:                                    # finished; only the journal was left
+            outcome = RECOVERED_COMPLETED if _size(src) == size else RECOVERED_UNTOUCHED
+    elif n:
+        os.rename(new, src)
+        outcome = RECOVERED_COMPLETED
+    else:
+        log.error("dv_remux: interrupted conversion of %s left no file at any name", src)
+        outcome = RECOVERED_MISSING
+    _clear_journal(src)
+    log.info("dv_remux: recovered interrupted conversion of %s: %s", src, outcome)
+    return outcome
+
+
+def recover_path(src) -> Optional[str]:
+    """Recover ``src`` if it has an unfinished swap; returns the outcome or None."""
+    entry = journal_entry_for(src)
+    return recover(entry) if entry else None
+
+
 def remux_dv7_to_dv81(
     src,
     *,
     progress_cb: Optional[Callable[[float], None]] = None,
     scratch_dir=None,
     check_space: bool = True,
+    owner: str = "library",
+    journal_extra: Optional[dict] = None,
 ) -> DvRemuxResult:
     """Convert a DV profile 7 MKV to profile 8.1 in place, replacing ``src``
     with the converted file only after verification passes.
@@ -480,8 +672,10 @@ def remux_dv7_to_dv81(
     ``scratch_dir`` (#896): write the intermediate stream and the new MKV
     there instead of next to the source (for a source on a network share),
     then copy the verified result next to the original under a hidden temp
-    name, check its size, and rename it over the original. ``check_space``
-    is False when the caller holds a space reservation (#895).
+    name and check its size. Either way the result is swapped in with
+    ``_swap_in``, which never deletes the original first. ``check_space``
+    is False when the caller holds a space reservation (#895). ``owner``
+    tags the swap journal so each caller recovers only its own swaps.
 
     Never raises for operational failures: returns a ``DvRemuxResult`` with
     status ``converted``/``skipped``/``failed``. On anything other than
@@ -550,21 +744,20 @@ def remux_dv7_to_dv81(
             return DvRemuxResult("failed", f"verification failed: {error}")
         _progress(0.95)
 
+        new_path = out_path
         if scratch_dir:
             # Different filesystem: copy next to the original first, so the
-            # final step is still an atomic same-directory rename.
+            # swap is renames within one directory.
             try:
                 _copy_durably(out_path, push_path)
                 if push_path.stat().st_size != out_path.stat().st_size:
                     return DvRemuxResult("failed", "copy back to the library was incomplete")
-                os.replace(push_path, src)
             except OSError as exc:
                 return DvRemuxResult("failed", f"copying the result back failed: {exc}")
-        else:
-            try:
-                os.replace(out_path, src)
-            except OSError as exc:
-                return DvRemuxResult("failed", f"replacing original failed: {exc}")
+            new_path = push_path
+        error = _swap_in(src, new_path, owner, journal_extra)
+        if error:
+            return DvRemuxResult("failed", error)
 
         _progress(1.0)
         log.info("dv_remux: converted %s to Dolby Vision profile 8.1", src)

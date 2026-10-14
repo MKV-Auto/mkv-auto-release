@@ -1,14 +1,15 @@
 """Video-library catalog and Dolby Vision 7 conversion queue (#894).
 
-The library scan walks the folders configured in Settings -> DV7 conversion
-(each a mapped mount; see ``core.storage_location``), records every video
-file's format in ``library_media_files``, and marks Dolby Vision profile 7
+The library scan walks the user's transfer destination (a local folder, or
+an SMB/NFS share the app mounts; see ``core.library_destination``, #902),
+records every video file's format in ``library_media_files``, and marks Dolby Vision profile 7
 MKVs ``queued``. ``convert_catalog_file`` converts one queued file in place
 with ``core.dv_remux`` (verify, then replace).
 
 Statuses: ``catalogued`` (nothing to do) | ``queued`` | ``converting`` |
 ``converted`` | ``failed`` | ``skipped`` (precondition not met, e.g. free
-space; the reason is in ``error``). A rescan only re-probes a file whose
+space; the reason is in ``error``) | ``unreadable`` (ffprobe can't read
+the file: usually a damaged or incomplete file; nothing to convert). A rescan only re-probes a file whose
 size or mtime changed, so repeat scans are cheap. A ``failed`` or
 ``skipped`` file is not re-queued by a rescan unless it changed; retrying is
 an explicit action, so a broken file can't loop.
@@ -25,6 +26,12 @@ from typing import Any, Callable, Iterable, Optional
 log = logging.getLogger(__name__)
 
 VIDEO_EXTENSIONS = frozenset({".mkv", ".mp4", ".m4v", ".mov", ".avi", ".ts", ".m2ts", ".wmv", ".webm"})
+# Smaller files aren't catalogued. ``.ts`` is also TypeScript: a library
+# share with a code folder (node_modules) holds thousands of tiny ones, and
+# no video worth converting is this small.
+MIN_VIDEO_BYTES = 1024 * 1024
+# How often a running scan reports progress (``progress_cb``).
+PROGRESS_EVERY_SECONDS = 30
 # A file modified this recently may still be being written (a transfer in
 # progress); it is skipped this scan and picked up by the next one.
 RECENT_SECONDS = 300
@@ -45,6 +52,8 @@ WAITING_FOR_SPACE = "waiting_for_space"
 WAITING_PREFIX = "Waiting for disk space: "
 FAILED = "failed"
 SKIPPED = "skipped"
+UNREADABLE = "unreadable"
+UNREADABLE_NOTE = "Couldn't read this file. It may be damaged or incomplete; check whether it plays."
 
 
 def _now() -> datetime:
@@ -78,6 +87,58 @@ def library_path_problem(path: str) -> Optional[str]:
     return None
 
 
+# MPEG transport streams start with the 0x47 sync byte (``.m2ts`` after a
+# 4-byte timestamp). A ``.ts`` file that doesn't is TypeScript, not video.
+_TS_SYNC_OFFSETS = {".ts": 0, ".m2ts": 4, ".mts": 4}
+
+
+def _looks_like_video(path: Path) -> bool:
+    offset = _TS_SYNC_OFFSETS.get(path.suffix.lower())
+    if offset is None:
+        return True
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(offset)
+            return fh.read(1) == b"\x47"
+    except OSError:
+        return True   # let the probe decide
+
+
+# The top-level folders MKV-Auto itself transfers into (core.disc: type_dir).
+APP_FOLDERS = ("Movies", "Series")
+
+
+def scan_folders(root: str) -> list[str]:
+    """The folders under the destination ``root`` that the scan looks in.
+
+    Only what MKV-Auto writes: ``Movies`` and ``Series``, plus the first folder
+    of a custom path template when it's a fixed name. Everything else on the
+    share (books, music, code, other people's files) is never walked.
+    """
+    from core import settings as _settings
+
+    names = list(APP_FOLDERS)
+    try:
+        data = _settings.load_settings()
+    except Exception:  # noqa: BLE001
+        data = {}
+    for key in ("path_template_movie", "path_template_series"):
+        first = str(data.get(key) or "").strip().strip("/").split("/", 1)[0]
+        if first and "{" not in first and first not in names:
+            names.append(first)
+    out = []
+    for name in names:
+        p = Path(root) / name
+        if p.is_dir():
+            out.append(str(p))
+    return out
+
+
+def _under(path: str, root: str) -> bool:
+    root = str(root).rstrip(os.sep)
+    return str(path).startswith(root + os.sep)
+
+
 def _is_dv7_candidate(path: Path, dv_profile: Optional[int]) -> bool:
     return path.suffix.lower() == ".mkv" and dv_profile == 7
 
@@ -99,8 +160,12 @@ def scan_library(
     *,
     probe: Optional[Callable[[Path], Optional[dict]]] = None,
     now: Optional[float] = None,
+    progress_cb: Optional[Callable[[int], None]] = None,
 ) -> dict:
     """Catalog every video file under ``roots``; return a summary.
+
+    ``progress_cb(files_seen)`` is called at most every
+    ``PROGRESS_EVERY_SECONDS`` while the scan runs.
 
     ``summary["queued_ids"]`` lists rows in ``queued`` state (newly queued, or
     still queued from an earlier scan) for the caller to dispatch.
@@ -112,7 +177,7 @@ def scan_library(
     now = time.time() if now is None else now
     summary = {
         "roots": [], "files": 0, "probed": 0, "unchanged": 0, "recent": 0,
-        "removed": 0, "dv7": 0, "queued_ids": [], "errors": [],
+        "removed": 0, "dv7": 0, "unreadable": 0, "queued_ids": [], "errors": [],
     }
     pending = 0
     cutoff = datetime.fromtimestamp(now - STALE_CONVERTING_SECONDS, tz=timezone.utc)
@@ -126,6 +191,8 @@ def scan_library(
         row.error = "Interrupted (the app restarted mid-conversion). The original is untouched; retry to convert it."
         row.updated_at = _now()
     summary["interrupted"] = len(stale)
+    all_rows = {r.path: r for r in db.query(db_models.LibraryMediaFile).all()}
+    scanned_roots: list[str] = []
     for root in roots:
         problem = library_path_problem(root)
         if problem:
@@ -133,27 +200,44 @@ def scan_library(
             summary["roots"].append({"path": root, "ok": False, "problem": problem})
             continue
         root_path = Path(root).resolve()
+        scanned_roots.append(str(root_path))
         summary["roots"].append({"path": str(root_path), "ok": True, "problem": None})
-        existing = {
-            r.path: r for r in db.query(db_models.LibraryMediaFile)
-            .filter(db_models.LibraryMediaFile.library_root == str(root_path)).all()
-        }
+        # By path, not recorded root: 1.7.0 recorded the whole share as the
+        # root, and a path can only have one row.
+        existing = {p: r for p, r in all_rows.items() if _under(p, str(root_path))}
         seen: set[str] = set()
+        last_report = time.monotonic()
         for path in _walk_videos(root_path):
             key = str(path)
-            seen.add(key)
-            summary["files"] += 1
             try:
                 st = path.stat()
             except OSError as exc:
+                seen.add(key)
                 summary["errors"].append(f"{path}: {exc}")
                 continue
+            if st.st_size < MIN_VIDEO_BYTES or not _looks_like_video(path):
+                continue      # not a video: not catalogued, not counted
+            seen.add(key)
+            summary["files"] += 1
+            if progress_cb is not None and time.monotonic() - last_report >= PROGRESS_EVERY_SECONDS:
+                last_report = time.monotonic()
+                try:
+                    progress_cb(summary["files"])
+                except Exception:  # noqa: BLE001 - progress must never break a scan
+                    pass
             if now - st.st_mtime < RECENT_SECONDS:
                 summary["recent"] += 1
                 continue
             row = existing.get(key)
-            if row is not None and row.size == st.st_size and row.mtime == st.st_mtime:
+            # 1.7.0 recorded an unreadable file as ``failed``; probe those again.
+            legacy_unreadable = row is not None and row.status == FAILED and row.dv_profile is None
+            if row is not None:
+                row.library_root = str(root_path)
+            if (row is not None and row.size == st.st_size and row.mtime == st.st_mtime
+                    and not legacy_unreadable):
                 summary["unchanged"] += 1
+                if row.status == UNREADABLE:
+                    summary["unreadable"] += 1
                 if row.status == QUEUED:
                     summary["queued_ids"].append(row.id)
                 if row.dv_profile == 7:
@@ -164,6 +248,7 @@ def scan_library(
             if row is None:
                 row = db_models.LibraryMediaFile(path=key, library_root=str(root_path))
                 db.add(row)
+                all_rows[key] = row
             row.size = st.st_size
             row.mtime = st.st_mtime
             row.scanned_at = _now()
@@ -171,9 +256,9 @@ def scan_library(
             row.progress = None
             if info is None:
                 row.video_codec = row.width = row.height = row.dv_profile = row.duration = None
-                row.status = FAILED
-                row.error = "Could not read this file's format (ffprobe failed)."
-                summary["errors"].append(f"{path}: could not probe")
+                row.status = UNREADABLE
+                row.error = UNREADABLE_NOTE
+                summary["unreadable"] += 1
             else:
                 row.video_codec = info.get("video_codec")
                 row.width = info.get("width")
@@ -194,7 +279,19 @@ def scan_library(
                 db.flush()
                 summary["queued_ids"].append(row.id)
         for key, row in existing.items():
-            if key not in seen and row.status != CONVERTING and not Path(key).exists():
+            if key in seen or row.status == CONVERTING:
+                continue
+            # Gone, or not a video after all (1.7.0 catalogued tiny files and
+            # TypeScript ``.ts``): a walked-but-skipped file isn't in ``seen``.
+            if not Path(key).exists() or (row.size is not None and row.size < MIN_VIDEO_BYTES) \
+                    or not _looks_like_video(Path(key)):
+                db.delete(row)
+                summary["removed"] += 1
+    # Rows outside the scanned folders (an earlier whole-share scan, or a
+    # destination that changed) aren't part of the library any more.
+    if scanned_roots:
+        for path, row in all_rows.items():
+            if row.status != CONVERTING and not any(_under(path, r) for r in scanned_roots):
                 db.delete(row)
                 summary["removed"] += 1
     db.commit()
@@ -265,6 +362,7 @@ def convert_catalog_file(
     remux: Optional[Callable[..., Any]] = None,
     settings_getter: Optional[Callable[[], dict]] = None,
     planner: Optional[Callable[..., tuple]] = None,
+    destination: Optional[Callable[[Any], Any]] = None,
 ) -> str:
     """Convert one ``queued`` catalog file in place. Returns the final status,
     or a short reason when nothing was done (not queued, disabled)."""
@@ -290,9 +388,13 @@ def convert_catalog_file(
         return status
 
     path = Path(row.path)
-    roots = [str(Path(p).resolve()) for p in cfg.get("library_paths") or []]
-    if row.library_root not in roots:
-        return _finish(SKIPPED, "This folder is no longer in the library folders list.")
+    from core import library_destination
+
+    dest = (destination or library_destination.ensure_root)(db)
+    if not dest.available:
+        return _finish(SKIPPED, dest.problem)
+    if not _under(row.path, str(Path(dest.root).resolve())):
+        return _finish(SKIPPED, "The transfer destination changed after this file was scanned. Scan again.")
     try:
         st = path.stat()
     except OSError:
@@ -320,7 +422,8 @@ def convert_catalog_file(
         db.commit()
 
     try:
-        result = remux(path, progress_cb=_progress, scratch_dir=scratch, check_space=False)
+        result = remux(path, progress_cb=_progress, scratch_dir=scratch, check_space=False,
+                       owner="library", journal_extra={"destination": dest.display})
     finally:
         release_conversion_space(db, file_id)
     if result.converted:
@@ -333,6 +436,106 @@ def convert_catalog_file(
         return _finish(CONVERTED)
     row.progress = None
     return _finish(SKIPPED if result.status == "skipped" else FAILED, result.reason)
+
+
+INTERRUPTED_NOTE = "Restarted after an interruption. The original was not changed."
+
+
+def recover_interrupted(db: Any, *, destination: Optional[Callable[[Any], Any]] = None) -> list[str]:
+    """Finish or roll back conversions a stopped container left half-done.
+
+    Must run where no library conversion can be in progress: the convert
+    worker (one at a time), at startup and before each conversion. For every
+    unfinished swap in the journal it either keeps the fully swapped-in file
+    or puts the original back (``core.dv_remux.recover``), and a ``converting``
+    row with no journal entry never touched its original, so its leftovers
+    are deleted. Interrupted files are queued again. Returns their ids.
+    """
+    from api import models as db_models
+    from core import dv_remux, library_destination
+
+    rows = db.query(db_models.LibraryMediaFile).filter(
+        db_models.LibraryMediaFile.status == CONVERTING
+    ).all()
+    entries = dv_remux.journal_entries(owner="library")
+    _wipe_scratch()
+    if not rows and not entries:
+        return []
+    dest = (destination or library_destination.ensure_root)(db)
+    if not dest.available:
+        log.warning("recover_interrupted: library unavailable, leaving %s row(s) and %s journal "
+                    "entr(ies) for later: %s", len(rows), len(entries), dest.problem)
+        return []
+
+    by_path = {r.path: r for r in rows}
+    requeue: list[str] = []
+    for entry in entries:
+        if entry.get("destination") and entry["destination"] != dest.display:
+            # The share at the mount point isn't the one this swap started on.
+            log.error("recover_interrupted: %s was being converted on %s, but the destination is now %s; "
+                      "left for when that share is the destination again",
+                      entry["src"], entry["destination"], dest.display)
+            by_path.pop(entry["src"], None)
+            continue
+        try:
+            outcome = dv_remux.recover(entry)
+        except OSError as exc:
+            log.error("recover_interrupted: recovering %s failed, left as is: %s", entry["src"], exc)
+            by_path.pop(entry["src"], None)
+            continue
+        row = by_path.pop(entry["src"], None) or db.query(db_models.LibraryMediaFile).filter(
+            db_models.LibraryMediaFile.path == entry["src"]).first()
+        if row is None:
+            continue
+        if outcome == dv_remux.RECOVERED_COMPLETED:
+            st = Path(row.path).stat()
+            row.size, row.mtime, row.dv_profile = st.st_size, st.st_mtime, 8
+            row.status, row.progress, row.error = CONVERTED, 1.0, None
+            row.converted_at = _now()
+        elif outcome == dv_remux.RECOVERED_MISSING:
+            row.status, row.progress = FAILED, None
+            row.error = "Interrupted, and the file couldn't be found under any of its names."
+        else:
+            row.status, row.progress, row.error = QUEUED, None, INTERRUPTED_NOTE
+            requeue.append(row.id)
+        row.updated_at = _now()
+        release_conversion_space(db, row.id)
+
+    for row in by_path.values():
+        # No journal entry: the swap never started, so the original never moved.
+        src = Path(row.path)
+        for leftover in (dv_remux.push_temp_path(src), dv_remux.work_dir_for(src)):
+            try:
+                if leftover.is_dir():
+                    import shutil
+                    shutil.rmtree(leftover, ignore_errors=True)
+                elif leftover.exists():
+                    leftover.unlink()
+            except OSError as exc:
+                log.warning("recover_interrupted: couldn't remove %s: %s", leftover, exc)
+        row.status, row.progress, row.error = QUEUED, None, INTERRUPTED_NOTE
+        row.updated_at = _now()
+        release_conversion_space(db, row.id)
+        requeue.append(row.id)
+    db.commit()
+    if requeue:
+        log.info("recover_interrupted: re-queued %s interrupted conversion(s)", len(requeue))
+    return requeue
+
+
+def _wipe_scratch() -> None:
+    """Remove conversion work dirs from local scratch (nothing is converting)."""
+    import shutil
+    from core import dv_remux
+
+    root = scratch_dir()
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return
+    for name in names:
+        if name.startswith(dv_remux._WORK_DIR_PREFIX):
+            shutil.rmtree(root / name, ignore_errors=True)
 
 
 def retry_catalog_file(db: Any, file_id: str) -> Optional[str]:

@@ -53,7 +53,7 @@ _KNOWN_TOP_LEVEL = frozenset({
     # ignoring the answer.
     "support_prompt",
     # Dolby Vision 7 -> 8.1 conversion (#894): {enabled, convert_new_rips,
-    # library_paths}. Everything off by default; see get_dv7_conversion().
+    # last_scan}. Everything off by default; see get_dv7_conversion().
     "dv7_conversion",
 })
 
@@ -93,7 +93,7 @@ def _default_settings() -> dict:
         "dv7_conversion": {
             "enabled": False,
             "convert_new_rips": False,
-            "library_paths": [],
+            "last_scan": None,
         },
         "eject_on_finish": False,
         "eject_on_restart": False,
@@ -289,20 +289,23 @@ def get_dv7_conversion() -> dict:
     - ``convert_new_rips``: convert DV7 outputs during postprocess, before
       transfer (only when ``enabled``). Default off: each part is opted
       into separately.
-    - ``library_paths``: container paths whose files the library scan
-      catalogs and converts. Each must be a mapped mount.
+    - ``last_scan``: the most recent library scan, written by the scan task
+      (see ``record_dv7_last_scan``): ``ok`` is None while it runs, then
+      True/False with counts or the problem. None before the first scan.
+
+    The library itself is the active transfer destination (#902, see
+    ``core.library_destination``). The ``library_paths`` key that 1.7.0
+    stored is ignored.
     """
     raw = load_settings().get("dv7_conversion")
     raw = raw if isinstance(raw, dict) else {}
-    paths: list[str] = []
-    for p in raw.get("library_paths") or []:
-        p = str(p).strip()
-        if p and p not in paths:
-            paths.append(p)
+    last = raw.get("last_scan")
+    if isinstance(last, dict) and last.get("at") and last.get("ok") is None:
+        last = _mark_stale_scan(dict(last))
     return {
         "enabled": bool(raw.get("enabled", False)),
         "convert_new_rips": bool(raw.get("convert_new_rips", False)),
-        "library_paths": paths,
+        "last_scan": last if isinstance(last, dict) and last.get("at") else None,
     }
 
 
@@ -310,18 +313,47 @@ def set_dv7_conversion(
     *,
     enabled: Optional[bool] = None,
     convert_new_rips: Optional[bool] = None,
-    library_paths: Optional[list] = None,
 ) -> dict:
-    """Update any of the DV7 conversion settings; returns the normalised result."""
-    current = get_dv7_conversion()
+    """Update the DV7 conversion switches; returns the normalised result."""
+    updates: dict = {}
     if enabled is not None:
-        current["enabled"] = bool(enabled)
+        updates["enabled"] = bool(enabled)
     if convert_new_rips is not None:
-        current["convert_new_rips"] = bool(convert_new_rips)
-    if library_paths is not None:
-        current["library_paths"] = [str(p).strip() for p in library_paths if str(p).strip()]
-    save_settings({"dv7_conversion": current})
+        updates["convert_new_rips"] = bool(convert_new_rips)
+    if updates:
+        save_settings({"dv7_conversion": updates})
     return get_dv7_conversion()
+
+
+def _mark_stale_scan(last: dict) -> dict:
+    """A "running" scan with no heartbeat for SCAN_STALE_SECONDS was stopped."""
+    from datetime import datetime, timezone
+
+    stamp = last.get("heartbeat") or last.get("at")
+    try:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(stamp)).total_seconds()
+    except (TypeError, ValueError):
+        return last
+    if age > SCAN_STALE_SECONDS:
+        last["ok"] = False
+        last["problem"] = SCAN_INTERRUPTED
+    return last
+
+
+_LAST_SCAN_KEYS = ("at", "ok", "destination", "files", "dv7", "queued", "unreadable", "problem", "heartbeat")
+# A running scan reports every ~30 s between files; one silent for longer was
+# stopped (the app restarted) and is reported as interrupted.
+SCAN_STALE_SECONDS = 20 * 60   # longer than one ffprobe can take (15 min)
+SCAN_INTERRUPTED = "The scan stopped before it finished (the app restarted). Scan again; files already checked are skipped."
+
+
+def record_dv7_last_scan(**fields) -> None:
+    """Store the latest library scan's outcome for Settings to show.
+
+    Every key is written (missing ones as None) so a deep merge can't leave a
+    previous scan's ``problem`` behind on a successful one.
+    """
+    save_settings({"dv7_conversion": {"last_scan": {k: fields.get(k) for k in _LAST_SCAN_KEYS}}})
 
 
 def apply_discdb_miss_workflow_prefill_to_payload(d: dict) -> None:
