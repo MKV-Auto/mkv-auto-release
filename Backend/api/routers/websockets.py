@@ -85,6 +85,7 @@ def _resolve_in_drive_job_for_disc(
         .filter(
             db_models.Job.disc_id == disc_id,
             db_models.Job.job_status == "failed",
+            db_models.Job.dismissed.is_(False),  # #877
         )
         .order_by(db_models.Job.created_at.desc())
         .first()

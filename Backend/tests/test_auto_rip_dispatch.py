@@ -156,3 +156,65 @@ def test_start_rip_crash_never_raises(test_db):
         patch("api.routers.jobs.start_rip", side_effect=RuntimeError("boom")),
     ):
         assert maybe_auto_start_rip(_disc_info()) is None
+
+
+# --- #931: never re-rip a disc that was ripped before ---------------------
+
+def _seed_job(test_db, content_hash: str, **job_fields) -> str:
+    with test_db() as session:
+        disc = models.Disc(id=str(uuid.uuid4()), content_hash=content_hash, disc_number=1)
+        session.add(disc)
+        session.flush()
+        job = models.Job(id=str(uuid.uuid4()), disc_id=disc.id, disc_num="0", mount_point="/dev/sr0",
+                         stage_profile="miss", **job_fields)
+        session.add(job)
+        session.commit()
+        return disc.id
+
+
+@pytest.mark.parametrize("fields", [
+    {"job_status": "completed", "rip_state": "completed"},   # finished (and possibly in the Library)
+    {"job_status": "running", "rip_state": "completed"},     # ripped, still waiting at labeling
+])
+def test_a_disc_ripped_before_is_not_ripped_again_and_the_user_is_told(test_db, fields):
+    disc_id = _seed_job(test_db, "hash-931-done", **fields)
+    with (
+        patch("core.settings.get_auto_rip_enabled", return_value=True),
+        patch("api.routers.jobs.start_rip") as start_mock,
+        patch("core.notifications.emit_notification_sync") as notify_mock,
+    ):
+        assert maybe_auto_start_rip(_disc_info(disc_hash="hash-931-done", disc_id=disc_id,
+                                               movie_name="Star Wars Archives")) is None
+    start_mock.assert_not_called()
+    notify_mock.assert_called_once()
+    args, kwargs = notify_mock.call_args
+    assert args[2] == "action_required"                   # delivered in-app and to Discord by default
+    assert "already ripped" in args[0] and "start the copy" in args[0]
+    assert kwargs["title"] == "Disc already ripped"
+    assert kwargs["action_type"] == "open_ripper_drive"
+    assert kwargs["id_key"] == "auto-rip-already-ripped:hash-931-done"
+    assert kwargs["dedupe_ttl"] > 0                       # a restart's rescan doesn't repeat it
+
+
+def test_a_disc_whose_rips_all_failed_still_auto_rips(test_db):
+    """Reinserting a failed disc is how users retry it."""
+    disc_id = _seed_job(test_db, "hash-931-failed", job_status="failed", rip_state="failed")
+    new_job = str(uuid.uuid4())
+    with (
+        patch("core.settings.get_auto_rip_enabled", return_value=True),
+        patch("api.routers.jobs.start_rip", return_value=_status(new_job)) as start_mock,
+        patch("core.notifications.emit_notification_sync"),
+    ):
+        maybe_auto_start_rip(_disc_info(disc_hash="hash-931-failed", disc_id=disc_id, discdb_hit=True))
+    start_mock.assert_called_once()
+
+
+def test_a_new_disc_still_auto_rips(test_db):
+    new_job = str(uuid.uuid4())
+    with (
+        patch("core.settings.get_auto_rip_enabled", return_value=True),
+        patch("api.routers.jobs.start_rip", return_value=_status(new_job)) as start_mock,
+        patch("core.notifications.emit_notification_sync"),
+    ):
+        maybe_auto_start_rip(_disc_info(disc_hash="hash-931-new", discdb_hit=True))
+    start_mock.assert_called_once()

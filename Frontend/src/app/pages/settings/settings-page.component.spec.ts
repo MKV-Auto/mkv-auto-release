@@ -943,3 +943,71 @@ describe('SettingsPageComponent (#894 Dolby Vision conversion)', () => {
     c.ngOnDestroy();
   }));
 });
+
+describe('SettingsPageComponent (#911 eject when the copy finishes)', () => {
+  let fixture: ComponentFixture<SettingsPageComponent>;
+  let component: SettingsPageComponent;
+  let spy: jasmine.SpyObj<SystemService>;
+
+  beforeEach(async () => {
+    spy = makeSystemServiceSpy();
+    spy.getDiscdbLookupConfig.and.returnValue(of({
+      discdb_miss_workflow_with_prefill: true, eject_after_copy: false, failed_rip_retention_days: 7,
+    }));
+    spy.saveDiscdbLookupConfig.and.callFake((cfg: any) => of(cfg));
+    spy.saveAutoRipConfig.and.callFake((cfg: any) => of(cfg));
+    await TestBed.configureTestingModule({
+      imports: [SettingsPageComponent],
+      providers: [
+        { provide: SystemService, useValue: spy },
+        { provide: ToastService, useValue: jasmine.createSpyObj('ToastService', ['show']) },
+        { provide: WorkflowService, useValue: { syncCoordinator: () => {} } },
+        provideHttpClient(),
+      ],
+    }).compileComponents();
+    fixture = TestBed.createComponent(SettingsPageComponent);
+    component = fixture.componentInstance;
+    component.activeTab = 'copy';
+    fixture.detectChanges();
+  });
+
+  afterEach(() => component.ngOnDestroy());
+
+  function toggle(label: string): HTMLButtonElement {
+    const fields = Array.from(fixture.nativeElement.querySelectorAll('ui-field')) as HTMLElement[];
+    const field = fields.find(f => (f.getAttribute('label') || f.textContent || '').includes(label));
+    expect(field).withContext(label).toBeTruthy();
+    return field!.querySelector('button.settings-toggle') as HTMLButtonElement;
+  }
+
+  it('offers eject after copy and no longer offers eject on finish', () => {
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain('Eject disc when the copy finishes');
+    expect(text).not.toContain('Eject disc on finish');
+  });
+
+  it('saves eject_after_copy', () => {
+    toggle('when the copy finishes').click();
+    fixture.detectChanges();
+    component.saveDiscDbLookupConfig();
+    const saved = spy.saveDiscdbLookupConfig.calls.mostRecent().args[0] as any;
+    expect(saved.eject_after_copy).toBeTrue();
+    expect('eject_on_finish' in saved).toBeFalse();
+  });
+
+  it('saves how long failed copies are kept, clamping bad input (#877)', () => {
+    const input = fixture.nativeElement.querySelector('[data-testid="failed-rip-retention-days"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    component.discDbLookup.failed_rip_retention_days = 14;
+    component.saveDiscDbLookupConfig();
+    expect((spy.saveDiscdbLookupConfig.calls.mostRecent().args[0] as any).failed_rip_retention_days).toBe(14);
+
+    component.discDbLookup.failed_rip_retention_days = -3;
+    component.saveDiscDbLookupConfig();
+    expect((spy.saveDiscdbLookupConfig.calls.mostRecent().args[0] as any).failed_rip_retention_days).toBe(0);
+
+    component.discDbLookup.failed_rip_retention_days = null as unknown as number;   // emptied field
+    component.saveDiscDbLookupConfig();
+    expect((spy.saveDiscdbLookupConfig.calls.mostRecent().args[0] as any).failed_rip_retention_days).toBe(7);
+  });
+});

@@ -835,28 +835,17 @@ def _apply_label_to_records(disc, lp: Dict[str, Any], db: Session) -> None:
 
     disc.format = lp.get("disc_format") or disc.format
     
-    from api.crud import apply_disc_slug_from_label_payload, _title_case, default_disc_name
+    from api.crud import _title_case, default_disc_name
 
     payload_info = lp.get("info_title") or _title_case(lp.get("info_label"))
     effective_info_title = payload_info or disc.info_title
     disc_format_eff = disc.format or lp.get("disc_format")
 
-    # Auto-populate disc_name from info title + format when not set (user can still edit it)
-    disc_name = lp.get("disc_name")
-    if not disc_name and not disc.disc_name:
-        auto_name = default_disc_name(disc_format_eff, effective_info_title)
-        if auto_name:
-            disc_name = auto_name
-            disc.disc_name = disc_name
-    elif disc_name:
-        # User provided disc_name, use it. The CLIENT is responsible for
-        # omitting this field when the user didn't edit it (dirty-tracked) —
-        # an unconditional echo of the displayed value clobbered freshly
-        # generated names on prod. Shape-based filtering here is wrong: a
-        # user may legitimately type a machine-looking name ("Blu-Ray").
-        disc.disc_name = disc_name
-
-    apply_disc_slug_from_label_payload(disc, lp.get("disc_slug"))
+    # Disc name and slug follow the "Automatic naming" toggle (#915): while
+    # it is on the server renders them (refresh_auto_disc_identity below);
+    # while it is off the user's values are kept as typed.
+    from core.disc_naming import apply_naming_from_label
+    apply_naming_from_label(disc, lp, default_disc_name(disc_format_eff, effective_info_title))
     if rel:
         # Backend is source of truth for disc numbers on label save.
         # Only assign if missing to avoid overwriting normalized values.
@@ -1030,6 +1019,14 @@ def _apply_label_to_records(disc, lp: Dict[str, Any], db: Session) -> None:
         refresh_auto_disc_identity(disc)
     except Exception as exc:
         log.warning("auto disc-name refresh failed for disc %s: %s", getattr(disc, "id", None), exc)
+
+
+def _auto_naming_out(disc) -> bool:
+    """The disc's "Automatic naming" toggle for a label form (#915)."""
+    if disc is None:
+        return True
+    from core.disc_naming import effective_auto_naming
+    return effective_auto_naming(disc)
 
 
 def _sync_job_disc_payload_disc_label_fields(job: db_models.Job, disc: db_models.Disc) -> None:
@@ -3521,6 +3518,50 @@ class RipCompleteRequest(BaseModel):
         return self
 
 
+def _maybe_eject_after_copy(job, job_id: str) -> None:
+    """Eject the disc once its copy has finished and verified (#911).
+
+    Called after ``rip_complete`` and after the segment-reorder intercept,
+    which may still re-rip from this disc. Skipped when the drive is busy
+    or now holds another disc: verification can take minutes, and the user
+    may have swapped discs by then. Runs off-thread; eject is bounded, so a
+    hung drive can't hold anything. Never raises.
+    """
+    try:
+        from core.settings import load_settings
+
+        if not load_settings().get("eject_after_copy"):
+            return
+        mount_point = getattr(job, "mount_point", None)
+        if not mount_point:
+            log.info("Job %s: eject_after_copy: no drive recorded for this job", job_id)
+            return
+        from core.drive_registry import _device_in_active_use
+
+        if _device_in_active_use(mount_point):
+            log.info("Job %s: eject_after_copy skipped: %s is in use", job_id, mount_point)
+            return
+        from core.disc_cache import get_by_mount_point
+
+        job_disc = str(getattr(job, "disc_id", "") or "")
+        in_drive = get_by_mount_point(mount_point)
+        if in_drive and job_disc and str(in_drive.get("disc_id") or "") not in ("", job_disc):
+            log.info(
+                "Job %s: eject_after_copy skipped: %s now holds another disc", job_id, mount_point
+            )
+            return
+        import threading
+
+        from core.utils import eject_disc
+
+        log.info("Job %s: copy finished; ejecting %s (eject_after_copy)", job_id, mount_point)
+        threading.Thread(
+            target=eject_disc, args=(mount_point,), name=f"eject-after-copy-{job_id[:8]}", daemon=True
+        ).start()
+    except Exception as exc:
+        log.warning("Job %s: eject_after_copy failed: %s", job_id, exc)
+
+
 def rip_complete_callback(
     job_id: str,
     body: RipCompleteRequest,
@@ -3796,6 +3837,7 @@ def rip_verification_complete_callback(
         # canonical_ripping_pending so the workspace component stops rendering
         # and the normal labeling/postprocess UI takes over.
         _maybe_advance_canonical_complete(job, job_id, db, branch)
+        _maybe_eject_after_copy(job, job_id)
 
         if branch == "hit":
             # Phase 2 collapse (#365): the hit branch now enqueues the unified
@@ -3849,6 +3891,7 @@ def rip_verification_complete_callback(
         # came through this heal branch don't get stuck on canonical_ripping_pending
         # with rip_state already completed.
         _maybe_advance_canonical_complete(job, job_id, db, branch)
+        _maybe_eject_after_copy(job, job_id)
         if branch == "hit":
             # Phase 2 collapse (#365): mirror the success-path retargeting.
             from core.stage_gatekeeper import request_pipeline_start
@@ -6828,6 +6871,8 @@ def _build_labelform_from_job(job: db_models.Job) -> Dict[str, Any]:
         "production_year": merged_payload.get("production_year") or disc_payload.get("production_year"),
         "disc_name": _disc_name_out,
         "disc_slug": _disc_slug_out,
+        # "Automatic naming" toggle (#915); True when there's no disc row yet.
+        "auto_naming": _auto_naming_out(disc),
         "movie_id": merged_payload.get("movie_id") if "movie_id" in label_draft else disc_payload.get("movie_id"),
         "boxset_id": merged_payload.get("boxset_id"),
         # Disc-card primary-season pick (#371). Persisted in label_draft so it
@@ -7822,27 +7867,65 @@ def finish_job(job_id: str, db: Session = Depends(get_db)):
     if JobPaths.for_id(str(job.id)).root.exists():
         cleanup_job_mkv.delay(str(job.id), "user_finish")
 
-    # Eject on finish (#20): if enabled, physically eject the disc after job completion
-    try:
-        from core.settings import load_settings
-        if load_settings().get("eject_on_finish"):
-            mount_point = getattr(job, "mount_point", None)
-            if not mount_point and job.disc:
-                # Try to find mount_point from cached discs
-                from core.disc_cache import get_cached_discs
-                for cached in get_cached_discs():
-                    if cached.get("disc_id") == str(job.disc.id):
-                        mount_point = cached.get("mount_point")
-                        break
-            if mount_point:
-                from core.utils import eject_disc
-                eject_disc(mount_point)
-            else:
-                log.debug("Job %s: eject_on_finish enabled but no mount_point found for disc", job_id)
-    except Exception as exc:
-        log.warning("Job %s: eject_on_finish failed: %s", job_id, exc)
     return Response(status_code=204)
 
+
+class DismissFailedRequest(BaseModel):
+    delete_files: bool = False
+
+
+def _failed_job_for_dismiss(db: Session, job_id: str):
+    job = crud.get_job(db, job_id)
+    if not job:
+        raise HTTPException(404, detail="Job not found")
+    if (job.job_status or "").lower() != "failed":
+        raise HTTPException(409, detail=f"Job is {job.job_status}; only a failed job can be dismissed")
+    return job
+
+
+@router.get("/{job_id}/dismiss")
+def get_dismiss_failed_preview(job_id: str, db: Session = Depends(get_db)):
+    """What dismissing this failed job would hide and could delete (#877)."""
+    from core.job_cleanup import (
+        cleanable_bytes, failed_jobs_to_dismiss, failed_rip_retention_days, rip_never_finished,
+    )
+
+    job = _failed_job_for_dismiss(db, job_id)
+    group = failed_jobs_to_dismiss(db, job)
+    return {
+        "job_ids": [str(j.id) for j in group],
+        "bytes": sum(cleanable_bytes(JobPaths.for_id(str(j.id))) for j in group),
+        # A finished rip whose later stage failed: its files are the only
+        # copy, and Resume can still finish the job from them.
+        "has_finished_rip": any(not rip_never_finished(j) for j in group),
+        "retention_days": failed_rip_retention_days(),
+    }
+
+
+@router.post("/{job_id}/dismiss")
+def dismiss_failed_job(job_id: str, payload: DismissFailedRequest = Body(default=DismissFailedRequest()),
+                       db: Session = Depends(get_db)):
+    """Hide a failed job's card, optionally deleting its files (#877).
+
+    Every failed job for the disc is dismissed together: the carousel shows
+    only the newest per disc, so hiding one would surface the next.
+    """
+    from core.card_state import publish_coordinator_event
+    from core.job_cleanup import failed_jobs_to_dismiss
+
+    job = _failed_job_for_dismiss(db, job_id)
+    group = failed_jobs_to_dismiss(db, job)
+    ids = [str(j.id) for j in group]
+    for j in group:
+        j.dismissed = True
+    db.commit()
+    log.info("Jobs %s dismissed (delete_files=%s)", ", ".join(ids), payload.delete_files)
+    if payload.delete_files:
+        for jid in ids:
+            if JobPaths.for_id(jid).root.exists():
+                cleanup_job_mkv.delay(jid, "user_dismiss")
+    publish_coordinator_event("jobs_dismissed", {"job_ids": ids, "disc_id": str(job.disc_id)})
+    return {"job_ids": ids, "deleting_files": payload.delete_files}
 
 
 @router.get("/unfinished/summaries")
@@ -8096,8 +8179,12 @@ def update_job_workflow_context(
     # For PATCH, merge with existing labelForm before applying
     # Get current context
     current_context = get_job_workflow_context(job_id, db)
-    current_labelForm = current_context.labelForm or {}
-    
+    current_labelForm = dict(current_context.labelForm or {})
+    # The toggle is applied only when the client sends it (#915): the
+    # server's own (possibly inferred) value must not ride along on every
+    # autosave, or a typed name would be read as "automatic naming on".
+    current_labelForm.pop("auto_naming", None)
+
     # Merge updates
     merged_labelForm = {**current_labelForm, **update.labelForm}
     

@@ -84,6 +84,13 @@ DRIVE_FAULT_REMEDY = (
     "This looks like the drive, not the disc — check its power supply and "
     "USB cable, or power-cycle the drive, then retry."
 )
+# In a hung-drive rip error (core.utils.MakeMKVDriveHungError); keys the verdict below.
+DRIVE_HUNG_MARKER = "could not be stopped"
+DRIVE_HUNG_REMEDY = (
+    "Unplug the drive's USB cable (and its power, if it has its own) for about "
+    "10 seconds and plug it back in. Nothing on this drive will work until "
+    "then. Then retry the disc."
+)
 DRIVE_WEDGED_REMEDY = (
     "The drive stopped responding partway through, so the disc itself is "
     "probably fine — power-cycle the drive (unplug its power and USB for "
@@ -287,6 +294,16 @@ def _read_progress_log(job: Any) -> str:
 def analyze_rip_failure(job: Any, db: Any, log_text: Optional[str] = None) -> RipFailureVerdict:
     """Classify a failed rip. Never raises; falls back to indeterminate."""
     try:
+        # --- drive hung: MakeMKV couldn't even be killed (#909) ---
+        # Nothing else in the log matters; no retry works until it's replugged.
+        if DRIVE_HUNG_MARKER in (getattr(job, "error_reason", None) or ""):
+            return RipFailureVerdict(
+                classification="drive_fault",
+                failure_kind="transient",
+                receipts=["MakeMKV was stuck on a read the drive never answered"],
+                remedy=DRIVE_HUNG_REMEDY,
+            )
+
         text = log_text if log_text is not None else _read_progress_log(job)
         errors = _parse_read_errors(text)
         offsets = Counter(offset for _e, _p, offset in errors)

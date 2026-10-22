@@ -53,40 +53,83 @@
       </p>
     </div>
 
-    <!-- Disc Name -->
+    <!-- Disc Number (#873) -->
+    <div class="disc-step-field" *ngIf="labelForm.disc_id">
+      <label class="disc-step-label" for="disc-number-input">Disc Number</label>
+      <div class="disc-step-number-row">
+        <div class="disc-step-number-wrap">
+          <input
+            id="disc-number-input"
+            type="number"
+            min="1"
+            step="1"
+            class="disc-step-input"
+            data-testid="disc-number"
+            [value]="headingDiscNumber ?? ''"
+            (change)="commitDiscNumber($any($event.target).value)"
+            (keydown.enter)="$any($event.target).blur()">
+        </div>
+        <ui-btn variant="ghost" data-testid="reset-disc-numbers" (click)="resetDiscNumbers.emit()">Reset to scan order</ui-btn>
+      </div>
+      <p class="disc-step-field-help">Discs are numbered in the order they were scanned. Taking another disc's number swaps the two.</p>
+    </div>
+
+    <!-- Disc Name, with the automatic-naming switch (#915) -->
     <div class="disc-step-field">
-      <label class="disc-step-label">Disc Name *</label>
+      <div class="disc-step-label-row">
+        <label class="disc-step-label" for="disc-name-input">Disc Name *</label>
+        <span class="disc-step-auto">
+          <span class="disc-step-auto-label">Automatic</span>
+          <ui-switch
+            data-testid="auto-naming"
+            ariaLabel="Automatic naming"
+            [checked]="autoNaming"
+            (checkedChange)="setAutoNaming($event)"></ui-switch>
+        </span>
+      </div>
       <input
+        id="disc-name-input"
         type="text"
         class="disc-step-input"
-        [class.disc-step-input-error]="missingDiscName"
+        data-testid="disc-name"
+        [class.disc-step-input-error]="missingDiscName && !autoNaming"
         [(ngModel)]="labelForm.disc_name"
+        [readonly]="autoNaming"
+        [attr.aria-readonly]="autoNaming"
         [placeholder]="'e.g., Feature Disc, Bonus Features, Disc 1'"
         (ngModelChange)="nameChanged.emit($event)"
         (blur)="fieldBlur.emit()">
-      <p class="disc-step-field-error" *ngIf="missingDiscName">
+      <p class="disc-step-field-error" *ngIf="missingDiscName && !autoNaming">
         <span class="disc-step-field-error-icon" aria-hidden="true"></span>
         Disc name is required
       </p>
-      <p class="disc-step-field-help">A descriptive name for this disc</p>
+      <p class="disc-step-field-help">
+        {{ autoNaming
+          ? 'Generated from the show, season, disc number and format, and kept up to date. Turn off Automatic to use your own name and slug.'
+          : 'A descriptive name for this disc' }}
+      </p>
     </div>
 
     <!-- Disc Slug -->
     <div class="disc-step-field">
-      <label class="disc-step-label">Disc Slug <span class="disc-step-label-optional">(optional)</span></label>
+      <label class="disc-step-label" for="disc-slug-input">Disc Slug <span class="disc-step-label-optional" *ngIf="!autoNaming">(optional)</span></label>
       <input
+        id="disc-slug-input"
         type="text"
         class="disc-step-input"
+        data-testid="disc-slug"
         [(ngModel)]="labelForm.disc_slug"
+        [readonly]="autoNaming"
+        [attr.aria-readonly]="autoNaming"
         [placeholder]="(labelForm.disc_name ? autoSlug : '') || 'Auto-generated from name'"
         (ngModelChange)="labelChanged.emit({ field: 'disc_slug', value: $event })"
         (blur)="fieldBlur.emit()">
-      <p class="disc-step-field-help">URL-friendly identifier (auto-generated if empty)</p>
+      <p class="disc-step-field-help">{{ autoNaming ? 'Generated from the name.' : 'URL-friendly identifier (generated from the name if empty)' }}</p>
     </div>
   </div>
 
   <!-- Tip box (ui-lab) -->
   <div class="disc-step-tip">
-    <p><strong class="disc-step-tip-strong">Tip:</strong> The disc number is automatically assigned when linked to a release. The disc format and name help identify this disc in your collection.</p>
+    <p><strong class="disc-step-tip-strong">Tip:</strong> The disc format and name help identify this disc in your collection.</p>
   </div>
 </div>

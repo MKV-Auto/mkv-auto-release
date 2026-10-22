@@ -45,7 +45,8 @@ services:
       # - MKVAUTO_TMDB_API_KEY=${TMDB_KEY}
       # - MKVAUTO_MEDIA_SERVER=plex
       # - MKVAUTO_AUTO_RIP=false
-      # - MKVAUTO_EJECT_ON_FINISH=false
+      # - MKVAUTO_EJECT_AFTER_COPY=false
+      # - MKVAUTO_FAILED_RIP_RETENTION_DAYS=7
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/healthcheck.sh"]

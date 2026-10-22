@@ -7,7 +7,9 @@ running itself as root.
 import asyncio
 import json
 import os
+import re
 import sys
+import time
 import subprocess
 import tempfile
 from pathlib import Path
@@ -155,35 +157,74 @@ def _mount_nfs(server: str, export_path: str, mount_point: str, options: str = "
     except Exception as exc:
         return {"status": "error", "error": f"Mount failed: {exc}"}
 
+# sysfs root; tests point it at a fake tree.
+SYS_ROOT = Path("/sys")
+RESET_REAPPEAR_SECONDS = 20.0
+_USB_PORT_RE = re.compile(r"^\d+-[\d.]+$")
+
+
+def _drive_topology(dev_sys: Path) -> tuple[str | None, Path | None]:
+    """(SCSI host name, USB port sysfs dir or None) for a block device.
+    Must be read BEFORE the device is deleted: afterwards the sysfs link is gone."""
+    real = dev_sys.resolve()
+    host = next((p.name for p in real.parents if p.name.startswith("host")), None)
+    usb_port = next(
+        (p for p in real.parents if _USB_PORT_RE.match(p.name) and (p / "authorized").exists()),
+        None,
+    )
+    return host, usb_port
+
+
 def _reset_device(device: str) -> dict:
-    """
-    Best-effort reset of a stuck block device by deleting it from sysfs and rescanning its host.
+    """Software unplug-and-replug of a hung optical drive (#910).
+
+    1. Delete the SCSI device: releases I/O stuck on the drive (processes
+       blocked in the kernel exit, the host leaves error handling).
+    2. Bring it back. A USB drive is de-authorized and re-authorized on its
+       port, which the kernel treats as an unplug and replug; that also
+       recovers drive firmware a rescan alone does not (prod 2026-10-18).
+       Anything else gets a SCSI host rescan.
+    3. Wait for the device to reappear and say whether it did.
+
+    The old version looked the host up AFTER deleting the device, so the
+    lookup always failed and the drive never came back until it was
+    physically replugged.
     """
     if not device:
         return {"status": "error", "error": "No device specified"}
     name = Path(device).name
-    dev_sys = Path(f"/sys/block/{name}/device")
+    block = SYS_ROOT / "block" / name
+    dev_sys = block / "device"
     if not dev_sys.exists():
         return {"status": "error", "error": f"No sysfs entry for {device}"}
+
+    host, usb_port = _drive_topology(dev_sys)
 
     try:
         (dev_sys / "delete").write_text("1")
     except Exception as exc:
         return {"status": "error", "error": f"Delete failed: {exc}"}
 
-    # find hostX in the resolved path to trigger a rescan
-    host = None
-    for parent in dev_sys.resolve().parents:
-        if parent.name.startswith("host"):
-            host = parent.name
-            break
-    if host:
-        try:
-            Path(f"/sys/class/scsi_host/{host}/scan").write_text("- - -")
-        except Exception:
-            pass
+    try:
+        if usb_port is not None:
+            (usb_port / "authorized").write_text("0")
+            time.sleep(2)
+            (usb_port / "authorized").write_text("1")
+            how = f"USB port {usb_port.name} re-authorized"
+        elif host:
+            (SYS_ROOT / "class" / "scsi_host" / host / "scan").write_text("- - -")
+            how = f"rescanned {host}"
+        else:
+            return {"status": "error", "error": f"{device} deleted but its host is unknown; replug the drive"}
+    except Exception as exc:
+        return {"status": "error", "error": f"{device} deleted but re-adding it failed: {exc}; replug the drive"}
 
-    return {"status": "ok", "message": f"{device} deleted; rescanned {host or 'unknown host'}"}
+    deadline = time.monotonic() + RESET_REAPPEAR_SECONDS
+    while time.monotonic() < deadline:
+        if block.exists():
+            return {"status": "ok", "message": f"{device} reset: deleted, {how}, back"}
+        time.sleep(0.5)
+    return {"status": "error", "error": f"{device} deleted and {how}, but it did not come back; replug the drive"}
 
 
 def _unmount_device(mount_point: str) -> dict:

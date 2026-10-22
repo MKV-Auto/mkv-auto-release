@@ -1,0 +1,84 @@
+<div class="dfj-backdrop" (click)="onBackdropClick($event)">
+  <div class="dfj-modal" role="dialog" aria-modal="true" aria-labelledby="dfj-title">
+    <ui-card>
+      <header class="dfj-head">
+        <h2 id="dfj-title" class="dfj-title">
+          <span class="dfj-title-icon" aria-hidden="true">
+            <ui-icon name="trash" [size]="16"></ui-icon>
+          </span>
+          Dismiss failed job
+        </h2>
+        <button type="button" class="dfj-close" (click)="cancel()" aria-label="Close">
+          <ui-icon name="close" [size]="16"></ui-icon>
+        </button>
+      </header>
+
+      <div class="dfj-body">
+        <div *ngIf="loading" class="dfj-loading">
+          <ui-icon name="spinner" [size]="20"></ui-icon>
+          <span>Checking its files…</span>
+        </div>
+
+        <ng-container *ngIf="!loading && preview">
+          <p class="dfj-lead">
+            <strong *ngIf="title">{{ title }}</strong>
+            <ng-container *ngIf="title"> will be </ng-container>
+            <ng-container *ngIf="!title">This job will be </ng-container>removed from your cards.
+            <ng-container *ngIf="jobCount > 1">
+              This disc failed {{ jobCount }} times, and all {{ jobCount }} attempts are dismissed together.
+            </ng-container>
+          </p>
+
+          <ng-container *ngIf="hasFiles; else noFiles">
+            <div class="dfj-files" data-testid="dismiss-size">
+              <span class="dfj-files-label">Files left behind</span>
+              <span class="dfj-files-size">{{ size }}</span>
+            </div>
+
+            <div *ngIf="preview.has_finished_rip" class="dfj-warning" data-testid="dismiss-only-copy">
+              <ui-icon name="alert" [size]="16"></ui-icon>
+              <p>
+                This rip finished before the job failed, so these files are its only copy.
+                Resume can still finish the job from them. Delete them and you'll have to copy the disc again.
+              </p>
+            </div>
+
+            <p *ngIf="!preview.has_finished_rip" class="dfj-hint">
+              These are from a copy that didn't finish, and a retry copies the disc again.
+              <ng-container *ngIf="preview.retention_days > 0">
+                If you keep them, they're deleted automatically {{ preview.retention_days }}
+                day{{ preview.retention_days === 1 ? '' : 's' }} after the copy started.
+              </ng-container>
+            </p>
+          </ng-container>
+          <ng-template #noFiles>
+            <p class="dfj-hint">There are no files to delete.</p>
+          </ng-template>
+        </ng-container>
+
+        <div *ngIf="error" class="dfj-error" role="alert">
+          <ui-icon name="alert" [size]="16"></ui-icon>
+          <span>{{ error }}</span>
+        </div>
+      </div>
+
+      <footer class="dfj-footer">
+        <ui-btn variant="ghost" [disabled]="!!busy" (click)="cancel()">Cancel</ui-btn>
+        <ng-container *ngIf="!loading && preview">
+          <ng-container *ngIf="hasFiles; else dismissOnly">
+            <ui-btn variant="secondary" data-testid="dismiss-keep"
+              [disabled]="busy === 'delete'" [loading]="busy === 'keep'"
+              (click)="dismiss(false)">Keep files</ui-btn>
+            <ui-btn variant="danger" data-testid="dismiss-delete"
+              [disabled]="busy === 'keep'" [loading]="busy === 'delete'"
+              (click)="dismiss(true)">Delete files</ui-btn>
+          </ng-container>
+          <ng-template #dismissOnly>
+            <ui-btn variant="primary" data-testid="dismiss-keep"
+              [loading]="busy === 'keep'" (click)="dismiss(false)">Dismiss</ui-btn>
+          </ng-template>
+        </ng-container>
+      </footer>
+    </ui-card>
+  </div>
+</div>

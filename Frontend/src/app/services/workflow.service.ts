@@ -41,6 +41,31 @@ export const DISC_METADATA_UPDATED_FIELDS = [
 export type CardFamily = 'your_turn' | 'working' | 'done' | 'fix';
 export const JOB_CARD_STATE_FIELDS = ['card_state', 'card_family', 'card_pill', 'card_progress'] as const;
 
+/** #873: result of setting or resetting disc numbers. */
+export interface DiscNumberResult {
+  disc_id: string;
+  disc_number: number | null;
+  disc_name: string | null;
+  disc_slug: string | null;
+  changed: { disc_id: string; disc_number: number | null; disc_name: string | null; disc_slug: string | null }[];
+  swapped_with?: { disc_id: string; disc_number: number | null; disc_name: string | null } | null;
+  /** True when a moved disc's files were already transferred (#933). */
+  transferred?: boolean;
+  message?: string | null;
+}
+
+/** #877: what dismissing a failed job would hide and could delete. */
+export interface DismissFailedPreview {
+  /** Every failed job for the disc; they are dismissed together. */
+  job_ids: string[];
+  /** Ripped files and previews the delete option would remove. */
+  bytes: number;
+  /** A finished rip whose later stage failed: its files are the only copy. */
+  has_finished_rip: boolean;
+  /** Days before cleanup deletes a failed copy's files; 0 = never. */
+  retention_days: number;
+}
+
 export interface DiscMetadata {
   disc_id: string;
   disc_num?: string | null;
@@ -3252,8 +3277,14 @@ export class WorkflowService implements OnDestroy {
         // #845: the auto-rename also has to reach the ACTIVE workflow's label
         // form — the Disc step and workflow header render
         // labelForm.disc_name, which otherwise shows the stale pre-rename
-        // name until a hard refresh. The event carries the SAVED name, so
-        // clobbering an in-flight keystroke is not a concern here.
+        // name until a hard refresh.
+        //
+        // #915: but the event carries the SAVED name, which is not always
+        // what the user typed. Every autosave emits it, and an empty disc
+        // name is not stored (the old name stays), so clearing the field to
+        // retype it was refilled half a second later. A field the user is
+        // editing keeps their value; auto-renames still reach untouched ones.
+        this.syncDiscIdentityScope();
         const renameCtx = this._activeContext$.value as any;
         const renameCtxDiscId =
           renameCtx?.labelForm?.disc_id ?? renameCtx?.discInfo?.disc_id ?? null;
@@ -3265,6 +3296,7 @@ export class WorkflowService implements OnDestroy {
           const lf: any = { ...(renameCtx.labelForm ?? {}) };
           let lfTouched = false;
           for (const k of ['disc_name', 'disc_slug', 'disc_number'] as const) {
+            if (k !== 'disc_number' && this.discIdentityEdits.has(k)) continue;
             if (Object.prototype.hasOwnProperty.call(message, k) && message[k] != null && lf[k] !== message[k]) {
               lf[k] = message[k];
               lfTouched = true;
@@ -3321,6 +3353,10 @@ export class WorkflowService implements OnDestroy {
         }
         break;
         
+      case 'jobs_dismissed':
+        this.applyJobsDismissedLocally(Array.isArray(message.job_ids) ? message.job_ids : []);
+        break;
+
       case 'job_finished': {
         // Remove unfinished cards for the finished job, but keep in-drive cards.
         this.applyJobFinishedLocally(
@@ -3432,37 +3468,10 @@ export class WorkflowService implements OnDestroy {
                   this.updateContext(patch);
                 }
                 const merged = { ...activeContext, ...patch } as WorkflowContext;
-                const determinedStep = this.determineWorkflowStep(merged, {
-                  respectUserNavigation: true,
-                  considerJobStates: true,
-                  updateHighestStepVisited: true
-                });
-                const noAutoFilmToBoxset = determinedStep === 'boxset' && (activeContext.workflowStep === 'film' || merged.workflowStep === 'film');
-                const noAutoBoxsetOrDiscToTitles = determinedStep === 'titles' && (activeContext.workflowStep === 'boxset' || merged.workflowStep === 'boxset' || activeContext.workflowStep === 'disc' || merged.workflowStep === 'disc');
-                const willApply = determinedStep !== merged.workflowStep && !noAutoFilmToBoxset && !noAutoBoxsetOrDiscToTitles;
-                if (willApply) {
-                  this.updateContext({
-                    workflowStep: determinedStep,
-                    stepNavigationSource: 'automatic'
-                  });
-                }
+                this.applyAutomaticStep(merged, activeContext);
               } else {
                 this.applyFetchedContext(context);
-
-                const determinedStep = this.determineWorkflowStep(context, {
-                  respectUserNavigation: true,
-                  considerJobStates: true,
-                  updateHighestStepVisited: true
-                });
-                const noAutoFilmToBoxset = determinedStep === 'boxset' && (activeContext.workflowStep === 'film' || context.workflowStep === 'film');
-                const noAutoBoxsetOrDiscToTitles = determinedStep === 'titles' && (activeContext.workflowStep === 'boxset' || context.workflowStep === 'boxset' || activeContext.workflowStep === 'disc' || context.workflowStep === 'disc');
-                const willApply = determinedStep !== context.workflowStep && !noAutoFilmToBoxset && !noAutoBoxsetOrDiscToTitles;
-                if (willApply) {
-                  this.updateContext({
-                    workflowStep: determinedStep,
-                    stepNavigationSource: 'automatic'
-                  });
-                }
+                this.applyAutomaticStep(context, activeContext);
               }
             }
           }
@@ -3510,21 +3519,7 @@ export class WorkflowService implements OnDestroy {
 
             if (shouldUpdate) {
               this.applyFetchedContext(context);
-              
-              const determinedStep = this.determineWorkflowStep(context, {
-                respectUserNavigation: true,
-                considerJobStates: true,
-                updateHighestStepVisited: true
-              });
-              const noAutoFilmToBoxsetJob = determinedStep === 'boxset' && (activeContext.workflowStep === 'film' || context.workflowStep === 'film');
-              const noAutoBoxsetOrDiscToTitlesJob = determinedStep === 'titles' && (activeContext.workflowStep === 'boxset' || context.workflowStep === 'boxset' || activeContext.workflowStep === 'disc' || context.workflowStep === 'disc');
-              const willApplyJob = determinedStep !== context.workflowStep && !noAutoFilmToBoxsetJob && !noAutoBoxsetOrDiscToTitlesJob;
-              if (willApplyJob) {
-                this.updateContext({
-                  workflowStep: determinedStep,
-                  stepNavigationSource: 'automatic'
-                });
-              }
+              this.applyAutomaticStep(context, activeContext);
             }
           }
         },
@@ -3744,20 +3739,7 @@ export class WorkflowService implements OnDestroy {
         }
 
         this.applyFetchedContext(context);
-
-        const determinedStep = this.determineWorkflowStep(context, {
-          respectUserNavigation: true,
-          considerJobStates: true,
-          updateHighestStepVisited: true
-        });
-        const noAutoFilmToBoxsetProgress = determinedStep === 'boxset' && (currentActive.workflowStep === 'film' || context.workflowStep === 'film');
-        const noAutoBoxsetOrDiscToTitlesProgress = determinedStep === 'titles' && (currentActive.workflowStep === 'boxset' || context.workflowStep === 'boxset' || currentActive.workflowStep === 'disc' || context.workflowStep === 'disc');
-        if (determinedStep !== context.workflowStep && !noAutoFilmToBoxsetProgress && !noAutoBoxsetOrDiscToTitlesProgress) {
-          this.updateContext({
-            workflowStep: determinedStep,
-            stepNavigationSource: 'automatic'
-          });
-        }
+        this.applyAutomaticStep(context, currentActive);
 
         const hasFilesAfterRefresh = (context.postProcessFiles || []).length > 0;
         const refreshedPostState = context.jobStatus?.post_state || context.jobStatus?.pipeline?.['postprocess'];
@@ -3806,20 +3788,7 @@ export class WorkflowService implements OnDestroy {
           }
 
           this.applyFetchedContext(context);
-
-          const determinedStep = this.determineWorkflowStep(context, {
-            respectUserNavigation: true,
-            considerJobStates: true,
-            updateHighestStepVisited: true
-          });
-          const noAutoFilmToBoxsetRetry = determinedStep === 'boxset' && (currentActive.workflowStep === 'film' || context.workflowStep === 'film');
-          const noAutoBoxsetOrDiscToTitlesRetry = determinedStep === 'titles' && (currentActive.workflowStep === 'boxset' || context.workflowStep === 'boxset' || currentActive.workflowStep === 'disc' || context.workflowStep === 'disc');
-          if (determinedStep !== context.workflowStep && !noAutoFilmToBoxsetRetry && !noAutoBoxsetOrDiscToTitlesRetry) {
-            this.updateContext({
-              workflowStep: determinedStep,
-              stepNavigationSource: 'automatic'
-            });
-          }
+          this.applyAutomaticStep(context, currentActive);
 
           const hasFilesAfterRefresh = (context.postProcessFiles || []).length > 0;
           const refreshedPostState = context.jobStatus?.post_state || context.jobStatus?.pipeline?.['postprocess'];
@@ -4920,6 +4889,46 @@ export class WorkflowService implements OnDestroy {
     this.discIdentityEdits.add(field);
   }
 
+  /**
+   * #873: set a disc's number by hand. Taking another disc's number swaps the
+   * two (server-side). The active form picks up the new number and, with
+   * automatic naming on, the regenerated name; other cards update through
+   * disc_metadata_updated.
+   */
+  setDiscNumber(discId: string, discNumber: number): Observable<DiscNumberResult> {
+    return this.http
+      .put<DiscNumberResult>(`${this.apiUrl}/discs/${discId}/disc-number`, { disc_number: discNumber })
+      .pipe(tap(res => this.applyDiscNumberResult(res)));
+  }
+
+  /** #873: put the disc's release (or boxset) back in scan order. */
+  resetDiscNumbers(discId: string): Observable<DiscNumberResult> {
+    return this.http
+      .post<DiscNumberResult>(`${this.apiUrl}/discs/${discId}/disc-number/reset`, {})
+      .pipe(tap(res => this.applyDiscNumberResult(res)));
+  }
+
+  private applyDiscNumberResult(res: DiscNumberResult): void {
+    const ctx = this._activeContext$.value;
+    const lf: any = ctx?.labelForm;
+    if (!ctx || !lf || (lf.disc_id ?? ctx.discInfo?.disc_id) !== res.disc_id) return;
+    this.syncDiscIdentityScope();
+    const next: any = { ...lf, disc_number: res.disc_number };
+    // A field the user is editing keeps their value (#915).
+    if (!this.discIdentityEdits.has('disc_name')) next.disc_name = res.disc_name;
+    if (!this.discIdentityEdits.has('disc_slug')) next.disc_slug = res.disc_slug;
+    this.updateContext({
+      labelForm: next,
+      discInfo: ctx.discInfo ? { ...ctx.discInfo, disc_number: res.disc_number } : ctx.discInfo,
+    } as Partial<WorkflowContext>);
+  }
+
+  /** #915: automatic naming was switched back on; the server owns both fields again. */
+  clearDiscIdentityEdits(): void {
+    this.syncDiscIdentityScope();
+    this.discIdentityEdits.clear();
+  }
+
   /** Remove disc_name/disc_slug from an outgoing label payload unless the
    * user edited them this workflow — the backend treats their absence as
    * "no user opinion" and keeps/derives its own value. */
@@ -5150,6 +5159,53 @@ export class WorkflowService implements OnDestroy {
   }
   
   // ===== Orchestration Methods (from WorkflowOrchestrationService) =====
+
+  /**
+   * The step an automatic (server-driven) refresh should move to, or null to
+   * stay put. One rule for every refresh path (context_changed for disc and
+   * job, post-process progress, and its retry), which each carried their own
+   * copy of it.
+   *
+   * #914: the refreshes recomputed the step with the client heuristic
+   * (determineWorkflowStep) and applied any difference, so a refresh could
+   * move a job back to an earlier step than the one the server had recorded.
+   * Now an automatic move never goes below the job's persisted workflow_step
+   * and never backwards from where the view is. The exceptions: a failed job,
+   * which resets to the start on purpose, and a step the user navigated to
+   * themselves, which determineWorkflowStep already respects.
+   */
+  automaticStepFor(context: WorkflowContext, previous: WorkflowContext | null): WorkflowStep | null {
+    let target = this.determineWorkflowStep(context, {
+      respectUserNavigation: true,
+      considerJobStates: true,
+      updateHighestStepVisited: true
+    });
+    const current = context.workflowStep;
+    const before = previous?.workflowStep;
+    if (target === 'boxset' && (before === 'film' || current === 'film')) return null;
+    if (target === 'titles' && (before === 'boxset' || current === 'boxset' || before === 'disc' || current === 'disc')) {
+      return null;
+    }
+    const job = context.jobStatus;
+    const failed = job?.job_status === 'failed' || (job?.rip_state || job?.pipeline?.['rip']) === 'failed';
+    if (!failed && context.stepNavigationSource !== 'user') {
+      const order = getStepOrderForContext(context);
+      const at = (step: string | null | undefined) => (step ? order.indexOf(step as WorkflowStep) : -1);
+      const server = job?.workflow_step;
+      if (at(server) > at(target)) target = server as WorkflowStep;
+      const sameJob = !previous || previous.id === context.id;
+      if (sameJob && at(before) > at(target)) return null;
+      if (at(current) > at(target)) return null;
+    }
+    return target !== current ? target : null;
+  }
+
+  private applyAutomaticStep(context: WorkflowContext, previous: WorkflowContext | null): void {
+    const step = this.automaticStepFor(context, previous);
+    if (step) {
+      this.updateContext({ workflowStep: step, stepNavigationSource: 'automatic' });
+    }
+  }
 
   /**
    * Step used for Continue, advance POST, and furthest checks: prefer persisted job.workflow_step
@@ -6964,7 +7020,58 @@ export class WorkflowService implements OnDestroy {
    * this class of race stops needing timing windows to paper over it.
    */
   private applyFetchedContext(context: WorkflowContext): void {
-    this.updateContext(this.withReconciledTitles(context));
+    this.updateContext(
+      this.withReconciledTitles(this.withPreservedDiscIdentity(this.withPreservedStep(context)))
+    );
+  }
+
+  /**
+   * #915: the disc name and slug the user is editing survive a server refresh
+   * of the same job or drive, including an empty value. Clearing the field to
+   * retype it is an edit, but every fetched label form carries the saved name
+   * (aligned with disc_payload), and the empty value lost to it: the old text
+   * reappeared mid-edit. Only fields marked edited (#845) are kept, and only
+   * for the context on screen; switching cards clears the marks.
+   */
+  private withPreservedDiscIdentity(context: WorkflowContext): WorkflowContext {
+    const view = this._activeContext$.value;
+    if (!view || !context?.labelForm || !view.labelForm) return context;
+    if (view.type !== context.type || view.id !== context.id) return context;
+    this.syncDiscIdentityScope();
+    if (this.discIdentityEdits.size === 0) return context;
+    const labelForm: any = { ...context.labelForm };
+    let kept = false;
+    for (const field of this.discIdentityEdits) {
+      if (Object.prototype.hasOwnProperty.call(view.labelForm, field) &&
+          (view.labelForm as any)[field] !== labelForm[field]) {
+        labelForm[field] = (view.labelForm as any)[field];
+        kept = true;
+      }
+    }
+    return kept ? { ...context, labelForm } : context;
+  }
+
+  /**
+   * #914: a refresh of the job already on screen keeps the step the view is
+   * on when that step is later than the fetched one (a fetch served before a
+   * Continue's POST committed carries the old step) or when the user
+   * navigated there themselves. A failed job takes the fetched step: the
+   * reset to the start is deliberate. A different job, as on card select,
+   * always takes the server's step.
+   */
+  private withPreservedStep(context: WorkflowContext): WorkflowContext {
+    const view = this._activeContext$.value;
+    if (!view || !context || view.type !== context.type || view.id !== context.id) return context;
+    const job = context.jobStatus;
+    const failed = job?.job_status === 'failed' || (job?.rip_state || job?.pipeline?.['rip']) === 'failed';
+    if (failed || !view.workflowStep) return context;
+    const order = getStepOrderForContext(context);
+    if (!order.includes(view.workflowStep)) return context;
+    const ahead = order.indexOf(view.workflowStep) > order.indexOf(context.workflowStep as WorkflowStep);
+    if (view.stepNavigationSource === 'user' || ahead) {
+      return { ...context, workflowStep: view.workflowStep, stepNavigationSource: view.stepNavigationSource };
+    }
+    return context;
   }
 
   /**
@@ -7407,8 +7514,47 @@ export class WorkflowService implements OnDestroy {
     );
   }
 
-  // dismissJob removed — cards are managed by lifecycle:
-  // Unfinished: stays until Finish clicked; Failed: stays until disc re-ripped successfully
+  /** What dismissing a failed job would hide and could delete (#877). */
+  getDismissFailedPreview(jobId: string): Observable<DismissFailedPreview> {
+    return this.http.get<DismissFailedPreview>(`${this.apiUrl}/jobs/${jobId}/dismiss`);
+  }
+
+  /**
+   * Hide a failed job's card, optionally deleting its files (#877). The
+   * backend dismisses every failed job for the disc and emits jobs_dismissed;
+   * the card is removed here at click time too, the same as finishJob.
+   */
+  dismissFailedJob(jobId: string, deleteFiles: boolean): Observable<string[]> {
+    return this.http.post<{ job_ids: string[] }>(
+      `${this.apiUrl}/jobs/${jobId}/dismiss`,
+      { delete_files: deleteFiles }
+    ).pipe(
+      map(res => res.job_ids ?? [jobId]),
+      tap(jobIds => this.applyJobsDismissedLocally(jobIds))
+    );
+  }
+
+  /**
+   * Drop dismissed failed jobs: their unfinished cards go, and an in-drive
+   * card showing one of them goes back to a plain "Now Reading" card.
+   * Idempotent, so the jobs_dismissed WS replay is a no-op.
+   */
+  private applyJobsDismissedLocally(jobIds: string[]): void {
+    const dismissed = new Set(jobIds);
+    const discs = this._discs.value
+      .filter(d => !(d.disc_state === 'unfinished' && d.job_id && dismissed.has(d.job_id)))
+      .map(d =>
+        d.disc_state === 'in_drive' && d.job_id && dismissed.has(d.job_id)
+          ? { ...d, job_id: null, job_status: null }
+          : d
+      );
+    this._discs.next(discs);
+    this._unfinishedJobs.next(this._unfinishedJobs.value.filter(j => !dismissed.has(j.job_id)));
+    const active = this._activeContext$.value;
+    if (active && active.type === 'job' && dismissed.has(active.id)) {
+      this._activeContext$.next(null);
+    }
+  }
   
   /**
    * Navigate to next workflow step (Phase 1: Enhanced with progression tracking).

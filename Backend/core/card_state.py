@@ -219,7 +219,7 @@ def schedule_job_card_state_event(job: Any, *, db: Any = None) -> None:
 COORDINATOR_EVENTS_CHANNEL = "coordinator_events"
 
 
-def _publish_via_redis(payload: dict) -> None:
+def _publish_via_redis(payload: dict, event_type: str = "job_card_state") -> None:
     import json
     import os
 
@@ -230,4 +230,15 @@ def _publish_via_redis(payload: dict) -> None:
         url = url.rstrip("/") + "/2"
     client = redis.Redis.from_url(url, decode_responses=True)
     client.publish(COORDINATOR_EVENTS_CHANNEL,
-                   json.dumps({"type": "job_card_state", **payload}))
+                   json.dumps({"type": event_type, **payload}))
+
+
+def publish_coordinator_event(event_type: str, payload: dict) -> None:
+    """Send a coordinator event from a worker; the API fans it out to clients.
+
+    Best-effort: a client that misses it catches up on its next state fetch.
+    """
+    try:
+        _publish_via_redis(payload, event_type)
+    except Exception as exc:
+        logger.warning("coordinator event %s not published: %s", event_type, exc)

@@ -39,6 +39,7 @@ def run_preview_raw_titles_phase(
     (eligible for a follow-up detect_raw_titles task).
     """
     from api import models as db_models
+    from core.media_jobs import low_priority
     from workers.tasks import DATA_ROOT, _safe_track_folder, db_session, ffmpeg_semaphore
 
     eligible: list[str] = []
@@ -117,7 +118,7 @@ def run_preview_raw_titles_phase(
             ]
             try:
                 with ffmpeg_semaphore(max_parallel):
-                    subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                    subprocess.run(low_priority(cmd), capture_output=True, text=True, timeout=300)
             except (TimeoutError, subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
                 log.warning("preview_raw_titles: preview ffmpeg failed for %s: %s", title_id, e)
             prev_status = "completed" if (manifest.exists() if manifest else False) else "failed"

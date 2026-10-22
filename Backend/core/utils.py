@@ -595,6 +595,23 @@ class MakeMKVStallError(MakeMKVError):
     pass
 
 
+from core.rip_failure_analysis import DRIVE_HUNG_MARKER  # noqa: E402  (no core imports there)
+
+
+class MakeMKVDriveHungError(MakeMKVStallError):
+    """The stall watchdog killed makemkvcon and it still didn't exit (#909).
+
+    A thread blocked in the kernel on a read the drive never answers ignores
+    SIGKILL until the I/O completes; on a hung USB drive that is never, until
+    the drive is unplugged (prod, 2026-10-18: ``submit_bio_wait`` for 8.5 h,
+    the job stuck at "ripping" the whole time)."""
+    pass
+
+
+# How long a killed makemkvcon gets to exit before the rip stops waiting on it.
+STALL_KILL_GRACE_SECONDS = 30.0
+
+
 class MakeMKVNoDrivesError(MakeMKVError):
     """MakeMKV enumerated zero usable optical drives (#802).
 
@@ -788,27 +805,106 @@ def is_disc_read_error(message: str) -> bool:
     )
 
 
+def run_bounded(cmd: list[str], *, timeout: float, env: Optional[dict] = None,
+                 reap_grace: float = 5.0) -> subprocess.CompletedProcess:
+    """``subprocess.run(capture_output=True, text=True)`` that never blocks
+    past ``timeout + reap_grace``.
+
+    ``subprocess.run`` kills a child that times out and then waits for it with
+    no limit. A process touching a hung optical drive (``makemkvcon``,
+    ``eject``) can't exit until the drive answers. A ``makemkvcon`` blocked in the kernel on a hung drive cannot
+    exit until the drive answers (prod, 2026-10-18: a thread in
+    ``scsi_block_when_processing_errors`` for 8.5 h), so every timed-out call
+    leaked the caller's thread for good. Here a child that won't die is handed
+    to a daemon thread that reaps it whenever the drive comes back, and the
+    caller gets ``TimeoutExpired``.
+    """
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.communicate(timeout=reap_grace)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "%s (PID %s) did not exit after kill (blocked on a drive?); "
+                "leaving it to a background reaper", os.path.basename(cmd[0]), proc.pid,
+            )
+            threading.Thread(target=proc.wait, name=f"reap-{proc.pid}", daemon=True).start()
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+CDROMEJECT = 0x5309
+CDROM_LOCKDOOR = 0x5329
+EJECT_TIMEOUT_SECONDS = 30.0
+
+
+def _eject_ioctl(mount_point: str) -> None:
+    """Unlock the tray and eject through the kernel's cdrom API. Raises on failure."""
+    fd = os.open(mount_point, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        try:
+            fcntl.ioctl(fd, CDROM_LOCKDOOR, 0)
+        except OSError:
+            pass  # not every drive supports locking; the eject decides
+        fcntl.ioctl(fd, CDROMEJECT)
+    finally:
+        os.close(fd)
+
+
 def eject_disc(mount_point: str) -> bool:
     """
     Physically eject the disc at the given device path (e.g. /dev/sr0).
-    Returns True on success, False if the command fails or eject is not available.
-    Used by the eject_on_finish setting (#20).
+    Returns True on success, False otherwise. Never raises.
+
+    Ejects through the kernel's cdrom ioctl (#911): the container image has no
+    ``eject`` binary, so eject-after-copy, eject-on-finish and eject-on-restart
+    all logged "'eject' command not found" and did nothing (prod, 2026-10-19).
+    The binary is a fallback for hosts where the ioctl isn't available.
+
+    Bounded either way: on a hung drive the ioctl or the binary blocks in the
+    kernel, so the ioctl runs on a daemon thread the caller stops waiting for
+    after ``EJECT_TIMEOUT_SECONDS`` (#909).
     """
     import shutil
-    import subprocess
+
+    outcome: dict = {}
+
+    def _run() -> None:
+        try:
+            _eject_ioctl(mount_point)
+            outcome["ok"] = True
+        except Exception as exc:  # noqa: BLE001 - reported below
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_run, name=f"eject-{os.path.basename(mount_point)}", daemon=True)
+    worker.start()
+    worker.join(EJECT_TIMEOUT_SECONDS)
+    if worker.is_alive():
+        logger.warning(
+            "eject_disc: %s did not answer the eject within %.0fs (drive hung?)",
+            mount_point, EJECT_TIMEOUT_SECONDS,
+        )
+        return False
+    if outcome.get("ok"):
+        logger.info("eject_disc: ejected %s", mount_point)
+        return True
+
     eject_bin = shutil.which("eject")
     if not eject_bin:
-        logger.warning("eject_disc: 'eject' command not found; cannot eject %s", mount_point)
+        logger.warning("eject_disc: eject of %s failed: %s", mount_point, outcome.get("error"))
         return False
     try:
-        result = subprocess.run(
-            [eject_bin, mount_point],
-            capture_output=True, text=True, timeout=30,
-        )
+        result = run_bounded([eject_bin, mount_point], timeout=EJECT_TIMEOUT_SECONDS)
         if result.returncode == 0:
-            logger.info("eject_disc: ejected %s", mount_point)
+            logger.info("eject_disc: ejected %s (eject command)", mount_point)
             return True
-        logger.warning("eject_disc: eject %s failed (rc=%s): %s", mount_point, result.returncode, result.stderr.strip())
+        logger.warning(
+            "eject_disc: eject %s failed (ioctl: %s; command rc=%s: %s)",
+            mount_point, outcome.get("error"), result.returncode, result.stderr.strip(),
+        )
         return False
     except Exception as exc:
         logger.warning("eject_disc: failed to eject %s: %s", mount_point, exc)
@@ -1002,6 +1098,9 @@ def run_makemkv(
     last_line_lock = threading.Lock()
     last_line_at = [time.monotonic()]
 
+    # Lines from the stdout reader thread (#882); None ends the read loop.
+    line_queue: "queue.Queue[str | None]" = queue.Queue()
+
     def _bump_last_stdout_line() -> None:
         with last_line_lock:
             last_line_at[0] = time.monotonic()
@@ -1025,6 +1124,10 @@ def run_makemkv(
                 except ProcessLookupError:
                     pass
                 stall_fired.set()
+                # A killed makemkvcon with a thread stuck on the drive keeps
+                # its stdout open, so the reader never sees EOF and the loop
+                # below would wait on it forever (#909). End it from here.
+                line_queue.put(None)
                 return
 
     _bump_last_stdout_line()
@@ -1042,8 +1145,6 @@ def run_makemkv(
     # hours of stalls, and a 5 h backlog drained AFTER MakeMKV had exited).
     # The reader also owns the stall watchdog's heartbeat, so the watchdog
     # measures MakeMKV's real output, not how fast we process it.
-    line_queue: "queue.Queue[str | None]" = queue.Queue()
-
     def _drain_stdout() -> None:
         try:
             for raw_line in proc.stdout:
@@ -1146,7 +1247,24 @@ def run_makemkv(
                 _flush_pending_prgv()
     finally:
         stop_watchdog.set()
-        rc = proc.wait()
+        drive_hung = False
+        if stall_fired.is_set():
+            try:
+                rc = proc.wait(timeout=STALL_KILL_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                drive_hung = True
+                rc = None
+                logger.error(
+                    "makemkvcon PID %s did not exit %.0fs after SIGKILL: a read from the "
+                    "drive never returned, so the drive or its USB link has hung. "
+                    "Abandoning the process; it is reaped once the drive is reconnected.",
+                    makemkv_pid, STALL_KILL_GRACE_SECONDS,
+                )
+                threading.Thread(
+                    target=proc.wait, name=f"reap-makemkvcon-{makemkv_pid}", daemon=True
+                ).start()
+        else:
+            rc = proc.wait()
         reader.join(timeout=5)
         if pbar:
             pbar.close()
@@ -1155,6 +1273,11 @@ def run_makemkv(
         except Exception:
             pass
 
+    if drive_hung:
+        raise MakeMKVDriveHungError(
+            f"No output from MakeMKV for {stall_seconds}s, and it {DRIVE_HUNG_MARKER}: "
+            "a read from the drive never returned. The drive or its USB connection has hung."
+        )
     if stall_fired.is_set():
         raise MakeMKVStallError(
             f"No output from MakeMKV for {stall_seconds}s; rip aborted as stalled."
@@ -1750,12 +1873,20 @@ def hash_media_disc(mount_point: str, allow_reentrant: bool = False) -> str:
                             Path(tmp_dir).rmdir()
                         except Exception:
                             pass
-                        # try to reset the stuck device so subsequent attempts can succeed
+                        # Reset the stuck drive so the next attempt can succeed (#910).
                         try:
-                            _root_helper_reset_device(mount_point)
+                            was_reset = _root_helper_reset_device(mount_point)
                         except Exception:
-                            pass
-                        raise MakeMKVError(f"Drive is not responding (mount timed out after {MOUNT_TIMEOUT}s). Try power cycling the drive.") from None
+                            was_reset = False
+                        if was_reset:
+                            raise MakeMKVError(
+                                f"Drive is not responding (mount timed out after {MOUNT_TIMEOUT}s). "
+                                "It has been reset; try the disc again."
+                            ) from None
+                        raise MakeMKVError(
+                            f"Drive is not responding (mount timed out after {MOUNT_TIMEOUT}s) and could not be "
+                            "reset. Unplug the drive and plug it back in."
+                        ) from None
                     except subprocess.CalledProcessError as e:
                         logger.warning("Local mount failed with UDF for %s (exit=%s), trying auto-detect", mount_point, e.returncode)
                         # UDF failed, try with auto filesystem detection (DVD might be iso9660)
@@ -1906,11 +2037,15 @@ def _root_helper_unmount(mount_point: str) -> None:
     if resp and resp.get("status") != "ok":
         logger.debug("Root helper unmount error for %s: %s", mount_point, resp)
 
-def _root_helper_reset_device(device: str) -> None:
-    """Ask the root helper to delete/rescan a stuck block device."""
+def _root_helper_reset_device(device: str) -> bool:
+    """Ask the root helper to reset a hung drive (software unplug and
+    replug, #910). True when the drive came back."""
     resp = _root_helper_request({"cmd": "reset_device", "device": device})
-    if resp and resp.get("status") != "ok":
-        logger.debug("Root helper reset_device error for %s: %s", device, resp)
+    if resp and resp.get("status") == "ok":
+        logger.warning("Drive %s reset: %s", device, resp.get("message"))
+        return True
+    logger.warning("Drive %s reset failed: %s", device, (resp or {}).get("error") or resp)
+    return False
 
 
 def _root_helper_mount_smb(host: str, share: str, mount_point: str, port: int, username: str, password: str, domain: str) -> tuple[Optional[str], Optional[str]]:

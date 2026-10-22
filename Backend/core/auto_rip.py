@@ -7,6 +7,10 @@ Start Copy button uses — so MakeMKV validation, stale-job cleanup, the
 Path A modal gate, the gatekeeper's duplicate-start protection, and the
 disk-space preflight all apply unchanged.
 
+A disc that was ripped before (any job with a completed rip for the same
+content hash) is skipped with an action_required notification; the user
+starts the copy by hand to rip it again (#931). Failed rips don't count.
+
 Hit vs miss:
 - DiscDB hit: normal hit profile (rip → postprocess → transfer), job lands
   on the `summary` step.
@@ -43,6 +47,19 @@ def maybe_auto_start_rip(disc_info: dict) -> Optional[str]:
         # Unhashed discs get a temporary disc_id only (events.py temp-id
         # path); identity is too weak for unattended dispatch.
         logger.info("auto-rip: skipping unhashed disc at %s", mount_point)
+        return None
+
+    # #931: a disc that was ripped before is never re-ripped unattended.
+    # Reinserting a finished disc (to check something, or by mistake) used to
+    # start a full copy, because the gatekeeper only blocks on active jobs.
+    # Failed rips don't count, so reinserting still retries those.
+    previous = _previous_completed_rip(str(disc_hash))
+    if previous is not None:
+        logger.info(
+            "auto-rip: not dispatching for %s: disc already ripped by job %s",
+            mount_point, previous["job_id"],
+        )
+        _notify_already_ripped(disc_info, previous)
         return None
 
     from fastapi import HTTPException
@@ -86,6 +103,62 @@ def maybe_auto_start_rip(disc_info: dict) -> Optional[str]:
         return job_id
     finally:
         db.close()
+
+
+# Repeat notices for the same disc are suppressed this long, so a container
+# restart that rescans a loaded disc doesn't announce it again.
+ALREADY_RIPPED_NOTICE_TTL_SECONDS = 6 * 3600
+
+
+def _previous_completed_rip(disc_hash: str) -> Optional[dict]:
+    """The most recent job that finished ripping this disc, or None."""
+    from api import database, models
+
+    db = database.SessionLocal()
+    try:
+        job = (
+            db.query(models.Job)
+            .join(models.Disc, models.Job.disc_id == models.Disc.id)
+            .filter(models.Disc.content_hash == disc_hash, models.Job.rip_state == "completed")
+            .order_by(models.Job.created_at.desc())
+            .first()
+        )
+        if job is None:
+            return None
+        return {"job_id": str(job.id), "created_at": job.created_at}
+    except Exception as exc:
+        # Fail open: a lookup error must not block auto-rip for a new disc.
+        logger.warning("auto-rip: previous-rip lookup failed for %s: %s", disc_hash, exc)
+        return None
+    finally:
+        db.close()
+
+
+def _notify_already_ripped(disc_info: dict, previous: dict) -> None:
+    try:
+        from core.notifications import emit_notification_sync
+
+        name = (
+            disc_info.get("movie_name")
+            or disc_info.get("disc_name")
+            or disc_info.get("info_title")
+            or "This disc"
+        )
+        when = previous.get("created_at")
+        on = f" on {when:%b %-d}" if when is not None else ""
+        emit_notification_sync(
+            f"{name} was already ripped{on}, so auto-rip didn't start. "
+            "To rip it again, start the copy from the Ripper.",
+            "info",
+            "action_required",
+            action_type="open_ripper_drive",
+            action_payload={"mount_point": str(disc_info.get("mount_point") or "")},
+            id_key=f"auto-rip-already-ripped:{disc_info.get('disc_hash') or disc_info.get('content_hash') or ''}",
+            dedupe_ttl=ALREADY_RIPPED_NOTICE_TTL_SECONDS,
+            title="Disc already ripped",
+        )
+    except Exception as exc:
+        logger.warning("auto-rip: failed to emit already-ripped notification: %s", exc)
 
 
 def _report_skip(exc, disc_info: dict) -> None:

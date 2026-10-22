@@ -313,6 +313,35 @@ button.disc-card.loading,
   pointer-events: none;
 }
 
+/* Dismiss ✕ on failed cards (#877). Takes the top-right status slot, which
+   failed cards don't otherwise use. 32px hit target for touch. */
+.disc-card-dismiss {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.disc-card-dismiss:hover,
+.disc-card-dismiss:focus-visible {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+
 .disc-card-job-spinner {
   width: 16px;
   height: 16px;

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.media_jobs import run_media  # #929: shared pool, low priority
 from core.utils import is_dev_mode
 
 log = logging.getLogger(__name__)
@@ -106,7 +107,7 @@ def _get_file_metadata(file_path: Path) -> tuple[float | None, int | None]:
         str(file_path),
     ]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        out = run_media(cmd, capture_output=True, text=True, timeout=30)
         if out.returncode != 0:
             log.debug("ffprobe format failed for %s: %s", file_path, out.stderr)
             return None, None
@@ -117,7 +118,7 @@ def _get_file_metadata(file_path: Path) -> tuple[float | None, int | None]:
         duration = float(dur) if dur is not None else None
         size_int = int(size) if size is not None else None
         return duration, size_int
-    except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+    except (json.JSONDecodeError, subprocess.TimeoutExpired, TimeoutError, FileNotFoundError, OSError) as e:
         log.debug("ffprobe error for %s: %s", file_path, e)
         return None, None
 
@@ -197,7 +198,7 @@ def _detect_black_frames(file_path: Path, duration: float, sample_fracs: list[fl
             "-",
         ]
         try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            out = run_media(cmd, capture_output=True, text=True, timeout=60)
             # blackdetect prints to stderr: [blackdetect @ 0x...] black_start:0 black_end:2 black_duration:2
             err = (out.stderr or "") + (out.stdout or "")
             seg_black = 0.0
@@ -209,7 +210,7 @@ def _detect_black_frames(file_path: Path, duration: float, sample_fracs: list[fl
                     except (IndexError, ValueError):
                         pass
             black_totals.append(seg_black)
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        except (subprocess.TimeoutExpired, TimeoutError, FileNotFoundError, OSError) as e:
             log.debug("blackdetect error for %s at %.2f: %s", file_path, frac, e)
             black_totals.append(0.0)  # assume not black on error
 
@@ -240,7 +241,7 @@ def _detect_silence(file_path: Path, duration: float, sample_fracs: list[float])
             "-",
         ]
         try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            out = run_media(cmd, capture_output=True, text=True, timeout=60)
             err = (out.stderr or "") + (out.stdout or "")
             seg_silence = 0.0
             for line in err.splitlines():
@@ -251,7 +252,7 @@ def _detect_silence(file_path: Path, duration: float, sample_fracs: list[float])
                     except (IndexError, ValueError):
                         pass
             silence_totals.append(seg_silence)
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        except (subprocess.TimeoutExpired, TimeoutError, FileNotFoundError, OSError) as e:
             log.debug("silencedetect error for %s at %.2f: %s", file_path, frac, e)
             silence_totals.append(0.0)
 
@@ -274,7 +275,7 @@ def _detect_freeze(file_path: Path, duration: float) -> tuple[bool, float | None
         "-",
     ]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=min(120, int(duration) + 30))
+        out = run_media(cmd, capture_output=True, text=True, timeout=min(120, int(duration) + 30))
         err = (out.stderr or "") + (out.stdout or "")
         freeze_dur = 0.0
         for line in err.splitlines():
@@ -287,7 +288,7 @@ def _detect_freeze(file_path: Path, duration: float) -> tuple[bool, float | None
         # Flag if freeze spans a large fraction of duration
         detected = duration > 0 and (freeze_dur / duration) >= 0.5
         return detected, freeze_dur if freeze_dur > 0 else None
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+    except (subprocess.TimeoutExpired, TimeoutError, FileNotFoundError, OSError) as e:
         log.debug("freezedetect error for %s: %s", file_path, e)
         return False, None
 
@@ -308,7 +309,7 @@ def _calculate_signal_entropy(file_path: Path) -> float | None:
         "-",
     ]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        out = run_media(cmd, capture_output=True, text=True, timeout=30)
         err = (out.stderr or "") + (out.stdout or "")
         # signalstats prints YAVG, etc. We look for very low variance / flat Y.
         # Heuristic: if we see many repeated YAVG values, entropy is low.
@@ -326,7 +327,7 @@ def _calculate_signal_entropy(file_path: Path) -> float | None:
         var = sum((x - avg) ** 2 for x in values) / len(values)
         # Normalize to 0–1; 0 = no variance (suspicious), 1 = high variance (normal)
         return min(1.0, max(0.0, var / 100.0)) if var else 0.0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+    except (subprocess.TimeoutExpired, TimeoutError, FileNotFoundError, OSError) as e:
         log.debug("signalstats error for %s: %s", file_path, e)
         return None
 

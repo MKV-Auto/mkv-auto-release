@@ -462,8 +462,27 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
    * change-detection churn it can be a stale detached copy), then enqueue the
    * debounced save.
    */
-  onLabelChange(evt?: { field: 'disc_slug' | 'disc_format'; value: string }): void {
+  onLabelChange(
+    evt?: { field: 'disc_slug' | 'disc_format'; value: string } | { field: 'auto_naming'; value: boolean },
+  ): void {
     const currentContext = this.workflowService.getCurrentContext();
+    if (evt?.field === 'auto_naming') {
+      // #915: off → the name and slug are the user's from now on, so saves
+      // carry them and refreshes leave them alone; on → hand both back to the
+      // server, which renders the convention name on the next save.
+      if (evt.value) {
+        this.workflowService.clearDiscIdentityEdits();
+      } else {
+        this.workflowService.markDiscIdentityEdited('disc_name');
+        this.workflowService.markDiscIdentityEdited('disc_slug');
+      }
+    }
+    if (evt?.field === 'disc_slug') {
+      // #915: the slug input reports here, not through onSlugEdited, so a
+      // typed slug was never marked as the user's (#845). Saves stripped it
+      // and every autosave echo put the server's slug back.
+      this.workflowService.markDiscIdentityEdited('disc_slug');
+    }
     if (currentContext && evt && typeof evt === 'object' && 'field' in evt) {
       this.workflowService.updateContext({
         labelForm: { ...(currentContext.labelForm || {}), [evt.field]: evt.value },
@@ -813,6 +832,35 @@ export class WorkflowLabelingComponent implements OnInit, OnDestroy {
         : { ...currentContext.labelForm },
     });
     this.queueLabelSave();
+  }
+
+  /** #873: the user set this disc's number by hand. */
+  onDiscNumberChange(discNumber: number): void {
+    const ctx = this.workflowService.getCurrentContext();
+    const discId = ctx?.labelForm?.disc_id ?? ctx?.discInfo?.disc_id;
+    if (!discId) return;
+    this.workflowService.setDiscNumber(discId, discNumber).subscribe({
+      next: res => {
+        const swapped = res.swapped_with;
+        if (res.message) {
+          this.toastService.show(res.message, 'warning', 8000);
+        } else if (swapped) {
+          this.toastService.show(`Swapped numbers with ${swapped.disc_name || 'another disc'}.`, 'info');
+        }
+      },
+      error: err => this.toastService.show(formatHttpErrorDetail(err) || 'Could not change the disc number.', 'error'),
+    });
+  }
+
+  /** #873: put this release's discs back in scan order. */
+  onResetDiscNumbers(): void {
+    const ctx = this.workflowService.getCurrentContext();
+    const discId = ctx?.labelForm?.disc_id ?? ctx?.discInfo?.disc_id;
+    if (!discId) return;
+    this.workflowService.resetDiscNumbers(discId).subscribe({
+      next: () => this.toastService.show('Disc numbers are back in scan order.', 'success'),
+      error: err => this.toastService.show(formatHttpErrorDetail(err) || 'Could not reset disc numbers.', 'error'),
+    });
   }
 
   onNameBlur(): void {

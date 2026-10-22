@@ -68,6 +68,7 @@ from core.transfer.protocols import rsync as rsync_transfer
 from core import preview_config
 from core import discord_config
 from core import settings
+from core.job_cleanup import failed_rip_retention_days
 from core.transfer import service as transfer_service
 from core.utils import notify_discord
 from core.transfer.utils import history as transfer_history
@@ -1259,22 +1260,27 @@ async def dismiss_support_prompt(
 
 @router.get("/discdb-lookup/config", response_model=DiscDbLookupSettings)
 async def get_discdb_lookup_config() -> DiscDbLookupSettings:
-    """Copy settings: DiscDB prefill toggle + eject on finish."""
+    """Copy settings: DiscDB prefill toggle, eject after copy, failed-copy retention."""
     s = settings.load_settings()
     return DiscDbLookupSettings(
         discdb_miss_workflow_with_prefill=settings.get_discdb_miss_workflow_with_prefill(),
-        eject_on_finish=bool(s.get("eject_on_finish", False)),
+        eject_after_copy=bool(s.get("eject_after_copy", False)),
+        failed_rip_retention_days=failed_rip_retention_days(),
     )
 
 
 @router.post("/discdb-lookup/config", response_model=DiscDbLookupSettings)
 async def save_discdb_lookup_config(payload: DiscDbLookupSettings) -> DiscDbLookupSettings:
     settings.set_discdb_miss_workflow_with_prefill(payload.discdb_miss_workflow_with_prefill)
-    settings.save_settings({"eject_on_finish": payload.eject_on_finish})
+    settings.save_settings({
+        "eject_after_copy": payload.eject_after_copy,
+        "failed_rip_retention_days": payload.failed_rip_retention_days,
+    })
     s = settings.load_settings()
     return DiscDbLookupSettings(
         discdb_miss_workflow_with_prefill=settings.get_discdb_miss_workflow_with_prefill(),
-        eject_on_finish=bool(s.get("eject_on_finish", False)),
+        eject_after_copy=bool(s.get("eject_after_copy", False)),
+        failed_rip_retention_days=failed_rip_retention_days(),
     )
 
 

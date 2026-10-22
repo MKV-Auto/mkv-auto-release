@@ -51,6 +51,9 @@ describe('WorkflowLabelingComponent', () => {
       // #845 — disc-identity dirty tracking.
       'markDiscIdentityEdited',
       'stripUneditedDiscIdentity',
+      'clearDiscIdentityEdits',
+      'setDiscNumber',
+      'resetDiscNumbers',
     ]);
     // Pass-through: the service-level strip behavior has its own specs.
     workflowSpy.stripUneditedDiscIdentity.and.callFake((p: any) => p);
@@ -541,6 +544,42 @@ describe('WorkflowLabelingComponent', () => {
       expect(store.context.labelForm.disc_name).toBe('Predator');
       // #845 — a typed name is flagged as user-owned so saves may carry it.
       expect(workflowSvc.markDiscIdentityEdited).toHaveBeenCalledWith('disc_name');
+    });
+
+    it('#915: a typed slug is flagged as user-owned, so saves carry it and echoes keep it', () => {
+      seed({ disc_slug: 'auto-slug' });
+      component.onLabelChange({ field: 'disc_slug', value: '' });
+      expect(workflowSvc.markDiscIdentityEdited).toHaveBeenCalledWith('disc_slug');
+      expect(store.context.labelForm.disc_slug).toBe('');
+    });
+
+    it('#915: turning automatic naming off claims both fields; on hands them back', () => {
+      seed({ disc_name: 'Thor - DVD', disc_slug: 'thor_-_dvd' });
+      component.onLabelChange({ field: 'auto_naming', value: false });
+      expect(workflowSvc.markDiscIdentityEdited).toHaveBeenCalledWith('disc_name');
+      expect(workflowSvc.markDiscIdentityEdited).toHaveBeenCalledWith('disc_slug');
+      expect(store.context.labelForm.auto_naming).toBeFalse();
+      component.onLabelChange({ field: 'auto_naming', value: true });
+      expect(workflowSvc.clearDiscIdentityEdits).toHaveBeenCalled();
+      expect(store.context.labelForm.auto_naming).toBeTrue();
+    });
+
+    it('#873: changing the disc number warns when a moved disc was already transferred', () => {
+      seed({ disc_id: 'd1', disc_number: 3 });
+      const toast = TestBed.inject(ToastService) as jasmine.SpyObj<ToastService>;
+      workflowSvc.setDiscNumber.and.returnValue(of({
+        disc_id: 'd1', disc_number: 1, disc_name: 'x', disc_slug: 'x', changed: [],
+        transferred: true, message: 'Files already in your library keep their current names.',
+      } as any));
+      component.onDiscNumberChange(1);
+      expect(workflowSvc.setDiscNumber).toHaveBeenCalledWith('d1', 1);
+      expect(toast.show).toHaveBeenCalledWith(jasmine.stringMatching('keep their current names'), 'warning', 8000);
+    });
+
+    it('changing the disc format does not claim the slug', () => {
+      seed();
+      component.onLabelChange({ field: 'disc_format', value: 'DVD' });
+      expect(workflowSvc.markDiscIdentityEdited).not.toHaveBeenCalledWith('disc_slug');
     });
 
     it('per-keystroke edits collapse into one trailing save with the final value', fakeAsync(() => {

@@ -799,7 +799,7 @@ const DV7_SCAN_GRACE_POLLS = 6;
             <div class="settings-section-body">
               <ui-section-header
                 title="Disc handling"
-                subtitle="Online lookups, prefill behavior, and eject-on-finish.">
+                subtitle="Online lookups, prefill behavior, ejecting, and cleanup of failed copies.">
                 <ui-icon uiSecIcon name="disc" [size]="14"></ui-icon>
               </ui-section-header>
 
@@ -828,21 +828,35 @@ const DV7_SCAN_GRACE_POLLS = 6;
               </ui-field>
 
               <ui-field
-                label="Eject disc on finish"
-                hint="When on, the tray ejects after the job finish. Requires the eject command in the container."
+                label="Eject disc when the copy finishes"
+                hint="When on, the tray ejects as soon as the copy is done and checked, so the drive is free for the next disc while you label. A failed copy keeps the disc in for a retry."
                 [inline]="true">
                 <button
                   uiFieldInline
                   type="button"
                   class="settings-toggle"
-                  [class.is-on]="discDbLookup.eject_on_finish"
-                  [attr.aria-pressed]="discDbLookup.eject_on_finish ? 'true' : 'false'"
-                  [disabled]="isEnvManaged('eject_on_finish')"
-                  [title]="isEnvManaged('eject_on_finish') ? envManagedHint : null"
-                  (click)="discDbLookup.eject_on_finish = !discDbLookup.eject_on_finish">
+                  [class.is-on]="discDbLookup.eject_after_copy"
+                  [attr.aria-pressed]="discDbLookup.eject_after_copy ? 'true' : 'false'"
+                  [disabled]="isEnvManaged('eject_after_copy')"
+                  [title]="isEnvManaged('eject_after_copy') ? envManagedHint : null"
+                  (click)="discDbLookup.eject_after_copy = !discDbLookup.eject_after_copy">
                   <span class="settings-toggle__knob" aria-hidden="true"></span>
                 </button>
-                <div class="settings-env-note" *ngIf="isEnvManaged('eject_on_finish')">
+                <div class="settings-env-note" *ngIf="isEnvManaged('eject_after_copy')">
+                  <ui-icon name="info" [size]="13"></ui-icon>
+                  <span>{{ envManagedHint }}</span>
+                </div>
+              </ui-field>
+
+              <ui-field
+                label="Delete files from failed copies after (days)"
+                hint="A copy that fails partway leaves its files behind, and a retry copies the disc again. They're deleted this many days after the copy started, or sooner when you dismiss the failed card. A rip that finished before its job failed is never deleted automatically. 0 keeps them until you dismiss the card.">
+                <input class="settings-input" type="number" min="0" max="3650" step="1"
+                       data-testid="failed-rip-retention-days"
+                       [(ngModel)]="discDbLookup.failed_rip_retention_days"
+                       [disabled]="isEnvManaged('failed_rip_retention_days')"
+                       [title]="isEnvManaged('failed_rip_retention_days') ? envManagedHint : null">
+                <div class="settings-env-note" *ngIf="isEnvManaged('failed_rip_retention_days')">
                   <ui-icon name="info" [size]="13"></ui-icon>
                   <span>{{ envManagedHint }}</span>
                 </div>
@@ -2285,7 +2299,11 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
   mediaServerSaved: string | null = null;
   librarySaving = false;
 
-  discDbLookup: DiscDbLookupConfig = { discdb_miss_workflow_with_prefill: true, eject_on_finish: false };
+  discDbLookup: DiscDbLookupConfig = {
+    discdb_miss_workflow_with_prefill: true,
+    eject_after_copy: false,
+    failed_rip_retention_days: 7,
+  };
   discDbLookupError: string | null = null;
   discDbLookupSaved: string | null = null;
   discDbLookupSaving = false;
@@ -3046,6 +3064,11 @@ export class SettingsPageComponent implements OnInit, OnDestroy {
     this.discDbLookupError = null;
     this.discDbLookupSaved = null;
     this.discDbLookupSaving = true;
+    // An emptied number field reads as null; fall back to the default.
+    const days = Number(this.discDbLookup.failed_rip_retention_days);
+    this.discDbLookup.failed_rip_retention_days = Number.isFinite(days) && this.discDbLookup.failed_rip_retention_days !== null
+      ? Math.min(3650, Math.max(0, Math.round(days)))
+      : 7;
     this.systemSvc.saveDiscdbLookupConfig(this.discDbLookup).subscribe({
       next: cfg => {
         this.discDbLookup = { ...cfg };

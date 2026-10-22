@@ -1,0 +1,164 @@
+// Dismiss failed job (#877). Shell matches the Library reattach modal so
+// the dialogs share one visual language.
+
+.dfj-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: grid;
+  place-items: center;
+  z-index: 2000;
+  padding: 1rem;
+  animation: dfj-fade 0.18s ease-out;
+}
+
+@keyframes dfj-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.dfj-modal {
+  width: 100%;
+  max-width: 30rem;
+}
+
+.dfj-modal ::ng-deep .ui-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.dfj-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dfj-title {
+  margin: 0;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dfj-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.5rem;
+  background: rgba(239, 68, 68, 0.14);
+  color: #fca5a5;
+}
+
+.dfj-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.5rem;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  padding: 0;
+}
+
+.dfj-close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dfj-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding: 1.25rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.dfj-body p {
+  margin: 0;
+}
+
+.dfj-lead strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.dfj-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.dfj-files {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dfj-files-label {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.dfj-files-size {
+  color: #fff;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.dfj-hint {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.dfj-warning,
+.dfj-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+}
+
+.dfj-warning {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #fcd34d;
+}
+
+.dfj-error {
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  color: #fca5a5;
+}
+
+.dfj-warning ui-icon,
+.dfj-error ui-icon {
+  flex-shrink: 0;
+  margin-top: 0.125rem;
+}
+
+.dfj-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}

@@ -1291,6 +1291,43 @@ button.boxset-step-toggle.boxset-step-toggle-boxset-active {
   }
 }
 
+.disc-step-input[readonly] {
+  // #915: automatic naming owns the value. Muted, not editable-looking.
+  // (Opacity, not colors: the global input rule outranks class selectors.)
+  opacity: 0.6;
+  cursor: default;
+}
+
+.disc-step-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.disc-step-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.disc-step-auto-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.disc-step-number-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+// The global input rule sets width: 100%; size the wrapper instead.
+.disc-step-number-wrap {
+  width: 7rem;
+  flex: none;
+}
+
 .disc-step-input-error {
   box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.3);
 }

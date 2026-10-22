@@ -184,5 +184,45 @@ describe('BoxsetSelectorComponent', () => {
     expect(component['destroy$'].next).toHaveBeenCalled();
     expect(component['destroy$'].complete).toHaveBeenCalled();
   });
-});
 
+  // #936: the box set selector had no gesture or refocus guard at all.
+  describe('#936: dismiss rules', () => {
+    const outside = () => document.body;
+    const c = () => component as any;
+    beforeEach(() => {
+      c().isOpen = true;
+      c().windowFocusedAt = 0;
+    });
+
+    it('a genuine outside gesture closes the list', () => {
+      c().onDocumentMouseDown({ target: outside() });
+      c().onDocumentClick({ target: outside() });
+      expect(c().isOpen).toBeFalse();
+    });
+
+    it('a click with no in-page mousedown does not close it', () => {
+      c().onDocumentClick({ target: outside() });
+      expect(c().isOpen).toBeTrue();
+    });
+
+    it('an open create form never closes on an outside click', () => {
+      c().showCreateForm = true;
+      c().onDocumentMouseDown({ target: outside() });
+      c().onDocumentClick({ target: outside() });
+      expect(c().isOpen).toBeTrue();
+    });
+
+    it('the click that returns to the window is ignored', () => {
+      c().onWindowFocus();
+      c().onDocumentMouseDown({ target: outside() });
+      c().onDocumentClick({ target: outside() });
+      expect(c().isOpen).toBeTrue();
+    });
+
+    it('Escape closes the panel', () => {
+      c().showCreateForm = true;
+      c().onEscape();
+      expect(c().isOpen).toBeFalse();
+    });
+  });
+});

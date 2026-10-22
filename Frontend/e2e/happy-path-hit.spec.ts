@@ -29,7 +29,7 @@ async function setPrefillToggle(
   enabled: boolean,
 ): Promise<void> {
   const res = await req.post(`${apiBase}/system/discdb-lookup/config`, {
-    data: { discdb_miss_workflow_with_prefill: enabled, eject_on_finish: false },
+    data: { discdb_miss_workflow_with_prefill: enabled, eject_after_copy: false },
     headers: { 'Content-Type': 'application/json' },
   });
   if (!res.ok()) {

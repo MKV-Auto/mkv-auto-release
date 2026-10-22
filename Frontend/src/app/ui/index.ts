@@ -18,3 +18,4 @@ export * from './kbd';
 export * from './drive-card';
 export * from './library-card';
 export * from './checkbox';
+export * from './switch';

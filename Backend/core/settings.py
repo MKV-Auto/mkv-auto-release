@@ -28,8 +28,13 @@ _KNOWN_TOP_LEVEL = frozenset({
     "discdb_miss_workflow_with_prefill",
     "makemkv_registration_key", "discord", "dev", "media_server",
     "first_time_setup_complete", "setup_step",
-    "eject_on_finish",
+    # Eject once the copy has finished and verified (#911), so the drive is
+    # free for the next disc without waiting for labeling and transfer.
+    "eject_after_copy",
     "eject_on_restart",
+    # Days a failed copy's files are kept before cleanup deletes them (#877).
+    # 0 keeps them until the user dismisses the job.
+    "failed_rip_retention_days",
     "path_template_movie",
     "path_template_series",
     # Auto-rip toggle (#331). When enabled and a disc finishes scanning,
@@ -69,7 +74,8 @@ def _default_settings() -> dict:
     cpu_count = os.cpu_count() or 1
     return {
         "preview_duration_seconds": 120,
-        "preview_max_parallel": max(1, cpu_count),
+        # One core stays free for the API, database and rips (#929).
+        "preview_max_parallel": max(1, cpu_count - 1),
         "disable_ffmpeg_junk_detection": False,
         "disable_ffprobe_metadata_scan": False,
         # #615: prefill is the useful path — when DiscDB returns a miss, use
@@ -95,8 +101,9 @@ def _default_settings() -> dict:
             "convert_new_rips": False,
             "last_scan": None,
         },
-        "eject_on_finish": False,
+        "eject_after_copy": False,
         "eject_on_restart": False,
+        "failed_rip_retention_days": 7,
         "path_template_movie": None,   # Custom path template for movies (#131), e.g. "{type_dir}/{movie} ({year})/{title}.{resolution}.mkv"
         "path_template_series": None,   # Custom path template for series (#131)
         "first_time_setup_complete": False,

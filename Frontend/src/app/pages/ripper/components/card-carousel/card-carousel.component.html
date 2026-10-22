@@ -47,6 +47,17 @@
           aria-label="Rip completed for this disc">
           <ui-icon name="check-circle" [size]="20"></ui-icon>
         </div>
+        <!-- Dismiss (#877) — failed cards only; asks what to do with the files -->
+        <button
+          type="button"
+          class="disc-card-dismiss"
+          *ngIf="isDriveCardJobFailed(card.data) && !isCardLoading(card, state.driveScanState, state.driveLoadingStates)"
+          data-testid="dismiss-failed"
+          aria-label="Dismiss failed job"
+          title="Dismiss"
+          (click)="$event.stopPropagation(); openDismiss(card)">
+          <ui-icon name="close" [size]="14"></ui-icon>
+        </button>
         <!-- Drive scanning spinner (top-right) — matches the prototype + job-card pattern -->
         <div
           class="disc-card-drive-spinner-wrap"
@@ -126,6 +137,17 @@
 
       <!-- Job Card: template structure = header (eyebrow + title + meta) + footer (Unfinished pill | date) -->
       <ng-container *ngIf="card.type === 'job'">
+        <!-- Dismiss (#877) — failed cards only; asks what to do with the files -->
+        <button
+          type="button"
+          class="disc-card-dismiss"
+          *ngIf="isJobCardFailed(card.data)"
+          data-testid="dismiss-failed"
+          aria-label="Dismiss failed job"
+          title="Dismiss"
+          (click)="$event.stopPropagation(); openDismiss(card)">
+          <ui-icon name="close" [size]="14"></ui-icon>
+        </button>
         <div class="disc-card-job-spinner-wrap" *ngIf="isJobCardProcessing(card, state.jobIdsProcessing)" aria-hidden="true">
           <span class="disc-card-job-spinner inline-flex"><ui-icon name="spinner" [size]="16"></ui-icon></span>
         </div>
@@ -170,3 +192,9 @@
   </div>
   </ng-container>
 </ng-container>
+
+<app-dismiss-failed-job-modal
+  *ngIf="dismissTarget"
+  [jobId]="dismissTarget.jobId"
+  [title]="dismissTarget.title"
+  (closed)="onDismissClosed($event)"></app-dismiss-failed-job-modal>

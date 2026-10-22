@@ -30,7 +30,7 @@ from pathlib import Path as _Path
 
 import threading
 
-from core.utils import get_makemkvcon_path, get_mkvauto_tmp, hash_file
+from core.utils import get_makemkvcon_path, get_mkvauto_tmp, hash_file, run_bounded
 
 FFMPEG_URL_TEMPLATE = "https://ffmpeg.org/releases/ffmpeg-{version}.tar.xz"
 
@@ -1116,40 +1116,90 @@ def _read_settings_key() -> Optional[str]:
     return None
 
 
+# Shared with eject (#911); kept under this name for callers and tests.
+_run_bounded = run_bounded
+
+
+# Every makemkvcon run opens every optical drive at startup, whatever source it
+# is given, once a key is registered (unregistered builds stop at MSG:5021
+# first; `--noscan` and `file:` sources were both tested against a hung drive
+# on prod and still blocked on it). So the registration probe touches the
+# drive: it spun up idle discs on page load, sent commands to drives mid-rip,
+# and on a hung drive left a stuck process behind per request (#908).
+# Rules: page loads never wait on it, it never runs while a drive is busy,
+# and a failure backs off instead of retrying on the next request.
 _reg_status_cache_lock = threading.Lock()
-_reg_status_cache: dict = {"expired": None, "message": None, "key": None, "ts": 0.0}
-_REG_STATUS_CACHE_TTL = 300  # 5 minutes
+# ``ts`` / ``failed_ts`` are monotonic times or None ("no result" / "no failure").
+# Not 0.0: monotonic time is seconds since boot, so a sentinel compared with
+# "> 0" misreads timestamps on a freshly booted machine.
+_reg_status_cache: dict = {"expired": None, "message": None, "key": None, "ts": None, "failed_ts": None}
+_REG_STATUS_CACHE_TTL = float(os.environ.get("MKVAUTO_MAKEMKV_REGISTRATION_TTL_SECONDS", 6 * 3600))
+_REG_PROBE_FAILURE_BACKOFF = 30 * 60
+_REG_PROBE_TIMEOUT = 30
+_reg_refresh_inflight = threading.Event()
+_PROC_ROOT = "/proc"
 
 
-def get_registration_status(force_refresh: bool = False) -> tuple[bool, Optional[str], Optional[str]]:
-    """
-    Return (expired, message, current_key). If makemkvcon output contains the expired string, expired=True.
-    Cached for 5 minutes to avoid running makemkvcon on every health check.
-    """
-    import time as _time
-    now = _time.monotonic()
-    if not force_refresh:
-        with _reg_status_cache_lock:
-            if _reg_status_cache["ts"] > 0 and (now - _reg_status_cache["ts"]) < _REG_STATUS_CACHE_TTL:
-                return _reg_status_cache["expired"], _reg_status_cache["message"], _reg_status_cache["key"]
+def _live_makemkvcon_running() -> bool:
+    """True when any makemkvcon process is alive (rip, scan, another probe).
+    A zombie whose threads have all exited doesn't count; one still blocked
+    in the kernel does, since its drive is not free."""
+    try:
+        pids = [p for p in os.listdir(_PROC_ROOT) if p.isdigit()]
+    except OSError:
+        return False
+    for pid in pids:
+        try:
+            with open(f"{_PROC_ROOT}/{pid}/comm", "rb") as fh:
+                if not fh.read().startswith(b"makemkvcon"):
+                    continue
+            for tid in os.listdir(f"{_PROC_ROOT}/{pid}/task"):
+                with open(f"{_PROC_ROOT}/{pid}/task/{tid}/stat", "rb") as fh:
+                    state = fh.read().rsplit(b")", 1)[-1].split()[0]
+                if state != b"Z":
+                    return True
+        except (OSError, IndexError):
+            continue
+    return False
+
+
+def _drives_busy() -> Optional[str]:
+    """Why a drive-touching MakeMKV run must wait, or None when the drives are free."""
+    if _live_makemkvcon_running():
+        return "makemkvcon is running"
+    try:
+        import glob as _glob
+        from core.disc_locks import get_active_operations
+
+        for dev in sorted(_glob.glob("/dev/sr*")):
+            ops = get_active_operations(dev, mount_point=dev)
+            if ops:
+                return f"{dev} is busy ({', '.join(ops)})"
+    except Exception as exc:
+        log.debug("registration probe: disc lock check failed: %s", exc)
+    return None
+
+
+def _probe_registration() -> Optional[tuple[bool, Optional[str], Optional[str]]]:
+    """Run the probe and cache it. None when it couldn't run or timed out."""
+    now = time.monotonic()
     try:
         binary_path = get_makemkvcon_path()
-        # "-r info disc:9999" exits right after the startup MSG stream (no
-        # disc/drive needed) — the same invocation the key probe uses. A bare
+        # "-r info disc:9999" exits right after the startup MSG stream. A bare
         # makemkvcon run just prints usage text, which can never contain the
         # registration/expiry messages this function greps for, so the old
         # probe reported "not expired" unconditionally (prod, 2026-09-03).
-        result = subprocess.run(
-            [binary_path, "-r", "info", "disc:9999"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
+        result = _run_bounded([binary_path, "-r", "info", "disc:9999"], timeout=_REG_PROBE_TIMEOUT)
     except FileNotFoundError:
         return False, "MakeMKV not found", _read_settings_key()
     except subprocess.TimeoutExpired:
-        return False, "MakeMKV timed out", _read_settings_key()
+        log.warning(
+            "MakeMKV registration probe timed out after %ss (a drive may be hung); "
+            "not retrying for %ss", _REG_PROBE_TIMEOUT, _REG_PROBE_FAILURE_BACKOFF,
+        )
+        with _reg_status_cache_lock:
+            _reg_status_cache["failed_ts"] = now
+        return None
 
     output = (result.stdout or "") + "\n" + (result.stderr or "")
     expired_strings = [
@@ -1163,7 +1213,67 @@ def get_registration_status(force_refresh: bool = False) -> tuple[bool, Optional
         _reg_status_cache["message"] = output.strip() or None
         _reg_status_cache["key"] = key
         _reg_status_cache["ts"] = now
+        _reg_status_cache["failed_ts"] = None
     return expired, output.strip() or None, key
+
+
+def _refresh_registration_in_background() -> None:
+    if _reg_refresh_inflight.is_set():
+        return
+    _reg_refresh_inflight.set()
+
+    def _run() -> None:
+        try:
+            if _drives_busy() is None:
+                _probe_registration()
+        except Exception as exc:
+            log.debug("background registration probe failed: %s", exc)
+        finally:
+            _reg_refresh_inflight.clear()
+
+    threading.Thread(target=_run, name="makemkv-registration-probe", daemon=True).start()
+
+
+def get_registration_status(force_refresh: bool = False) -> tuple[bool, Optional[str], Optional[str]]:
+    """
+    Return (expired, message, current_key). If makemkvcon output contains the expired string, expired=True.
+
+    A fresh result (``MKVAUTO_MAKEMKV_REGISTRATION_TTL_SECONDS``, default 6 h)
+    is served as is. A stale one is served immediately while one background
+    probe refreshes it. The caller waits on a probe only when there is no
+    result at all (first call, or after a key change cleared the cache) or on
+    ``force_refresh``. No probe runs while a drive is busy or within 30 min of
+    a timed-out one; the last known result is served instead, or "not
+    expired" with no message if there is none yet (#908).
+    """
+    now = time.monotonic()
+    with _reg_status_cache_lock:
+        have = _reg_status_cache["ts"] is not None
+        fresh = have and (now - _reg_status_cache["ts"]) < _REG_STATUS_CACHE_TTL
+        backing_off = (
+            _reg_status_cache["failed_ts"] is not None
+            and (now - _reg_status_cache["failed_ts"]) < _REG_PROBE_FAILURE_BACKOFF
+        )
+        cached = (_reg_status_cache["expired"], _reg_status_cache["message"], _reg_status_cache["key"])
+
+    def _fallback() -> tuple[bool, Optional[str], Optional[str]]:
+        if have:
+            return cached
+        return False, None, _read_settings_key()
+
+    if fresh and not force_refresh:
+        return cached
+    if backing_off:
+        return _fallback()
+    busy = _drives_busy()
+    if busy:
+        log.debug("MakeMKV registration probe deferred: %s", busy)
+        return _fallback()
+    if have and not force_refresh:
+        _refresh_registration_in_background()
+        return cached
+    probed = _probe_registration()
+    return probed if probed is not None else _fallback()
 
 
 # MakeMKV key shape: "M-" (purchased/permanent) or "T-" (beta/temporary) followed by
@@ -1199,14 +1309,7 @@ def _probe_key_in_sandbox(binary_path: str, key: Optional[str], *, timeout: int 
             (conf_dir / "settings.conf").write_text(f'app_Key = "{key}"\n', encoding="utf-8")
         env = os.environ.copy()
         env["HOME"] = home
-        result = subprocess.run(
-            [binary_path, "-r", "info", "disc:9999"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-            env=env,
-        )
+        result = _run_bounded([binary_path, "-r", "info", "disc:9999"], timeout=timeout, env=env)
         output = (result.stdout or "") + "\n" + (result.stderr or "")
         if "error while loading shared libraries" in output or "cannot open shared object file" in output:
             raise MakeMKVUpdateError(
@@ -1300,6 +1403,15 @@ def set_registration_key(key: str) -> tuple[bool, str]:
     binary_path = get_makemkvcon_path()
     key_type = "purchased" if key.startswith("M-") else "beta"
 
+    busy = _drives_busy()
+    if busy:
+        # The key probe is a full makemkvcon start, which opens every drive (#908).
+        log.info("Key check refused while a drive is busy: %s", busy)
+        raise MakeMKVUpdateError(
+            "A disc is being read right now, and checking a key would interrupt the drive. "
+            "Try again when the rip or scan has finished."
+        )
+
     try:
         verdict, _output = _probe_key_in_sandbox(binary_path, key)
     except FileNotFoundError:
@@ -1337,7 +1449,7 @@ def set_registration_key(key: str) -> tuple[bool, str]:
 
     # Invalidate registration status cache so next health check picks up the new key
     with _reg_status_cache_lock:
-        _reg_status_cache["ts"] = 0.0
+        _reg_status_cache["ts"] = None
     return True, f"Registration key verified and saved ({key_type} key)"
 
 

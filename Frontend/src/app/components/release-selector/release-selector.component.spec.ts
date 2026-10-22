@@ -243,4 +243,39 @@ describe('ReleaseSelectorComponent', () => {
       expect(component.isOpen).toBe(false);
     });
   });
+
+  // #936 (recorded on 1.7.2-rc.8): coming back to a hidden tab/pane fires
+  // visibilitychange, not window focus, and the returning click closed the form.
+  describe('#936: create forms survive leaving and returning to the window', () => {
+    const outside = () => document.body;
+    const outsideGesture = () => {
+      component.onDocumentMouseDown({ target: outside() } as unknown as Event);
+      component.onDocumentClick({ target: outside() } as unknown as Event);
+    };
+    beforeEach(() => {
+      component.isOpen = true;
+      (component as any).isMobile = false;
+      (component as any).windowFocusedAt = 0;
+    });
+
+    it('an open create form never closes on an outside click', () => {
+      component.showCreateForm = true;
+      outsideGesture();
+      expect(component.isOpen).toBeTrue();
+      expect(component.showCreateForm).toBeTrue();
+    });
+
+    it('the click that returns to a hidden tab is ignored like a refocus click', () => {
+      spyOnProperty(document, 'visibilityState', 'get').and.returnValue('visible');
+      component.onVisibilityChange();
+      outsideGesture();
+      expect(component.isOpen).toBeTrue();
+    });
+
+    it('Escape closes the panel', () => {
+      component.showCreateForm = true;
+      component.onEscape();
+      expect(component.isOpen).toBeFalse();
+    });
+  });
 });

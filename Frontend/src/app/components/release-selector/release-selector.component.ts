@@ -511,6 +511,25 @@ export class ReleaseSelectorComponent implements OnInit, OnChanges, OnDestroy {
     this.windowFocusedAt = Date.now();
   }
 
+  /** #936: coming back to a hidden tab or pane fires visibilitychange, not
+   *  window focus, so the click that returns the user must be ignored too. */
+  @HostListener('document:visibilitychange')
+  onVisibilityChange(): void {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      this.windowFocusedAt = Date.now();
+    }
+  }
+
+  /** #936: with outside clicks no longer closing a form, Escape is the
+   *  keyboard way out. The create draft survives, as with any close. */
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    if (this.isOpen && !this.isMobile) {
+      this.closePanel();
+      this.cdr.markForCheck();
+    }
+  }
+
   /** #685: record where the interaction STARTED — a dismiss requires the whole
    *  gesture (mousedown AND click) to happen outside, so drags that start inside
    *  and synthetic/refocus clicks with no in-page mousedown can't close it. */
@@ -530,6 +549,12 @@ export class ReleaseSelectorComponent implements OnInit, OnChanges, OnDestroy {
       target?.closest('.cdk-overlay-pane.mobile-drawer-overlay-panel') != null ||
       target?.closest('.drawer-content') != null;
     if (isClickInDrawer) return;
+    // #936: a form with the user's typing never closes on an outside click;
+    // Cancel, Escape or finishing it does.
+    if (this.showCreateForm || this.showPendingEdit) {
+      this.lastPointerDownInside = null;
+      return;
+    }
     // Ignore the click that brought the window/tab back into focus (#685).
     if (Date.now() - this.windowFocusedAt < 350) {
       this.lastPointerDownInside = null;

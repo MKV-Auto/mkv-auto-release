@@ -275,6 +275,31 @@ describe('CardCarouselComponent', () => {
     });
   });
 
+  describe('getDriveRipProgress (#924)', () => {
+    const drive = (over: Partial<DiscMetadata> = {}): CardType => ({
+      type: 'drive',
+      id: '/dev/sr0',
+      data: { disc_id: 'd1', disc_state: 'in_drive', mount_point: '/dev/sr0', job_id: 'j1', ...over } as DiscMetadata,
+    });
+
+    it('uses live progress when it has arrived', () => {
+      expect(component.getDriveRipProgress(drive({ card_family: 'working', card_progress: 40 }), new Map([['/dev/sr0', 55]]))).toBe(55);
+    });
+
+    it('after a refresh, shows the server card progress until live progress arrives', () => {
+      expect(component.getDriveRipProgress(drive({ card_family: 'working', card_progress: 94 }), new Map())).toBe(94);
+      expect(component.getDriveRipProgress(drive({ card_family: 'working', card_progress: 94 }), null)).toBe(94);
+    });
+
+    it('ignores server progress when the job is not working', () => {
+      expect(component.getDriveRipProgress(drive({ card_family: 'your_turn', card_progress: 100 }), new Map())).toBe(-1);
+    });
+
+    it('returns -1 for a drive with no job', () => {
+      expect(component.getDriveRipProgress(drive({ job_id: undefined, card_family: 'working', card_progress: 50 }), new Map())).toBe(-1);
+    });
+  });
+
   describe('isJobCardProcessing', () => {
     const jobCard = (over: Partial<DiscMetadata> = {}): CardType => ({
       type: 'job',
@@ -314,6 +339,29 @@ describe('CardCarouselComponent', () => {
       expect(
         component.isJobCardProcessing(jobCard({ job_status: 'running' }), new Set())
       ).toBe(false);
+    });
+
+    // #913: a progress message captured mid-rip lingers after the rip ends
+    // (rip_complete emits no new progress), so the server's family decides.
+    it('does not spin at the label step even when stale progress says ripping', () => {
+      const stale = new Set(['j1']);   // what the lingering rip_phase message produces
+      expect(
+        component.isJobCardProcessing(jobCard({ job_status: 'running', card_family: 'your_turn' }), stale)
+      ).toBe(false);
+    });
+
+    it('spins while the server says the job is working, even before any progress arrives', () => {
+      expect(
+        component.isJobCardProcessing(jobCard({ job_status: 'running', card_family: 'working' }), new Set())
+      ).toBe(true);
+    });
+
+    it('never spins for done or fix families', () => {
+      for (const family of ['done', 'fix'] as const) {
+        expect(
+          component.isJobCardProcessing(jobCard({ job_status: 'running', card_family: family }), new Set(['j1']))
+        ).withContext(family).toBe(false);
+      }
     });
   });
 
@@ -632,5 +680,64 @@ describe('CardCarouselComponent', () => {
       expect(jobCards.length).toBe(0);
     });
 
+  });
+
+  describe('dismiss ✕ on failed cards (#877)', () => {
+    const failedJob = {
+      disc_id: 'd1', disc_state: 'unfinished', job_id: 'j-failed', job_status: 'failed',
+      scan_state: 'ready', movie_name: 'Revenge of the Sith',
+    } as unknown as DiscMetadata;
+    const runningJob = {
+      disc_id: 'd2', disc_state: 'unfinished', job_id: 'j-running', job_status: 'running',
+      scan_state: 'ready', movie_name: 'Thor',
+    } as unknown as DiscMetadata;
+    const failedDrive = {
+      disc_id: 'd3', disc_state: 'in_drive', mount_point: '/dev/sr0', job_id: 'j-drive',
+      job_status: 'failed', scan_state: 'ready', movie_name: 'The Matrix',
+    } as unknown as DiscMetadata;
+
+    function render(discs: DiscMetadata[]): HTMLElement {
+      mockWorkflow.discs$ = of(discs);
+      (mockWorkflow as any).getSelectedCard = jasmine.createSpy('getSelectedCard')
+        .and.returnValue({ type: 'job', id: 'j-failed' });
+      (mockWorkflow as any).getDismissFailedPreview = jasmine.createSpy('getDismissFailedPreview')
+        .and.returnValue(of({ job_ids: ['j-failed'], bytes: 0, has_finished_rip: false, retention_days: 7 }));
+      fixture = TestBed.createComponent(CardCarouselComponent);
+      component = fixture.componentInstance;
+      fixture.detectChanges();
+      return fixture.nativeElement as HTMLElement;
+    }
+
+    it('shows a ✕ on failed job and drive cards only', () => {
+      const el = render([failedJob, runningJob, failedDrive]);
+      const buttons = el.querySelectorAll('[data-testid="dismiss-failed"]');
+      expect(buttons.length).toBe(2);
+      const owners = Array.from(buttons).map(b => b.closest('.disc-card')?.textContent ?? '');
+      expect(owners.some(t => t.includes('Revenge of the Sith'))).toBeTrue();
+      expect(owners.some(t => t.includes('The Matrix'))).toBeTrue();
+      expect(owners.some(t => t.includes('Thor'))).toBeFalse();
+    });
+
+    it('opens the dismiss dialog without selecting the card', () => {
+      const el = render([failedJob]);
+      (el.querySelector('[data-testid="dismiss-failed"]') as HTMLButtonElement).click();
+      expect(mockWorkflow.setSelectedCard).not.toHaveBeenCalled();
+      expect(component.dismissTarget).toEqual({ jobId: 'j-failed', title: component.getDiscTitle(failedJob) });
+    });
+
+    it('clears the selection when the selected card is dismissed', () => {
+      render([failedJob]);
+      component.dismissTarget = { jobId: 'j-failed', title: 'x' };
+      component.onDismissClosed(true);
+      expect(component.dismissTarget).toBeNull();
+      expect(mockWorkflow.setSelectedCard).toHaveBeenCalledWith(null);
+    });
+
+    it('leaves the selection alone on cancel', () => {
+      render([failedJob]);
+      component.dismissTarget = { jobId: 'j-failed', title: 'x' };
+      component.onDismissClosed(false);
+      expect(mockWorkflow.setSelectedCard).not.toHaveBeenCalled();
+    });
   });
 });

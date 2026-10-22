@@ -72,6 +72,11 @@ MKVAUTO_LIBRARY_MOUNT=/mnt/mkvauto-library
 # (the default compose file does); otherwise it logs a warning and changes
 # nothing. 0 turns it off.
 MKVAUTO_OPTICAL_COMMAND_TIMEOUT_SECONDS=180
+# How often MKV-Auto re-checks whether your MakeMKV key or evaluation period
+# has expired, in seconds (default 6 hours). Every MakeMKV start talks to each
+# drive and can spin up a disc sitting in the tray, so the check runs rarely,
+# never while a disc is being read, and never makes a page wait for it.
+MKVAUTO_MAKEMKV_REGISTRATION_TTL_SECONDS=21600
 ```
 
 ### Unattended setup (application settings)
@@ -89,12 +94,13 @@ and anything rebuilt from a config file.
 | `MKVAUTO_DISCORD_WEBHOOK_URL` | `discord.webhook_url` | |
 | `MKVAUTO_DISCORD_ENABLED` | `discord.enabled` | |
 | `MKVAUTO_AUTO_RIP` | `auto_rip_enabled` | start copying as soon as a disc finishes scanning |
-| `MKVAUTO_EJECT_ON_FINISH` | `eject_on_finish` | |
+| `MKVAUTO_EJECT_AFTER_COPY` | `eject_after_copy` | eject as soon as the copy is done and checked |
 | `MKVAUTO_EJECT_ON_RESTART` | `eject_on_restart` | |
+| `MKVAUTO_FAILED_RIP_RETENTION_DAYS` | `failed_rip_retention_days` | days a failed copy's files are kept (default 7; 0 keeps them until you dismiss the card) |
 | `MKVAUTO_PATH_TEMPLATE_MOVIE` | `path_template_movie` | |
 | `MKVAUTO_PATH_TEMPLATE_SERIES` | `path_template_series` | |
 | `MKVAUTO_PREVIEW_DURATION_SECONDS` | `preview_duration_seconds` | |
-| `MKVAUTO_PREVIEW_MAX_PARALLEL` | `preview_max_parallel` | |
+| `MKVAUTO_PREVIEW_MAX_PARALLEL` | `preview_max_parallel` | how many preview and detection jobs may run at once across the whole server (default: CPU cores minus one) |
 
 Booleans accept `1/0`, `true/false`, `yes/no`, `on/off`.
 
@@ -127,7 +133,7 @@ services:
       MKVAUTO_TMDB_API_KEY: ${TMDB_KEY}
       MKVAUTO_MEDIA_SERVER: jellyfin
       MKVAUTO_AUTO_RIP: "true"
-      MKVAUTO_EJECT_ON_FINISH: "true"
+      MKVAUTO_EJECT_AFTER_COPY: "true"
 ```
 
 Secrets in a Compose file are readable by anyone who can read the file and appear

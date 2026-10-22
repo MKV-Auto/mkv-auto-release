@@ -181,6 +181,14 @@ def machine_generated_name(disc: Any, candidate: Any) -> bool:
     name = _clean(candidate)
     if not name:
         return True
+    if _is_our_name(disc, name):
+        return True
+    return _is_discdb_composite(disc, name)
+
+
+def _is_our_name(disc: Any, name: str) -> bool:
+    """A name MKV-Auto writes itself: bare format, scan-time default, or a
+    past/present convention render for this disc."""
     fmt_raw = getattr(disc, "format", None)
     fmt = normalize_disc_format(fmt_raw) if fmt_raw else None
     candidates = {c for c in (
@@ -193,11 +201,13 @@ def machine_generated_name(disc: Any, candidate: Any) -> bool:
     lowered = {c.lower() for c in candidates}
     # Bare formats regardless of stored spelling ("BluRay", "Blu-Ray", "dvd").
     lowered.update({"dvd", "blu-ray", "bluray", "blu-ray 3d", "uhd", "4k uhd", "4k"})
-    if name.lower() in lowered:
-        return True
-    # TheDiscDB-style composite: "{movie} - {release name} - …". Machine
-    # origin by construction (seen live overwriting the convention name and
-    # then masquerading as user-typed).
+    return name.lower() in lowered
+
+
+def _is_discdb_composite(disc: Any, name: str) -> bool:
+    """TheDiscDB-style composite: "{movie} - {release name} - …". Machine
+    origin by construction (seen live overwriting the convention name and
+    then masquerading as user-typed)."""
     release = getattr(disc, "release", None)
     movie = getattr(release, "movie", None) if release else None
     movie_name = _clean(getattr(movie, "name", None))
@@ -218,23 +228,87 @@ def machine_generated_name(disc: Any, candidate: Any) -> bool:
     return False
 
 
+def effective_auto_naming(disc: Any) -> bool:
+    """Whether the "Automatic naming" toggle is on for this disc (#915).
+
+    An explicit choice (``disc.auto_naming``) wins. With none, it is on when
+    the stored name is machine-made (blank, a bare format, the scan-time
+    default, a convention render, or a TheDiscDB-style composite, which once
+    froze auto-naming by passing for user-typed) and the slug follows it
+    (blank or the name's slug). A typed name or a hand-typed slug makes it
+    off, so the first save of an inferred value can never overwrite either.
+    """
+    explicit = getattr(disc, "auto_naming", None)
+    if explicit is not None:
+        return bool(explicit)
+    name = getattr(disc, "disc_name", None)
+    if not machine_generated_name(disc, name):
+        return False
+    clean_name = _clean(name)
+    if clean_name and _is_discdb_composite(disc, clean_name):
+        return True   # TheDiscDB wrote the slug too, in its own spelling
+    slug = _clean(getattr(disc, "disc_slug", None))
+    return not slug or slug == slugify_disc_name(clean_name or "")
+
+
+def apply_naming_from_label(disc: Any, payload: dict, default_name: Optional[str]) -> None:
+    """Disc name and slug from a label save (#915). Mutates the ORM object.
+
+    ``payload["auto_naming"]``, when present, records the user's toggle. With
+    automatic naming on, the payload's name and slug are ignored: the fields
+    are read-only in the UI and :func:`refresh_auto_disc_identity` renders the
+    convention name. With it off, the user's values are kept as typed; an
+    empty name keeps the stored one (a disc always has a name) and an empty
+    slug is generated from the name.
+    """
+    from api.crud import apply_disc_slug_from_label_payload
+
+    toggle = payload.get("auto_naming")
+    if toggle is None and (_clean(payload.get("disc_name")) or _clean(payload.get("disc_slug"))):
+        # A name or slug sent without the toggle is one the user typed:
+        # pre-#915 clients and API callers send these fields only for user
+        # edits (#845 dirty tracking). Keep it, and stop renaming the disc.
+        toggle = False
+    if toggle is not None:
+        disc.auto_naming = bool(toggle)
+    if not _clean(getattr(disc, "disc_name", None)) and default_name:
+        disc.disc_name = default_name
+    if effective_auto_naming(disc):
+        if not _clean(getattr(disc, "disc_slug", None)) and _clean(disc.disc_name):
+            disc.disc_slug = slugify_disc_name(disc.disc_name)
+        return
+    typed = _clean(payload.get("disc_name"))
+    if typed:
+        disc.disc_name = typed
+    apply_disc_slug_from_label_payload(disc, payload.get("disc_slug"))
+
+
 def refresh_auto_disc_identity(disc: Any) -> bool:
-    """Regenerate disc_name (+ slug, when it tracked the name) from labeled
-    identity. Mutates the ORM object; caller owns the transaction. Returns
-    True when something changed. Never touches a user-authored name."""
+    """Regenerate disc_name and disc_slug from labeled identity while
+    automatic naming is on (#915). Mutates the ORM object; caller owns the
+    transaction. Returns True when something changed. Never touches a disc
+    whose toggle is off."""
     try:
-        if not is_auto_disc_name(disc):
+        if not effective_auto_naming(disc):
             return False
         new_name = labeled_disc_name(disc)
-        if not new_name or new_name == _clean(getattr(disc, "disc_name", None)):
+        if not new_name:
             return False
         old_name = _clean(getattr(disc, "disc_name", None))
         old_slug = _clean(getattr(disc, "disc_slug", None))
+        # With the toggle explicitly on, the slug is read-only and always
+        # follows the name. On a disc that never chose (legacy rows), it
+        # follows only if it already did: a hand-typed slug survives.
+        follows = (
+            getattr(disc, "auto_naming", None) is True
+            or not old_slug
+            or (old_name is not None and old_slug == slugify_disc_name(old_name))
+        )
+        new_slug = slugify_disc_name(new_name) if follows else old_slug
+        if new_name == old_name and new_slug == old_slug:
+            return False
         disc.disc_name = new_name
-        # The slug follows the name only when it was following it before
-        # (blank, or the slug of the auto name we are replacing).
-        if not old_slug or (old_name and old_slug == slugify_disc_name(old_name)):
-            disc.disc_slug = slugify_disc_name(new_name)
+        disc.disc_slug = new_slug
         logger.info("Auto disc name refreshed: disc=%s %r -> %r",
                     getattr(disc, "id", None), old_name, new_name)
         return True

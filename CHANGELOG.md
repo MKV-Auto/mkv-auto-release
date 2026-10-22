@@ -12,6 +12,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-22
+
+### Added
+
+- **Dismiss failed jobs, and get their disk space back.** Failed cards now have a ✕ in the corner. It asks whether to keep or delete the files the failed job left behind and shows how much space they take. Every failed attempt for that disc is dismissed together. If the rip had finished before the job failed, you're warned that those files are its only copy. Until now nothing ever deleted a failed job's files.
+- **Files from failed copies are deleted after 7 days.** A copy that fails partway leaves its files behind, and a retry copies the disc again, so the daily cleanup now deletes them a week after the copy started and dismisses the card. A rip that finished before its job failed is never deleted automatically. Change the number of days, or set 0 to keep them until you dismiss the card, in Copy Settings or with `MKVAUTO_FAILED_RIP_RETENTION_DAYS`.
+- **Set a disc's number yourself.** Discs are still numbered in the order they were scanned, but if you scanned them out of order you can now change the number on the Disc step. Taking a number another disc already has swaps the two. Numbers you set stay put when more discs from the set are scanned. "Reset to scan order" undoes your changes for the whole release. Automatic disc names follow the new numbers. If a disc's files were already transferred, you're warned that they keep their current names.
+- **An "Automatic naming" checkbox for each disc.** While it's checked, MKV-Auto names the disc and its slug from the show, season, disc number and format, and keeps them up to date. The fields are read-only so nothing you type gets overwritten. Uncheck it to use your own name and slug, which are then kept exactly as you type them. Check it again to go back to the automatic name. Discs you named yourself start unchecked; everything else starts checked. This replaces clearing the name field to regenerate it.
+- **Auto-rip leaves discs you've already ripped alone.** Reinserting a disc that was ripped before used to start a full copy again. Now auto-rip skips it and sends a notification. To rip it again, start the copy yourself. A disc whose earlier attempts all failed still rips automatically, so reinserting it is still how you retry.
+- **Eject the disc as soon as the copy finishes.** A new Copy Settings option ejects the disc once the copy is done and checked, so the drive is free for the next disc while you label and transfer the last one. A failed copy keeps the disc in for a retry, and a disc you've already swapped in is left alone.
+
+### Removed
+
+- **Eject on finish.** Eject when the copy finishes replaces it: the disc comes out as soon as it's no longer needed, instead of after labeling and transfer. If you set `MKVAUTO_EJECT_ON_FINISH`, switch to `MKVAUTO_EJECT_AFTER_COPY`.
+
+### Fixed
+
+- **Opening the app no longer spins up the disc in your drive, or disturbs a rip in progress.** Checking whether your MakeMKV key has expired means starting MakeMKV, which talks to every drive. That check ran on page loads every few minutes, so it woke idle discs and could reach a drive in the middle of a rip. It now runs at startup, after you enter a key, and every few hours in the background, never while a disc is being read. Entering a key during a rip asks you to wait until the drive is free.
+- **Clearing the disc name or slug to retype it no longer brings the old text back.** A background refresh used to refill the field with the saved name while you were editing it. What you type, including an empty field, now stays until it's saved.
+- **A job no longer jumps back to an earlier labeling step on its own.** A background refresh could move the job you were on back a step, past the step it had already reached. Refreshes now only move a job forward, unless it failed or you went back yourself.
+- **Ejecting the disc actually works in the container.** Automatic ejects never ejected anything: the container has no `eject` command, so each attempt failed with a warning in the log. MKV-Auto now ejects through the drive directly. Eject on restart also looked up the inserted discs in the wrong place, so it never found one to eject.
+- **Generating previews no longer makes the app crawl.** The preview limit applied to each disc separately, and junk detection ran outside it entirely, so two discs' previews could run a dozen video decodes at once and page loads timed out. One limit now covers all preview and detection work across the server, set by default to one less than the number of CPU cores, and that work runs at the lowest priority, so the app and any rip in progress come first.
+- **The release and box set create forms stay open when you switch away and back.** Clicking back into the window counted as a click outside the form and closed it. Now a form you're filling in only closes when you cancel it, press Escape, or create the release or box set.
+- **The drive card keeps showing rip progress after you refresh the page.** The percentage used to vanish until the next progress update, which during the final file check could be minutes away.
+- **Job cards no longer spin while they wait for you.** A card left open on the page could keep its busy spinner at the labeling step long after the copy had finished. The spinner now follows the job's actual stage.
+- **Resetting a hung drive brings it back.** When a drive stopped responding while reading a disc, MKV-Auto reset it but never re-added it, so the drive vanished until you unplugged it. The reset now does a software unplug and replug: a USB drive is disconnected and reconnected on its port. It then checks that the drive came back, and the message tells you whether to try the disc again or replug the drive yourself.
+- **A rip on a drive that hangs now fails instead of showing "ripping" forever.** When a drive stops answering mid-read, MakeMKV can't be stopped until the drive is unplugged, and the rip used to wait on it indefinitely. The rip now gives up 30 seconds after stopping MakeMKV, frees the drive's slot, and the job says to unplug the drive and plug it back in.
+- **A drive that stops responding no longer slowly hangs the app.** Each page load used to start another MakeMKV check that got stuck on the drive and tied up part of the server. A stuck check is now abandoned after 30 seconds and not retried for half an hour.
+
 ## [1.7.1] - 2026-10-14
 
 ### Changed

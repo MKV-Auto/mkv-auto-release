@@ -1333,7 +1333,9 @@ def _next_disc_numbers_all(db: Session, rel: models.Release, exclude_disc_id: st
 def normalize_disc_numbers_for_release(db: Session, release: models.Release, exclude_disc_id: str | None = None) -> dict[str, int]:
     """
     Normalize disc numbers for all discs in a release (or boxset).
-    Ensures all discs have unique, sequential disc numbers based on created_at.
+    Ensures all discs have unique disc numbers: numbers the user set by hand
+    (``disc_number_user``, #873) are kept, the rest follow created_at order
+    using the lowest free numbers.
     Includes ALL discs (including those with DiscDB-hit jobs) so each physical disc
     gets a unique number (1, 2, 3, ...).
 
@@ -1367,16 +1369,128 @@ def normalize_disc_numbers_for_release(db: Session, release: models.Release, exc
     # Exclude the current disc if provided
     if exclude_disc_id:
         all_discs = [d for d in all_discs if d.id != exclude_disc_id]
-    
-    # Assign sequential disc numbers based on created_at order
+
+    # #873: numbers the user set by hand stay put; the rest are numbered in
+    # scan order using the numbers nobody chose. Pin inferred automatic
+    # naming first, so a renumbered disc's name keeps following its number.
+    _pin_auto_naming(all_discs)
     disc_number_map = {}
-    for idx, disc in enumerate(all_discs, start=1):
-        disc.disc_number = idx
-        disc_number_map[disc.id] = idx
+    taken: set[int] = set()
+    for disc in all_discs:
+        if getattr(disc, "disc_number_user", None) and disc.disc_number and disc.disc_number not in taken:
+            taken.add(disc.disc_number)
+            disc_number_map[disc.id] = disc.disc_number
+    next_number = 1
+    for disc in all_discs:
+        if disc.id in disc_number_map:
+            continue
+        while next_number in taken:
+            next_number += 1
+        disc.disc_number = next_number
+        disc_number_map[disc.id] = next_number
+        taken.add(next_number)
     
     # Don't commit here - let the caller handle the commit
     db.flush()
     return disc_number_map
+
+
+def _disc_number_scope(db: Session, disc: models.Disc) -> list[models.Disc]:
+    """The discs whose numbers must stay unique together: the release, or the
+    whole boxset (same scope as normalize_disc_numbers_for_release)."""
+    release = disc.release
+    if release is None:
+        return [disc]
+    if release.boxset_id:
+        release_ids = [r.id for r in db.query(models.Release).filter(models.Release.boxset_id == release.boxset_id)]
+    else:
+        release_ids = [release.id]
+    return db.query(models.Disc).filter(models.Disc.release_id.in_(release_ids)).all()
+
+
+def _pin_auto_naming(scope: list[models.Disc]) -> None:
+    """Record each disc's automatic-naming state before its number changes.
+
+    With no explicit choice, the toggle is inferred by matching the stored
+    name against renders for the CURRENT number; after a renumber the old
+    "Disc 3" name no longer matches and would read as hand-typed, freezing
+    it. Pinning the inferred state keeps automatic names automatic (#873).
+    """
+    from core.disc_naming import effective_auto_naming
+
+    for d in scope:
+        if d.auto_naming is None and effective_auto_naming(d):
+            d.auto_naming = True
+
+
+def _refresh_scope_names(scope: list[models.Disc]) -> list[models.Disc]:
+    from core.disc_naming import refresh_auto_disc_identity
+
+    return [d for d in scope if refresh_auto_disc_identity(d)]
+
+
+def _any_transferred(db: Session, disc_ids: list[str]) -> bool:
+    return (
+        db.query(models.Job)
+        .filter(models.Job.disc_id.in_(disc_ids), models.Job.transfer_state == "completed")
+        .first()
+        is not None
+    )
+
+
+def set_disc_number(db: Session, disc: models.Disc, number: int) -> dict[str, Any]:
+    """Set a disc's number by hand (#873). Caller commits.
+
+    Numbers stay unique within the release (or boxset): taking a number
+    another disc holds swaps the two, and both become user-set so a later
+    scan-order normalization keeps the pair where the user put it.
+    Automatic disc names in the scope are re-rendered.
+
+    Returns ``{"changed": [disc, ...], "swapped_with": disc | None,
+    "transferred": bool}``. ``transferred`` is True when a changed disc's
+    files were already transferred: they keep the old number in any
+    ``(Disc N)`` suffix (#933).
+    """
+    if number < 1:
+        raise ValueError("disc number must be 1 or more")
+    scope = _disc_number_scope(db, disc)
+    _pin_auto_naming(scope)
+    old = disc.disc_number
+    other = next((d for d in scope if d.id != disc.id and d.disc_number == number), None)
+    disc.disc_number = number
+    disc.disc_number_user = True
+    if other is not None:
+        other.disc_number = old
+        other.disc_number_user = old is not None
+    if disc.release is not None:
+        normalize_disc_numbers_for_release(db, disc.release)
+    renamed = _refresh_scope_names(scope)
+    changed = {disc.id: disc}
+    if other is not None:
+        changed[other.id] = other
+    for d in renamed:
+        changed[d.id] = d
+    db.flush()
+    moved_ids = [disc.id] + ([other.id] if other is not None else [])
+    return {
+        "changed": list(changed.values()),
+        "swapped_with": other,
+        "transferred": _any_transferred(db, moved_ids),
+    }
+
+
+def reset_disc_numbers(db: Session, disc: models.Disc) -> list[models.Disc]:
+    """Put every disc in this disc's release (or boxset) back in scan order (#873). Caller commits."""
+    scope = _disc_number_scope(db, disc)
+    _pin_auto_naming(scope)
+    before = {d.id: d.disc_number for d in scope}
+    for d in scope:
+        d.disc_number_user = None
+    if disc.release is not None:
+        normalize_disc_numbers_for_release(db, disc.release)
+    renamed = {d.id for d in _refresh_scope_names(scope)}
+    db.flush()
+    return [d for d in scope if d.disc_number != before[d.id] or d.id in renamed]
 
 
 def get_disc_id_by_hash(db: Session, content_hash: str) -> str | None:
@@ -1554,18 +1668,9 @@ def get_or_create_disc(db: Session, content_hash: str, release: models.Release |
         effective_info_title = payload_info or disc.info_title
         disc_format_eff = disc.format or payload.get("disc_format") or payload.get("format")
 
-        # Auto-populate disc_name from info title + format when not set (user can still edit it)
-        disc_name = payload.get("disc_name")
-        if not disc_name and not disc.disc_name:
-            auto_name = default_disc_name(disc_format_eff, effective_info_title)
-            if auto_name:
-                disc_name = auto_name
-                disc.disc_name = disc_name
-        elif disc_name:
-            # User provided disc_name, use it
-            disc.disc_name = disc_name
-        
-        apply_disc_slug_from_label_payload(disc, payload.get("disc_slug"))
+        # Disc name and slug follow the "Automatic naming" toggle (#915).
+        from core.disc_naming import apply_naming_from_label
+        apply_naming_from_label(disc, payload, default_disc_name(disc_format_eff, effective_info_title))
         # Always update info_title if provided in payload (even if disc already has one)
         if payload.get("info_title") or payload.get("info_label"):
             disc.info_title = payload.get("info_title") or _title_case(payload.get("info_label")) or disc.info_title

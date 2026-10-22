@@ -5,6 +5,8 @@ import requests
 from typing import Callable, Any, Optional
 from pathlib import Path
 from contextlib import contextmanager
+
+from core.media_jobs import low_priority  # #929: background media work at low priority
 from copy import deepcopy
 from core.utils import (
     get_lock_path,
@@ -30,7 +32,6 @@ from celery.signals import (
     task_retry,
     task_received,
     task_revoked,
-    worker_ready,
 )
 from celery.schedules import crontab
 from filelock import FileLock, Timeout
@@ -72,7 +73,6 @@ LOCK_TIMEOUT = 1.0                          # seconds
 LOCK_CONTENTION_RETRY_SECONDS = 30
 LOCK_CONTENTION_MAX_RETRIES = 20
 PREVIEW_LOCK_PATH = LOCK_PATH + ".preview"
-PREVIEW_SEMAPHORE_DIR = Path(get_lock_path()).parent / "ffmpeg_preview_slots"
 celery_app = Celery('tasks', broker=BROKER, backend=BACKEND)
 
 # Configure Celery logging
@@ -704,119 +704,19 @@ def _sync_disc_title_mkv_sizes_from_ripped(
                     pass
 
 
-def _count_active_ffmpeg_slots() -> int:
-    """Count active ffmpeg slots (files with valid PIDs)."""
-    if not PREVIEW_SEMAPHORE_DIR.exists():
-        return 0
-    
-    count = 0
-    for slot_file in PREVIEW_SEMAPHORE_DIR.iterdir():
-        if not slot_file.is_file():
-            continue
-        try:
-            pid_txt = slot_file.read_text().strip()
-            if pid_txt.isdigit():
-                # Check if process is still running
-                os.kill(int(pid_txt), 0)  # Raises ProcessLookupError if not running
-                count += 1
-        except (ProcessLookupError, ValueError, OSError):
-            # PID not running or invalid - slot is stale, will be cleaned up
-            pass
-        except Exception:
-            # Other errors, count it as active to be safe
-            count += 1
-    return count
-
-
-def _cleanup_stale_ffmpeg_slots() -> None:
-    """Remove slot files where the PID is no longer running."""
-    if not PREVIEW_SEMAPHORE_DIR.exists():
-        return
-    
-    for slot_file in PREVIEW_SEMAPHORE_DIR.iterdir():
-        if not slot_file.is_file():
-            continue
-        try:
-            pid_txt = slot_file.read_text().strip()
-            if pid_txt.isdigit():
-                os.kill(int(pid_txt), 0)  # Raises ProcessLookupError if not running
-                # Process is running, slot is valid - keep it
-            else:
-                # Invalid PID format, remove it
-                slot_file.unlink()
-        except ProcessLookupError:
-            # PID not running, remove stale slot
-            slot_file.unlink()
-        except Exception:
-            # Other errors (permission, etc.), leave it alone
-            pass
-
-
 @contextmanager
 def ffmpeg_semaphore(max_parallel: int):
+    """Hold one slot of the machine-wide media pool (#929).
+
+    Delegates to ``core.media_jobs.media_slot``: flock-held slot files shared
+    with junk detection, atomic to claim and released by the kernel when the
+    holder dies. The old PID-file slots counted, then claimed, so concurrent
+    tasks could overshoot, and detection never used them at all.
     """
-    Context manager that enforces max_parallel concurrent ffmpeg processes globally.
-    Uses file-based semaphore where each slot is a file containing the PID.
-    """
-    # Ensure semaphore directory exists
-    PREVIEW_SEMAPHORE_DIR.mkdir(parents=True, exist_ok=True)
-    
-    # Clean up stale slots (files where PID is no longer running)
-    _cleanup_stale_ffmpeg_slots()
-    
-    slot_file = None
-    max_wait_time = 300  # Max 5 minutes waiting
-    wait_interval = 1.0  # Check every second
-    waited = 0.0
-    
-    try:
-        # Try to acquire a slot
-        while True:
-            # Count active slots (files with valid PIDs)
-            active_slots = _count_active_ffmpeg_slots()
-            
-            if active_slots < max_parallel:
-                # We can proceed - create our slot file
-                slot_id = f"{os.getpid()}_{int(time.time() * 1000000)}"
-                slot_file = PREVIEW_SEMAPHORE_DIR / slot_id
-                slot_file.write_text(str(os.getpid()))
-                break
-            
-            # Too many active slots, wait
-            if waited >= max_wait_time:
-                raise TimeoutError(f"Could not acquire ffmpeg slot after {max_wait_time}s (max_parallel={max_parallel})")
-            
-            time.sleep(wait_interval)
-            waited += wait_interval
-            # Clean up stale slots periodically while waiting
-            if int(waited) % 10 == 0:  # Every 10 seconds
-                _cleanup_stale_ffmpeg_slots()
-        
-        # We've acquired the slot, run the code
+    from core.media_jobs import media_slot
+
+    with media_slot(max_parallel):
         yield
-        
-    finally:
-        # Always release our slot
-        if slot_file and slot_file.exists():
-            try:
-                slot_file.unlink()
-            except Exception:
-                pass
-
-
-@worker_ready.connect(weak=False)
-def _cleanup_ffmpeg_preview_slots_on_worker_ready(sender=None, **kwargs) -> None:
-    """Remove stale PID slot files when a worker process starts (e.g. after Docker restart).
-
-    Slots are normally cleaned when ``ffmpeg_semaphore`` runs; if nothing acquires the
-    semaphore, dead PID files could otherwise linger on a shared volume.
-    """
-    try:
-        _cleanup_stale_ffmpeg_slots()
-    except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "ffmpeg preview slot cleanup on worker_ready failed: %s", exc
-        )
 
 
 def one_at_a_time(fn):
@@ -3673,7 +3573,7 @@ def _generate_thumbnail(input_file: str | object, out_dir: object, max_parallel:
     ]
     try:
         with ffmpeg_semaphore(max_parallel):
-            result = subprocess.run(thumb_cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(low_priority(thumb_cmd), capture_output=True, text=True, timeout=30)
         if result.returncode == 0 and thumbnail.exists() and thumbnail.stat().st_size > 0:  # type: ignore[union-attr]
             return "thumbnail.jpg"
     except Exception:
@@ -3978,7 +3878,7 @@ def generate_previews(self, job_id: str, track_keys: list[str] | None = None):
         ]
         try:
             with ffmpeg_semaphore(max_parallel):
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                result = subprocess.run(low_priority(cmd), capture_output=True, text=True)
         except TimeoutError as te:
             logging.error(f"Could not acquire ffmpeg slot for track {track_key} (job {job_id}): {te}")
             return track_key, "failed", "Failed to acquire ffmpeg slot", True, None
@@ -4249,7 +4149,7 @@ def generate_preview_track(self, job_id: str, track_key: str, rel_path: str, tit
             # Run ffmpeg outside any DB session to avoid holding connection "idle in transaction".
             try:
                 with ffmpeg_semaphore(max_parallel):
-                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    result = subprocess.run(low_priority(cmd), capture_output=True, text=True)
             except TimeoutError as te:
                 logging.error(f"Could not acquire ffmpeg slot for track {track_key} (job {job_id}): {te}")
                 with db_session() as db:
@@ -6323,11 +6223,12 @@ def cleanup_job_mkv(job_id: str, reason: str):
     Remove .mkv files from a job's raw and transient dirs and set transfer_source_cleaned.
 
     Called from Finish endpoint, transfer cleanup endpoint, and stale cleanup.
-    Reason: user_finish, transfer_cleanup, stale_cleanup, or reconciliation.
+    Reason: user_finish, user_dismiss, transfer_cleanup, stale_cleanup,
+    failed_rip_expired, or reconciliation.
     Idempotent: if no .mkv left, only sets transfer_source_cleaned = True.
     """
     from core.job_cleanup import (
-        job_has_mkv_files, job_source_is_safe_to_clean, remove_mkv_files_from_job, untransferred_kept_titles,
+        cleanup_allowed, job_has_mkv_files, remove_mkv_files_from_job, untransferred_kept_titles,
     )
 
     db = database.SessionLocal()
@@ -6352,8 +6253,9 @@ def cleanup_job_mkv(job_id: str, reason: str):
         # before transferring holds the sole copy of the rip in raw/; on
         # prod, startup_cleanup ate a 48GB UHD rip of exactly that shape
         # (failed post-process, transfer never ran). Explicit user actions
-        # (user_finish) keep their authority.
-        if reason != "user_finish" and not job_source_is_safe_to_clean(job):
+        # (user_finish, user_dismiss) keep their authority, and a failed
+        # copy that never finished may expire (#877).
+        if not cleanup_allowed(job, reason):
             log.warning(
                 "cleanup_job_mkv: REFUSING to clean job %s (reason=%s): job_status=%s "
                 "transfer_state=%s — the rip may be the only copy",
@@ -6465,9 +6367,60 @@ def reconcile_job_mkv_cleanup():
                 db.rollback()
         if processed > 0:
             log.info("reconcile_job_mkv_cleanup: processed %d job(s)", processed)
-        return {"processed": processed}
+        expired = _expire_failed_rips(db)
+        return {"processed": processed, "expired": expired}
     finally:
         db.close()
+
+
+def _expire_failed_rips(db) -> int:
+    """Delete what failed copies left behind once they are old enough (#877).
+
+    Only copies that never finished: their files are partial and a retry
+    copies the disc again. A finished rip whose later stage failed is the
+    only copy and is never deleted here. The job is dismissed too, the same
+    as the user clicking ✕ on its card and choosing to delete the files.
+    """
+    from api import models as db_models
+    from core.card_state import publish_coordinator_event
+    from core.job_cleanup import (
+        failed_rip_retention_days, job_has_mkv_files, remove_mkv_files_from_job, rip_never_finished,
+    )
+
+    days = failed_rip_retention_days()
+    if days <= 0:
+        return 0
+    # Counted from when the copy started: updated_at moves on any later
+    # write, dismissing included, which would restart the clock.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = (
+        db.query(db_models.Job)
+        .filter(
+            db_models.Job.job_status == "failed",
+            db_models.Job.created_at < cutoff,
+        )
+        .filter((db_models.Job.dismissed.is_(False)) | (db_models.Job.transfer_source_cleaned.is_(False)))
+        .all()
+    )
+    expired = 0
+    for job in rows:
+        if not rip_never_finished(job):
+            continue
+        try:
+            paths = JobPaths.for_id(str(job.id))
+            if job_has_mkv_files(paths):
+                remove_mkv_files_from_job(paths, reason="failed_rip_expired", write_manifest=True)
+            job.transfer_source_cleaned = True
+            job.dismissed = True
+            db.commit()
+            expired += 1
+            publish_coordinator_event("jobs_dismissed", {"job_ids": [str(job.id)], "disc_id": str(job.disc_id)})
+        except Exception as e:
+            log.warning("reconcile_job_mkv_cleanup: expiring failed job %s failed: %s", job.id, e)
+            db.rollback()
+    if expired:
+        log.info("reconcile_job_mkv_cleanup: expired %d failed copy job(s) older than %d day(s)", expired, days)
+    return expired
 
 
 # ── Transfer: Celery task for remote (rsync/SMB/NFS) transfers (#321/#50) ─────

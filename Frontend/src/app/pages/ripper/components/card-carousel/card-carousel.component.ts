@@ -11,13 +11,14 @@ import { sortCarouselDiscsForDisplay } from '../../../../utils/sort-carousel-dis
 import { IconComponent } from '../../../../ui/icon/icon.component';
 import { PillComponent } from '../../../../ui/pill/pill.component';
 import { ProgressRingComponent } from '../../../../ui/progress-ring/progress-ring.component';
+import { DismissFailedJobModalComponent } from '../../../../components/dismiss-failed-job-modal/dismiss-failed-job-modal.component';
 
 export type CardType = { type: 'drive' | 'job', id: string, data: DiscMetadata };
 
 @Component({
   selector: 'app-card-carousel',
   standalone: true,
-  imports: [CommonModule, IconComponent, PillComponent, ProgressRingComponent],
+  imports: [CommonModule, IconComponent, PillComponent, ProgressRingComponent, DismissFailedJobModalComponent],
   templateUrl: './card-carousel.component.html',
   styleUrls: ['./card-carousel.component.scss']
 })
@@ -196,7 +197,39 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
     // stalled / failed job (last known progress sticks) from a live one.
     const status = card.data.job_status;
     if (status === 'failed' || status === 'completed' || status === 'cancelled') return false;
+    // #913: the backend's card family (#839) is the authority. It is emitted
+    // on every stage transition, while progress messages stop at the last one
+    // the rip sent: a message captured mid-rip still says rip_state=running,
+    // so on a page left open the card spun at the label step indefinitely.
+    // Progress only decides for a card that has no family yet.
+    const family = card.data.card_family;
+    if (family) return family === 'working';
     return jobIdsProcessing != null && jobIdsProcessing.has(card.data.job_id);
+  }
+
+  /** The failed card whose ✕ was clicked (#877); drives the dismiss modal. */
+  dismissTarget: { jobId: string; title: string } | null = null;
+
+  /** Job card for a failed job (#877: the only job cards with a ✕). */
+  isJobCardFailed(disc: DiscMetadata): boolean {
+    return disc.disc_state === 'unfinished' && !!disc.job_id && disc.job_status === 'failed';
+  }
+
+  openDismiss(card: CardType): void {
+    const jobId = card.data.job_id;
+    if (!jobId) return;
+    this.dismissTarget = { jobId, title: this.getDiscTitle(card.data) };
+  }
+
+  onDismissClosed(dismissed: boolean): void {
+    const jobId = this.dismissTarget?.jobId;
+    this.dismissTarget = null;
+    // The dismissed card is gone; don't leave the right pane on its job.
+    const selected = this.workflowService.getSelectedCard();
+    if (dismissed && selected?.type === 'job' && selected.id === jobId) {
+      this.workflowService.setSelectedCard(null);
+    }
+    this.cdr.markForCheck();
   }
 
   /** In-drive card with a failed job attached (joined from unfinished / coordinator / job_finished). */
@@ -506,10 +539,17 @@ export class CardCarouselComponent implements OnInit, OnDestroy {
    */
   getDriveRipProgress(card: CardType, driveRipProgress: Map<string, number> | null): number {
     if (card.type !== 'drive' || !card.data.mount_point || !card.data.job_id) return -1;
-    if (!driveRipProgress) return -1;
-    const progress = driveRipProgress.get(card.data.mount_point);
-    if (progress == null || progress <= 0) return -1;
-    return progress;
+    const live = driveRipProgress?.get(card.data.mount_point);
+    if (live != null && live > 0) return live;
+    // #924: a freshly loaded page has no live progress until the next
+    // progress_update, which during verification can be minutes away. The
+    // server's card state (#839) already carries the figure; use it while
+    // the job is working.
+    const serverProgress = card.data.card_progress;
+    if (card.data.card_family === 'working' && serverProgress != null && serverProgress > 0) {
+      return serverProgress;
+    }
+    return -1;
   }
 
   /**

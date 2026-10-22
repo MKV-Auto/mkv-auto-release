@@ -69,6 +69,8 @@ export interface LabelForm {
   production_year: number | null;
   disc_name: string;
   disc_slug: string;
+  /** #915 "Automatic naming" toggle; undefined/null means on. */
+  auto_naming?: boolean | null;
   movie_id: string | null;
   movie_name?: string | null;
   movie_tmdb_id?: string | null;

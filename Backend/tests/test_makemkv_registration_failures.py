@@ -121,7 +121,7 @@ def test_registration_status_probe_uses_info_command(monkeypatch):
     """A bare makemkvcon run prints only usage text — the expiry strings can
     never appear, so 'expired' was undetectable. The probe must use the same
     '-r info disc:9999' invocation as the key probe (exits after the startup
-    MSG stream, no drive needed)."""
+    MSG stream)."""
     from core import makemkv_updater
 
     seen = {}
@@ -135,7 +135,9 @@ def test_registration_status_probe_uses_info_command(monkeypatch):
         return _R()
 
     monkeypatch.setattr(makemkv_updater, "get_makemkvcon_path", lambda: "/usr/bin/makemkvcon")
-    monkeypatch.setattr(makemkv_updater.subprocess, "run", fake_run)
+    monkeypatch.setattr(makemkv_updater, "_run_bounded", fake_run)
+    monkeypatch.setattr(makemkv_updater, "_drives_busy", lambda: None)
+    monkeypatch.setitem(makemkv_updater._reg_status_cache, "failed_ts", None)
     expired, _msg, _key = makemkv_updater.get_registration_status(force_refresh=True)
     assert seen["cmd"][1:] == ["-r", "info", "disc:9999"]
     assert expired is True

@@ -47,6 +47,7 @@ def _home_and_binary(tmp_path, monkeypatch):
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(makemkv_updater, "get_makemkvcon_path", lambda: "/fake/makemkvcon")
+    monkeypatch.setattr(makemkv_updater, "_drives_busy", lambda: None)
     yield home
 
 
@@ -54,7 +55,7 @@ def _mock_run(monkeypatch, outputs):
     """subprocess.run mock returning queued outputs; records call envs + planted keys."""
     calls = []
 
-    def fake_run(cmd, capture_output, text, check, timeout, env=None, **kw):
+    def fake_run(cmd, *, timeout, env=None, **kw):
         home = (env or {}).get("HOME", "")
         planted = None
         conf = Path(home) / ".MakeMKV" / "settings.conf"
@@ -67,7 +68,7 @@ def _mock_run(monkeypatch, outputs):
             raise out
         return SimpleNamespace(stdout=out, stderr="", returncode=0)
 
-    monkeypatch.setattr(makemkv_updater.subprocess, "run", fake_run)
+    monkeypatch.setattr(makemkv_updater, "_run_bounded", fake_run)
     return calls
 
 
@@ -89,7 +90,7 @@ def test_valid_beta_key_commits_and_preserves_settings(monkeypatch, _home_and_bi
     assert 'app_DefaultSelectionString = "+sel:all"' in text
     assert f'app_Key = "{BETA_KEY}"' in text and "T-oldkey" not in text
     # Cache invalidated.
-    assert makemkv_updater._reg_status_cache["ts"] == 0.0
+    assert makemkv_updater._reg_status_cache["ts"] is None
 
 
 def test_purchased_key_message_labels_type(monkeypatch, _home_and_binary):

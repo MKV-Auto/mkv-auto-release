@@ -2,11 +2,12 @@ import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output, ViewEn
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { slugifyDiscName } from '../../utils/disc-slug.util';
+import { BtnComponent, SwitchComponent } from '../../ui';
 
 @Component({
   selector: 'app-disc-label',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, BtnComponent, SwitchComponent],
   templateUrl: './disc-label.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
@@ -27,8 +28,14 @@ export class DiscLabelComponent {
    * change-detection cycle, so under churn the bound object can be stale and
    * identity-dependent reads drop keystrokes.
    */
-  @Output() labelChanged = new EventEmitter<{ field: 'disc_slug' | 'disc_format'; value: string } | undefined>();
+  @Output() labelChanged = new EventEmitter<
+    { field: 'disc_slug' | 'disc_format'; value: string } | { field: 'auto_naming'; value: boolean } | undefined
+  >();
   @Output() nameChanged = new EventEmitter<string>();
+  /** #873: the user set this disc's number by hand. */
+  @Output() discNumberChanged = new EventEmitter<number>();
+  /** #873: put the release's discs back in scan order. */
+  @Output() resetDiscNumbers = new EventEmitter<void>();
   @Output() fieldBlur = new EventEmitter<void>();
 
   private focusDepth = 0;
@@ -55,6 +62,21 @@ export class DiscLabelComponent {
   }
 
   /** Auto-generated slug for placeholder (ui-lab: "Auto-generated from name") */
+  commitDiscNumber(raw: string): void {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n === this.headingDiscNumber) return;
+    this.discNumberChanged.emit(n);
+  }
+
+  /** #915: on unless the server says the user chose their own name. */
+  get autoNaming(): boolean {
+    return this.labelForm?.auto_naming !== false;
+  }
+
+  setAutoNaming(on: boolean): void {
+    this.labelChanged.emit({ field: 'auto_naming', value: on });
+  }
+
   get autoSlug(): string {
     const name = this.labelForm?.disc_name;
     if (!name || `${name}`.trim() === '') return '';

@@ -34,7 +34,7 @@ def test_auto_rip_round_trip_via_setter():
 def test_setting_survives_other_settings_writes():
     """Saving an unrelated setting must NOT clobber auto_rip_enabled."""
     settings.set_auto_rip_enabled(True)
-    settings.save_settings({"eject_on_finish": True})
+    settings.save_settings({"eject_after_copy": True})
     assert settings.get_auto_rip_enabled() is True
 
 

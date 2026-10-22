@@ -2,7 +2,7 @@ import logging, json, asyncio, time, os
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from core.disc_cache import set as set_cached, get as get_cached
 from core.disc_manager import get_disc_info, refresh_disc_info, list_discs, get_cached_discs
@@ -656,6 +656,74 @@ async def get_disc_info_endpoint(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+class DiscNumberUpdate(BaseModel):
+    disc_number: int
+
+
+def _disc_number_payload(d) -> Dict[str, Any]:
+    return {"disc_id": str(d.id), "disc_number": d.disc_number,
+            "disc_name": d.disc_name, "disc_slug": d.disc_slug}
+
+
+def _announce_disc_changes(discs) -> None:
+    from api.routers.websockets import schedule_disc_metadata_updated
+    for d in discs:
+        schedule_disc_metadata_updated(str(d.id))
+
+
+@router.put("/{disc_id}/disc-number")
+def set_disc_number_endpoint(disc_id: str, body: DiscNumberUpdate, db: Session = Depends(database.get_db)) -> Dict[str, Any]:
+    """Set a disc's number by hand, for discs scanned out of order (#873).
+
+    Taking a number another disc of the same release (or boxset) holds swaps
+    the two. Automatic disc names are re-rendered. ``transferred`` warns that
+    files already in the library keep their names (#933).
+    """
+    disc = db.query(db_models.Disc).filter(db_models.Disc.id == disc_id).first()
+    if not disc:
+        raise HTTPException(404, detail="Disc not found")
+    if body.disc_number < 1:
+        raise HTTPException(400, detail="Disc number must be 1 or more")
+    result = crud.set_disc_number(db, disc, body.disc_number)
+    db.commit()
+    other = result["swapped_with"]
+    message = None
+    if result["transferred"]:
+        message = (
+            "Files already in your library keep their current names. Only extras named with "
+            "\"(Disc N)\" carry the disc number."
+        )
+    _announce_disc_changes(result["changed"])
+    return {
+        "disc_id": str(disc.id),
+        "disc_number": disc.disc_number,
+        "disc_name": disc.disc_name,
+        "disc_slug": disc.disc_slug,
+        "swapped_with": _disc_number_payload(other) if other is not None else None,
+        "changed": [_disc_number_payload(d) for d in result["changed"]],
+        "transferred": result["transferred"],
+        "message": message,
+    }
+
+
+@router.post("/{disc_id}/disc-number/reset")
+def reset_disc_numbers_endpoint(disc_id: str, db: Session = Depends(database.get_db)) -> Dict[str, Any]:
+    """Put the disc's release (or boxset) back in scan order (#873)."""
+    disc = db.query(db_models.Disc).filter(db_models.Disc.id == disc_id).first()
+    if not disc:
+        raise HTTPException(404, detail="Disc not found")
+    changed = crud.reset_disc_numbers(db, disc)
+    db.commit()
+    _announce_disc_changes(changed)
+    return {
+        "disc_id": str(disc.id),
+        "disc_number": disc.disc_number,
+        "disc_name": disc.disc_name,
+        "disc_slug": disc.disc_slug,
+        "changed": [_disc_number_payload(d) for d in changed],
+    }
+
+
 @router.post("/{disc_id}/relookup-discdb")
 def relookup_discdb_for_disc(
     disc_id: str,
@@ -1027,6 +1095,11 @@ def _linked_movie_tmdb_id(disc_record: db_models.Disc) -> str:
     return str(tmdb_id) if tmdb_id else ""
 
 
+def _effective_auto_naming(disc_record) -> bool:
+    from core.disc_naming import effective_auto_naming
+    return effective_auto_naming(disc_record)
+
+
 def _build_labelform_from_disc(
     disc_record: db_models.Disc,
     disc_info: Dict[str, Any],
@@ -1089,6 +1162,7 @@ def _build_labelform_from_disc(
         "production_year": disc_info.get("production_year"),
         "disc_name": disc_record.disc_name or "",
         "disc_slug": disc_record.disc_slug or "",
+        "auto_naming": _effective_auto_naming(disc_record),  # #915
         # Respect explicit clear: if movie_id is in label_draft (including None), use it; else release or disc_info
         "movie_id": (
             (str(label_draft["movie_id"]) if label_draft["movie_id"] else None) if "movie_id" in label_draft

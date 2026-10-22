@@ -3272,6 +3272,9 @@ def save_disc_label(disc_id: str, label: LabelRequest, db: Session = Depends(get
     fs = label.model_fields_set
     slug_in = "disc_slug" in fs
     name_in = "disc_name" in fs
+    if (name_in and lp.get("disc_name")) or (slug_in and lp.get("disc_slug")):
+        # An explicit rename is the user's choice: automatic naming off (#915).
+        disc.auto_naming = False
     if slug_in:
         raw = label.disc_slug
         if raw is not None and str(raw).strip() != "":

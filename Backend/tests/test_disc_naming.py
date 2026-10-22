@@ -163,10 +163,11 @@ def test_format_change_rerenders_the_name():
 
 
 def test_refresh_leaves_user_slug_and_user_name():
+    # #915: a hand-typed slug marks the disc as user-named (automatic naming
+    # off), so neither the name nor the slug is rewritten.
     d = _disc("Thor", "movie", fmt="DVD", disc_name="DVD", disc_slug="my-own-slug")
-    assert refresh_auto_disc_identity(d) is True
-    assert d.disc_name == "Thor - DVD"
-    assert d.disc_slug == "my-own-slug"  # user slug untouched
+    assert refresh_auto_disc_identity(d) is False
+    assert (d.disc_name, d.disc_slug) == ("DVD", "my-own-slug")
     u = _disc("Thor", "movie", fmt="DVD", disc_name="Thor SteelBook")
     assert refresh_auto_disc_identity(u) is False
     assert u.disc_name == "Thor SteelBook"

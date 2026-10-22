@@ -1373,6 +1373,90 @@ describe('WorkflowService', () => {
       });
       expect(service.getEffectiveWorkflowStep(ctxInitial)).toBe('titles');
     });
+
+    // #914: refreshes recomputed the step client-side and applied any change,
+    // including moves back past the step the server had recorded.
+    describe('automatic step changes (#914)', () => {
+      const running = (step: string, extra: any = {}) =>
+        ({ jobId: 'j1', job_status: 'running', rip_state: 'completed', workflow_step: step, ...extra } as any);
+
+      it('never moves below the job\'s persisted step', () => {
+        const ctx = baseCtx({ workflowStep: 'titles', jobStatus: running('titles') });
+        spyOn(service, 'determineWorkflowStep').and.returnValue('film');
+        expect(service.automaticStepFor(ctx, ctx)).toBeNull();
+      });
+
+      it('never moves the view backwards on a refresh of the same job', () => {
+        const view = baseCtx({ workflowStep: 'titles', jobStatus: running('disc') });
+        const fetched = baseCtx({ workflowStep: 'disc', jobStatus: running('disc') });
+        spyOn(service, 'determineWorkflowStep').and.returnValue('disc');
+        expect(service.automaticStepFor(fetched, view)).toBeNull();
+      });
+
+      it('still moves forward when the server advanced', () => {
+        const ctx = baseCtx({ workflowStep: 'disc', jobStatus: running('titles') });
+        spyOn(service, 'determineWorkflowStep').and.returnValue('disc');
+        expect(service.automaticStepFor(ctx, ctx)).toBe('titles');
+      });
+
+      it('lets a failed job reset to the start', () => {
+        const ctx = baseCtx({
+          workflowStep: 'titles',
+          jobStatus: running('titles', { job_status: 'failed', rip_state: 'failed' }),
+        });
+        spyOn(service, 'determineWorkflowStep').and.returnValue('film');
+        expect(service.automaticStepFor(ctx, ctx)).toBe('film');
+      });
+
+      it('a refresh keeps the step the view is on when the fetch is older', () => {
+        const view = baseCtx({ workflowStep: 'titles', stepNavigationSource: 'automatic', jobStatus: running('titles') });
+        (service as any)._activeContext$.next(view);
+        const stale = baseCtx({ workflowStep: 'disc', jobStatus: running('disc') });
+        expect((service as any).withPreservedStep(stale).workflowStep).toBe('titles');
+      });
+
+      it('a refresh keeps a step the user navigated back to', () => {
+        const view = baseCtx({ workflowStep: 'disc', stepNavigationSource: 'user', jobStatus: running('titles') });
+        (service as any)._activeContext$.next(view);
+        const fetched = baseCtx({ workflowStep: 'titles', jobStatus: running('titles') });
+        expect((service as any).withPreservedStep(fetched).workflowStep).toBe('disc');
+      });
+
+      // #915: clearing the disc name to retype it put the old name back.
+      it('a refresh keeps a cleared disc name the user is editing', () => {
+        const view = baseCtx({ labelForm: { disc_name: '', disc_slug: 'disc-1' } as any, jobStatus: running('disc') });
+        (service as any)._activeContext$.next(view);
+        service.markDiscIdentityEdited('disc_name');
+        const fetched = baseCtx({ labelForm: { disc_name: 'Disc 1', disc_slug: 'disc-1' } as any, jobStatus: running('disc') });
+        const applied = (service as any).withPreservedDiscIdentity(fetched);
+        expect(applied.labelForm.disc_name).toBe('');
+      });
+
+      it('a refresh keeps an edited slug but takes an unedited name from the server', () => {
+        const view = baseCtx({ labelForm: { disc_name: 'Old', disc_slug: 'my-slug' } as any, jobStatus: running('disc') });
+        (service as any)._activeContext$.next(view);
+        service.markDiscIdentityEdited('disc_slug');
+        const fetched = baseCtx({ labelForm: { disc_name: 'Server Name', disc_slug: 'server-slug' } as any, jobStatus: running('disc') });
+        const applied = (service as any).withPreservedDiscIdentity(fetched);
+        expect(applied.labelForm.disc_slug).toBe('my-slug');
+        expect(applied.labelForm.disc_name).toBe('Server Name');
+      });
+
+      it('edits on one job never leak into another', () => {
+        const view = baseCtx({ id: 'j1', labelForm: { disc_name: '' } as any, jobStatus: running('disc') });
+        (service as any)._activeContext$.next(view);
+        service.markDiscIdentityEdited('disc_name');
+        const other = baseCtx({ id: 'j2', labelForm: { disc_name: 'Other Disc' } as any, jobStatus: running('disc') });
+        expect((service as any).withPreservedDiscIdentity(other).labelForm.disc_name).toBe('Other Disc');
+      });
+
+      it('selecting another job takes that job\'s server step', () => {
+        const view = baseCtx({ id: 'j1', workflowStep: 'titles', jobStatus: running('titles') });
+        (service as any)._activeContext$.next(view);
+        const other = baseCtx({ id: 'j2', workflowStep: 'film', jobStatus: { ...running('film'), jobId: 'j2' } });
+        expect((service as any).withPreservedStep(other).workflowStep).toBe('film');
+      });
+    });
   });
 
   describe('saveJobWorkflowContext stale response filter', () => {

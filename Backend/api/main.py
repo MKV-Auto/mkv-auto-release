@@ -954,7 +954,7 @@ async def lifespan(app: FastAPI):
     try:
         from core.settings import load_settings as _load_settings_restart
         if _load_settings_restart().get("eject_on_restart"):
-            from core.disc_cache import get_cached_discs
+            from core.disc_manager import get_cached_discs
             from core.utils import eject_disc
             _restart_logger = get_logger(__name__, "lifespan")
             for cached in get_cached_discs():

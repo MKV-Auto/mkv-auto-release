@@ -91,6 +91,88 @@ def job_source_is_safe_to_clean(job) -> bool:
     return status == "completed" or transfer == "completed"
 
 
+# Days a failed copy's files are kept before the reconciler deletes them
+# (#877). 0 keeps them until the user dismisses the job.
+FAILED_RIP_RETENTION_DAYS_DEFAULT = 7
+
+# Cleanups the user asked for. They may delete what automated cleanup
+# won't, because the user was shown what would go.
+USER_CLEANUP_REASONS = frozenset({"user_finish", "user_dismiss"})
+
+
+def rip_never_finished(job) -> bool:
+    """True for a failed job whose copy never completed (#877).
+
+    Its files are a partial copy that nothing reads again: Resume needs a
+    finished rip, and a retry is a new job that copies the disc from scratch.
+    Unlike a finished rip whose post-processing failed, they are not the only
+    copy of anything, so they may expire. If a partial re-rip that reuses the
+    titles a failed copy did finish is ever built, it must keep these.
+    """
+    status = (getattr(job, "job_status", None) or "").strip().lower()
+    rip = (getattr(job, "rip_state", None) or "").strip().lower()
+    return status == "failed" and rip not in ("completed", "skipped")
+
+
+def cleanup_allowed(job, reason: str) -> bool:
+    """Whether ``cleanup_job_mkv`` may delete this job's files for ``reason``."""
+    if reason in USER_CLEANUP_REASONS:
+        return True
+    if reason == "failed_rip_expired":
+        return rip_never_finished(job)
+    return job_source_is_safe_to_clean(job)
+
+
+def failed_rip_retention_days() -> int:
+    from core.settings import load_settings
+
+    try:
+        days = int(load_settings().get("failed_rip_retention_days", FAILED_RIP_RETENTION_DAYS_DEFAULT))
+    except (TypeError, ValueError):
+        return FAILED_RIP_RETENTION_DAYS_DEFAULT
+    return max(0, days)
+
+
+def cleanable_bytes(paths: JobPaths) -> int:
+    """Size of what ``remove_mkv_files_from_job`` would delete."""
+    total = 0
+    globs = [(paths.raw, "*.mkv"), (paths.transient, "*.mkv"), (paths.previews, "*")]
+    for dir_path, pattern in globs:
+        if not dir_path.is_dir():
+            continue
+        try:
+            for fpath in dir_path.rglob(pattern):
+                if fpath.is_file():
+                    total += fpath.stat().st_size
+        except OSError as e:
+            log.warning("job_cleanup: could not size %s: %s", dir_path, e)
+    return total
+
+
+def failed_jobs_to_dismiss(db, job) -> list:
+    """The failed jobs one ✕ on a failed card hides (#877).
+
+    The carousel shows only the newest failed job per disc, so hiding just
+    that one would surface the next-older failure as a new card. Every
+    not-yet-dismissed failed job for the disc goes together.
+    """
+    from api import models
+
+    rows = (
+        db.query(models.Job)
+        .filter(
+            models.Job.disc_id == job.disc_id,
+            models.Job.job_status == "failed",
+            models.Job.dismissed.is_(False),
+        )
+        .order_by(models.Job.created_at.desc())
+        .all()
+    )
+    if job not in rows:
+        rows.insert(0, job)
+    return rows
+
+
 def untransferred_kept_titles(job, db) -> list[dict]:
     """Labeled (non-ignore) titles whose ripped MKV never got a post-processed
     path, so no transfer ever carried them (#903).

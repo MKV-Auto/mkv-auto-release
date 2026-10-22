@@ -75,3 +75,110 @@ def test_run_makemkv_stall_disabled_zero(monkeypatch, tmp_path):
     assert "done" in out
     assert pid == 1
     mock_p.kill.assert_not_called()
+
+
+# --- #909: a drive hung in the kernel ------------------------------------
+
+class _NeverEndingStdout:
+    """stdout of a makemkvcon whose stuck thread keeps the pipe open: one
+    line, then nothing, not even after SIGKILL."""
+
+    def __init__(self, release):
+        self.sent = False
+        self.release = release
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if not self.sent:
+            self.sent = True
+            return "line1\n"
+        self.release.wait(30)
+        raise StopIteration
+
+
+def _stuck_proc(*, exits_after_kill: bool, release, reaped):
+    import subprocess as sp
+
+    p = MagicMock()
+    p.pid = 515151
+
+    def wait(timeout=None):
+        if exits_after_kill:
+            return -9
+        if timeout is not None:
+            raise sp.TimeoutExpired("makemkvcon", timeout)
+        reaped.set()               # only the reaper waits without a timeout
+        release.wait(30)
+        return -9
+
+    p.wait = MagicMock(side_effect=wait)
+    p.stdout = _NeverEndingStdout(release)
+    return p
+
+
+def test_unkillable_makemkvcon_fails_the_rip_instead_of_hanging_it(tmp_path, monkeypatch):
+    """Prod 2026-10-18: the watchdog killed makemkvcon at 00:25, a thread stayed
+    in submit_bio_wait, and the rip task never returned (job 'ripping' for 8.5 h)."""
+    import threading
+    import time
+
+    monkeypatch.setenv("RIP_OUTPUT_STALL_SECONDS", "1")
+    monkeypatch.setattr(u, "STALL_KILL_GRACE_SECONDS", 0.2)
+    release, reaped = threading.Event(), threading.Event()
+    proc = _stuck_proc(exits_after_kill=False, release=release, reaped=reaped)
+    try:
+        t0 = time.monotonic()
+        with patch.object(u, "MAKEMKVCON_PATH", "/fake/makemkvcon"):
+            with patch.object(u.subprocess, "Popen", return_value=proc):
+                with pytest.raises(u.MakeMKVDriveHungError) as exc:
+                    u.run_makemkv("mkv disc:0 all /tmp/out", log_path=tmp_path / "p.log")
+        assert time.monotonic() - t0 < 10
+        msg = str(exc.value)
+        assert msg.startswith("No output from MakeMKV for 1s")   # still counts as a stall
+        assert u.DRIVE_HUNG_MARKER in msg
+        assert isinstance(exc.value, u.MakeMKVStallError)
+        proc.kill.assert_called()
+        assert reaped.wait(2), "the stuck process must be handed to a reaper"
+    finally:
+        release.set()
+
+
+def test_killed_makemkvcon_whose_pipe_stays_open_still_ends_the_rip(tmp_path, monkeypatch):
+    """The process exits on SIGKILL but the reader never sees EOF: the read
+    loop used to wait on its queue forever."""
+    import threading
+    import time
+
+    monkeypatch.setenv("RIP_OUTPUT_STALL_SECONDS", "1")
+    release, reaped = threading.Event(), threading.Event()
+    proc = _stuck_proc(exits_after_kill=True, release=release, reaped=reaped)
+    try:
+        t0 = time.monotonic()
+        with patch.object(u, "MAKEMKVCON_PATH", "/fake/makemkvcon"):
+            with patch.object(u.subprocess, "Popen", return_value=proc):
+                with pytest.raises(u.MakeMKVStallError) as exc:
+                    u.run_makemkv("mkv disc:0 all /tmp/out", log_path=tmp_path / "p.log")
+        assert time.monotonic() - t0 < 15
+        assert not isinstance(exc.value, u.MakeMKVDriveHungError)
+    finally:
+        release.set()
+
+
+def test_hung_drive_verdict_says_to_replug():
+    from types import SimpleNamespace
+
+    from core.rip_failure_analysis import DRIVE_HUNG_REMEDY, analyze_rip_failure
+
+    job = SimpleNamespace(
+        id="j", disc_id=None, drive_by_id_serial=None,
+        error_reason=(
+            "No output from MakeMKV for 300s, and it could not be stopped: a read from "
+            "the drive never returned. The drive or its USB connection has hung."
+        ),
+    )
+    verdict = analyze_rip_failure(job, db=None, log_text="")
+    assert verdict.classification == "drive_fault"
+    assert verdict.remedy == DRIVE_HUNG_REMEDY
+    assert "Unplug" in verdict.augment(job.error_reason)

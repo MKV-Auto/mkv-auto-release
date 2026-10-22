@@ -454,10 +454,12 @@ class SupportPromptDismissRequest(BaseModel):
 
 
 class DiscDbLookupSettings(BaseModel):
-    """Copy settings: DiscDB prefill toggle and eject-on-finish toggle."""
+    """Copy settings: DiscDB prefill toggle, eject after copy, and how long
+    a failed copy's files are kept (#877)."""
 
     discdb_miss_workflow_with_prefill: bool = False
-    eject_on_finish: bool = False
+    eject_after_copy: bool = False
+    failed_rip_retention_days: int = Field(7, ge=0, le=3650)
 
 
 # Short artifact listing

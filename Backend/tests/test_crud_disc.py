@@ -670,8 +670,10 @@ def test_rescan_of_labeled_disc_refreshes_auto_name(test_db):
         assert rescanned.disc_name == "Resident Evil: Apocalypse - UHD"
         assert rescanned.disc_slug != "uhd"
 
-        # User-typed names survive a rescan untouched.
-        rescanned.disc_name = "My UHD Copy"
+        # User-typed names survive a rescan untouched. Since #915 a user
+        # names a disc through the label save, which turns automatic naming off.
+        from core.disc_naming import apply_naming_from_label
+        apply_naming_from_label(rescanned, {"disc_name": "My UHD Copy"}, None)
         session.commit()
         rescanned = crud.persist_disc_scan_with_discdb(session, "hash-rescan-uhd", {
             "disc_hash": "hash-rescan-uhd",

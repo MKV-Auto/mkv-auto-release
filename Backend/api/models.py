@@ -128,9 +128,15 @@ class Disc(Base):
     global_disc_id = Column(String, nullable=True)
     release_id = Column(String, ForeignKey("releases.id"), nullable=True)
     disc_number = Column(Integer, nullable=True)
+    # True when the user set disc_number by hand (#873); the scan-order
+    # normalizer keeps it. None/False = assigned in scan order.
+    disc_number_user = Column(Boolean, nullable=True)
     discdb_disc_num = Column(Integer, nullable=True)  # TheDiscDB matched disc index (reference only)
     disc_slug = Column(String, nullable=True)
     disc_name = Column(String, nullable=True)
+    # "Automatic naming" toggle (#915). None = the user hasn't chosen; infer
+    # from the stored name (core.disc_naming.effective_auto_naming).
+    auto_naming = Column(Boolean, nullable=True)
     format = Column(String, nullable=True)
     info_title = Column(Text, nullable=True)
     label_payload = Column(JSON, nullable=True)

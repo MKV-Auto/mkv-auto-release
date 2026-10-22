@@ -388,10 +388,13 @@ export interface TmdbConfigResponse {
   backfill?: TmdbBackfillSummary | null;
 }
 
-/** Copy settings: DiscDB prefill toggle and eject-on-finish toggle. */
+/** Copy settings: DiscDB prefill toggle, eject after copy, failed-copy retention. */
 export interface DiscDbLookupConfig {
   discdb_miss_workflow_with_prefill: boolean;
-  eject_on_finish: boolean;
+  /** Eject once the copy has finished and verified (#911). */
+  eject_after_copy: boolean;
+  /** Days a failed copy's files are kept before cleanup deletes them; 0 = until dismissed (#877). */
+  failed_rip_retention_days: number;
 }
 
 /** Auto-rip toggle (#331): rip on insert for both DiscDB hits and misses. */

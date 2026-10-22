@@ -405,6 +405,37 @@ export class BoxsetSelectorComponent implements OnInit, OnDestroy {
     this.cdr.markForCheck();
   }
 
+  /** #936: track where a gesture started, and when the window/tab came back,
+   *  so only a real click outside dismisses the panel (same rules as the
+   *  release selector, #685). */
+  private lastPointerDownInside: boolean | null = null;
+  private windowFocusedAt = 0;
+
+  @HostListener('window:focus')
+  onWindowFocus(): void {
+    this.windowFocusedAt = Date.now();
+  }
+
+  @HostListener('document:visibilitychange')
+  onVisibilityChange(): void {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      this.windowFocusedAt = Date.now();
+    }
+  }
+
+  @HostListener('document:mousedown', ['$event'])
+  onDocumentMouseDown(event: Event): void {
+    this.lastPointerDownInside = this.elementRef.nativeElement.contains(event.target as HTMLElement);
+  }
+
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    if (this.isOpen) {
+      this.closePanel();
+      this.cdr.markForCheck();
+    }
+  }
+
   @HostListener('document:click', ['$event'])
   onDocumentClick(event: Event): void {
     const target = event.target as HTMLElement;
@@ -425,7 +456,13 @@ export class BoxsetSelectorComponent implements OnInit, OnDestroy {
       event.stopPropagation();
       return;
     }
-    if (!isClickInside && this.isOpen) {
+    const startedInside = this.lastPointerDownInside;
+    this.lastPointerDownInside = null;
+    // #936: a form with the user's typing never closes on an outside click.
+    if (this.showCreateForm || this.showPendingEdit) return;
+    // The click that brought the window/tab back is not a dismiss.
+    if (Date.now() - this.windowFocusedAt < 350) return;
+    if (!isClickInside && startedInside === false && this.isOpen) {
       this.closePanel();
     }
   }

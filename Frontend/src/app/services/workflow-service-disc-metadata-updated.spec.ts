@@ -118,6 +118,61 @@ describe('WorkflowService disc_metadata_updated (#832)', () => {
     expect(lf.disc_number).toBe(5);
   });
 
+  // #915 (prod, 2026-10-18): clearing the name autosaved an empty value, the
+  // server kept the old name, and this event put it back half a second later.
+  it('#915: the autosave echo never refills a disc name or slug the user is editing', () => {
+    (service as any)._discs.next([
+      { disc_id: 'd1', disc_state: 'unfinished', job_id: 'job-1', scan_state: 'ready' },
+    ]);
+    (service as any)._activeContext$.next({
+      type: 'job', id: 'job-1',
+      labelForm: { disc_id: 'd1', disc_name: '', disc_slug: '' },
+    });
+    service.markDiscIdentityEdited('disc_name');
+    service.markDiscIdentityEdited('disc_slug');
+    (service as any).handleUnifiedMessage({
+      type: 'disc_metadata_updated', disc_id: 'd1', job_id: 'job-1',
+      disc_name: 'Ted Lasso: Season 2 - Disc 3 - Blu-Ray', disc_slug: 's03d03', disc_number: 3,
+    });
+    const lf = ((service as any)._activeContext$.value as any).labelForm;
+    expect(lf.disc_name).toBe('');
+    expect(lf.disc_slug).toBe('');
+    expect(lf.disc_number).toBe(3);   // not a typed field: still synced
+  });
+
+  it('#915: editing the name does not block an auto-rename of the untouched slug', () => {
+    (service as any)._activeContext$.next({
+      type: 'job', id: 'job-1',
+      labelForm: { disc_id: 'd1', disc_name: 'Typing…', disc_slug: 'old' },
+    });
+    service.markDiscIdentityEdited('disc_name');
+    (service as any).handleUnifiedMessage({
+      type: 'disc_metadata_updated', disc_id: 'd1', job_id: 'job-1', disc_name: 'Saved', disc_slug: 'new-slug',
+    });
+    const lf = ((service as any)._activeContext$.value as any).labelForm;
+    expect(lf.disc_name).toBe('Typing…');
+    expect(lf.disc_slug).toBe('new-slug');
+  });
+
+  it('#873: a new disc number reaches the active form, sparing a name the user is editing', () => {
+    (service as any)._activeContext$.next({
+      type: 'job', id: 'job-1',
+      labelForm: { disc_id: 'd1', disc_number: 3, disc_name: 'Typing…', disc_slug: 'old' },
+      discInfo: { disc_id: 'd1', disc_number: 3 },
+    });
+    service.markDiscIdentityEdited('disc_name');
+    service.setDiscNumber('d1', 1).subscribe();
+    const req = httpMock.expectOne(r => r.url.endsWith('/discs/d1/disc-number'));
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual({ disc_number: 1 });
+    req.flush({ disc_id: 'd1', disc_number: 1, disc_name: 'Show: Season 2 - Disc 1 - DVD', disc_slug: 'new', changed: [] });
+    const ctx = (service as any)._activeContext$.value;
+    expect(ctx.labelForm.disc_number).toBe(1);
+    expect(ctx.discInfo.disc_number).toBe(1);
+    expect(ctx.labelForm.disc_name).toBe('Typing…');
+    expect(ctx.labelForm.disc_slug).toBe('new');
+  });
+
   it('#845: a rename for a DIFFERENT disc never touches the active label form', () => {
     (service as any)._discs.next([
       { disc_id: 'd2', disc_state: 'unfinished', job_id: 'job-2', scan_state: 'ready' },

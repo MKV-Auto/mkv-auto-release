@@ -263,6 +263,8 @@
             [lastAutosaveOk]="true"
             (labelChanged)="onLabelChange($event)"
             (nameChanged)="onNameChange($event)"
+            (discNumberChanged)="onDiscNumberChange($event)"
+            (resetDiscNumbers)="onResetDiscNumbers()"
             (fieldBlur)="onNameBlur()">
           </app-disc-label>
         </div>
